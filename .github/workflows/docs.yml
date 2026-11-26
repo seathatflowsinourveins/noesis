@@ -1,3 +1,6 @@
+# Upstream directives:
+#   - https://github.com/astral-sh/setup-uv | https://github.com/zensical/zensical
+
 name: Tier-0 SOTA Clean Docs
 
 on:

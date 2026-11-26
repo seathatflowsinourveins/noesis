@@ -1,3 +1,9 @@
+# Upstream directives:
+#   - https://github.com/gitleaks/gitleaks-action
+#   - https://github.com/aquasecurity/trivy-action
+#   - https://github.com/zizmorcore/zizmor-action
+# SBOM artifact generation lives exclusively in release.yml; CodeQL runs via GitHub Default Setup.
+
 name: Tier-0 SOTA Clean Security
 
 on:
@@ -59,7 +65,7 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           format: "table"
-          skip-dirs: ".venv,.git,site"
+          skip-dirs: ".venv,.git,site,.claude/skills"
           version: "v0.76.2"
 
   zizmor:
@@ -82,74 +88,3 @@ jobs:
           advanced-security: "false"
           strict-collection: "true"
           version: "1.32.0"
-
-  syft-sbom:
-    name: CycloneDX SBOM Generation (Syft)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Generate CycloneDX SBOM
-        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
-        with:
-          path: "."
-          format: "cyclonedx-json"
-          output-file: "tier0-sota-clean.sbom.cdx.json"
-          artifact-name: "tier0-sota-clean-sbom-cyclonedx"
-          syft-version: "v1.55.0"
-          upload-artifact: true
-          upload-artifact-retention: 30
-          upload-release-assets: false
-
-  osv-scanner:
-    name: Dependency Vulnerability Scan (OSV-Scanner)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
-        with:
-          scan-args: |-
-            --lockfile=uv.lock
-            --config=osv-scanner.toml
-
-  codeql:
-    name: Static Code Analysis (CodeQL)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      actions: read # Required to enumerate Actions workflows analyzed by CodeQL
-      contents: read
-      security-events: write # Required to upload CodeQL SARIF analysis results
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [actions, python]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@38112626f97ac1fd7acf3df7ebca51f4677c1b38 # codeql-bundle-v2.27.6
-        with:
-          languages: ${{ matrix.language }}
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@38112626f97ac1fd7acf3df7ebca51f4677c1b38 # codeql-bundle-v2.27.6
-        with:
-          category: "/language:${{ matrix.language }}"

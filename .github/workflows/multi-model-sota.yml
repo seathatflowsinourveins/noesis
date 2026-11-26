@@ -1,3 +1,8 @@
+# Upstream directives:
+#   - https://github.com/anthropics/claude-code-action (direct ANTHROPIC_API_KEY or OmniRoute ANTHROPIC_BASE_URL + OMNIROUTE_API_KEY)
+#   - https://github.com/openai/codex-action (OPENAI_API_KEY or OmniRoute OPENAI_BASE_URL + OMNIROUTE_API_KEY)
+#   - https://github.com/google-github-actions/run-gemini-cli (GEMINI_API_KEY)
+
 name: Tier-0 Multi-Model SOTA Automation
 
 on:
@@ -123,15 +128,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node.js for Gemini CLI
+      - name: Run Official Google Gemini CLI Action
         if: steps.auth-check.outputs.has_key == 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
         with:
-          node-version: "22"
-
-      - name: Run Official @google/gemini-cli
-        if: steps.auth-check.outputs.has_key == 'true'
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_PROMPT: ${{ inputs.task }}
-        run: npx --yes @google/gemini-cli -p "$GEMINI_PROMPT"
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: ${{ inputs.task }}

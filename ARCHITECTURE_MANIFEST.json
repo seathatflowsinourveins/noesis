@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 125,
+    "repository_files_count": 124,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -564,7 +564,6 @@
     "mise.toml",
     "opencode.json",
     "orca.yaml",
-    "osv-scanner.toml",
     "pine/tier0_market_regime.pine",
     "pine/tier0_omni_sota_24x5.pine",
     "pyproject.toml",
