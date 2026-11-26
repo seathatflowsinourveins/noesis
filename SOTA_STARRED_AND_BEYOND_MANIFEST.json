@@ -57,7 +57,7 @@
         "online-ml/river",
         "deepcharles/ruptures",
         "stumpy-dev/stumpy",
-        "microsoft/LightGBM",
+        "lightgbm-org/LightGBM",
         "catboost/catboost",
         "shap/shap"
       ],
@@ -89,8 +89,10 @@
         "dagster-io/dagster",
         "mlflow/mlflow",
         "optuna/optuna",
+        "optuna/optuna-dashboard",
         "grafana/grafana",
         "prometheus/prometheus",
+        "prometheus/client_python",
         "open-telemetry/opentelemetry-python",
         "open-telemetry/opentelemetry-collector-contrib",
         "caddyserver/caddy",
@@ -115,11 +117,13 @@
         "HypothesisWorks/hypothesis",
         "pytest-dev/pytest",
         "Z3Prover/z3 (z3-solver)",
-        "fpgmaas/deptry",
+        "osprey-oss/deptry",
         "aquasecurity/trivy",
         "anchore/syft",
         "koalaman/shellcheck",
-        "zizmorcore/zizmor"
+        "zizmorcore/zizmor",
+        "github/codeql",
+        "dependabot/dependabot-core"
       ],
       "artifacts": [
         ".github/workflows/",
@@ -150,7 +154,7 @@
       "name": "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs",
       "winners": [
         "stablyai/orca",
-        "diegosouzapw/OmniRoute",
+        "cheaper-inference/OmniRoute",
         "DeusData/codebase-memory-mcp",
         "xerj-org/xerj",
         "dgunning/edgartools",
@@ -171,8 +175,10 @@
       "name": "Institutional UI & Visual Analytics",
       "winners": [
         "openbq-org/finos-workspace",
-        "OpenBB-finance/OpenBB",
-        "finos/perspective",
+        "openbq-org/finos-workspace-plugins",
+        "openbq-org/OpenBB",
+        "openbq-org/backends-for-openbb",
+        "perspective-dev/perspective",
         "tradingview/lightweight-charts",
         "ag-grid/ag-grid"
       ],
@@ -188,8 +194,12 @@
       "tradermonty/claude-trading-skills",
       "ml4t/skills",
       "openbq-org/finos-workspace",
+      "stablyai/orca",
       "tradingview/lightweight-charts",
-      "dagster-io/dagster"
+      "dagster-io/dagster",
+      "cloudflare/security-audit-skill",
+      "NVIDIA/SkillEvaluator",
+      "obra/superpowers"
     ]
   },
   "earned_trigger_frontier_l11_to_l15": {
@@ -227,8 +237,8 @@
         {"slug": "oxfordcontrol/Clarabel.rs", "trigger": "conic portfolio solver"},
         {"slug": "ERGO-Code/HiGHS", "trigger": "MILP/LP portfolio constraints"},
         {"slug": "DoubleML/doubleml-for-py", "alias": "DoubleML", "trigger": "causal factor neutralization"},
-        {"slug": "pytorch/botorch", "alias": "BoTorch", "trigger": "multi-objective Bayesian HPO"},
-        {"slug": "facebook/Ax", "alias": "Ax", "trigger": "adaptive experimentation"},
+        {"slug": "meta-pytorch/botorch", "alias": "BoTorch", "trigger": "multi-objective Bayesian HPO"},
+        {"slug": "meta/Ax", "alias": "Ax", "trigger": "adaptive experimentation"},
         {"slug": "scikit-learn-contrib/MAPIE", "alias": "MAPIE", "trigger": "conformal prediction intervals"}
       ]
     },
@@ -259,7 +269,7 @@
         {"slug": "pydantic/monty", "trigger": "Rust Python sandbox"},
         {"slug": "gvisor/gvisor", "trigger": "user-space container kernel"},
         {"slug": "e2b-dev/E2B", "trigger": "cloud microVM sandbox"},
-        {"slug": "UKGovernmentBEIS/inspect_scout", "trigger": "agent transcript failure scanner"},
+        {"slug": "meridianlabs-ai/inspect_scout", "trigger": "agent transcript failure scanner"},
         {"slug": "gepa-ai/gepa", "trigger": "reflective prompt evolution"},
         {"slug": "SakanaAI/ShinkaEvolve", "trigger": "sandbox evolutionary coding"},
         {"slug": "algorithmicsuperintelligence/openevolve", "trigger": "open-ended evolutionary search"},
@@ -268,7 +278,7 @@
         {"slug": "a2aproject/A2A", "trigger": "agent-to-agent interoperability"},
         {"slug": "agentclientprotocol/agent-client-protocol", "alias": "ACP", "trigger": "client/editor agent protocol"},
         {"slug": "ag-ui-protocol/ag-ui", "trigger": "agent-to-UI event stream"},
-        {"slug": "jlowin/fastmcp", "trigger": "Pythonic MCP server primitives"},
+        {"slug": "PrefectHQ/fastmcp", "trigger": "Pythonic MCP server primitives"},
         {"slug": "pydantic/pydantic-ai", "trigger": "typed agent orchestration"},
         {"slug": "upstash/context7", "trigger": "live versioned library docs MCP"},
         {"slug": "vectorize-io/hindsight", "trigger": "long-horizon agent memory"},

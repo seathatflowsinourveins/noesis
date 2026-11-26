@@ -306,6 +306,7 @@
         "optuna",
         "optuna-dashboard",
         "zensical",
+        "prometheus",
         "prometheus-client",
         "opentelemetry-sdk",
         "otel-collector-contrib",

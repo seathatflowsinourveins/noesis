@@ -119,7 +119,7 @@ rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "m
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk", "otel-collector-contrib", "grafana", "caddy"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "otel-collector-contrib", "grafana", "caddy"]
 rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
 
 [layers.L7]
