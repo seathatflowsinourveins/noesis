@@ -1,0 +1,342 @@
+services:
+  mlflow:
+    image: tier0-sota-research:latest
+    cpus: "4.0"
+    mem_limit: 2g
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.research
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mnt/z/sota-data/mlflow/mlflow.db
+      - --default-artifact-root
+      - /mnt/z/sota-data/mlflow/mlartifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --allowed-hosts
+      - mlflow:5000,127.0.0.1:5000,localhost:5000
+      - --cors-allowed-origins
+      - http://127.0.0.1:5000,http://localhost:5000
+      - --workers
+      - "2"
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ..:/workspace
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+      - MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false
+      - OMP_NUM_THREADS=2
+      - POLARS_MAX_THREADS=4
+    restart: unless-stopped
+
+  optuna-dashboard:
+    image: tier0-sota-research:latest
+    cpus: "2.0"
+    mem_limit: 1g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - optuna-dashboard
+      - sqlite:////mnt/z/sota-data/mlflow/optuna.db
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ..:/workspace
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+    depends_on:
+      - mlflow
+    restart: unless-stopped
+
+  dagster-webserver:
+    image: tier0-sota-research:latest
+    cpus: "4.0"
+    mem_limit: 2g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - dagster-webserver
+      - -f
+      - src/tier0_sota/research.py
+      - -h
+      - 0.0.0.0
+      - -p
+      - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ..:/workspace
+      - ./dagster.yaml:/workspace/dagster_home/dagster.yaml:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+      - DAGSTER_HOME=/workspace/dagster_home
+      - TIER0_MARKET_DATA_ROOT=/mnt/z/sota-data/prewall-lake
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - XERJ_URL=http://xerj:9200
+      - PYTHONPATH=/workspace/src:/workspace
+    depends_on:
+      - mlflow
+      - xerj
+    restart: unless-stopped
+
+  dagster-daemon:
+    image: tier0-sota-research:latest
+    cpus: "4.0"
+    mem_limit: 4g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - dagster-daemon
+      - run
+      - -f
+      - src/tier0_sota/research.py
+    volumes:
+      - ..:/workspace
+      - ./dagster.yaml:/workspace/dagster_home/dagster.yaml:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+      - DAGSTER_HOME=/workspace/dagster_home
+      - TIER0_MARKET_DATA_ROOT=/mnt/z/sota-data/prewall-lake
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - XERJ_URL=http://xerj:9200
+      - PYTHONPATH=/workspace/src:/workspace
+    depends_on:
+      - dagster-webserver
+      - xerj
+    restart: unless-stopped
+
+  inspect-view:
+    image: tier0-sota-research:latest
+    cpus: "2.0"
+    mem_limit: 1g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - inspect
+      - view
+      - start
+      - --host
+      - 0.0.0.0
+      - --port
+      - "7575"
+      - --unsafe-allow-unauthenticated
+      - --log-dir
+      - /mnt/z/sota-data/logs/inspect-logs
+    ports:
+      - "127.0.0.1:7575:7575"
+    volumes:
+      - ..:/workspace
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/logs:/mnt/z/sota-data/logs
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+    depends_on:
+      - mlflow
+    restart: unless-stopped
+
+  zensical:
+    image: tier0-sota-research:latest
+    cpus: "2.0"
+    mem_limit: 1g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - zensical
+      - serve
+      - --dev-addr
+      - 0.0.0.0:8000
+    ports:
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - ..:/workspace
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+    depends_on:
+      - mlflow
+    restart: unless-stopped
+
+  telemetry-exporter:
+    image: tier0-sota-research:latest
+    cpus: "1.0"
+    mem_limit: 512m
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - python
+      - -c
+      - "import threading; from prometheus_client import Gauge, start_http_server; g = Gauge('tier0_observability_up', 'Telemetry up'); g.set(1); start_http_server(9464, addr='0.0.0.0'); threading.Event().wait()"
+    ports:
+      - "127.0.0.1:9464:9464"
+    volumes:
+      - ..:/workspace
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+    depends_on:
+      - mlflow
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    cpus: "2.0"
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    depends_on:
+      - telemetry-exporter
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    cpus: "2.0"
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  xerj:
+    image: tier0-sota-xerj:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.xerj
+    cpus: "4.0"
+    mem_limit: 2g
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/logs/xerj-data:/data
+    environment:
+      - HOME=/tmp
+      - XERJ_LOG=info
+      - XERJ_BIND_ADDRESS=0.0.0.0
+      - XERJ_ALLOW_INSECURE_NETWORK_BIND=true
+      - XERJ_DISABLE_FEEDBACK=true
+    command:
+      - --insecure
+      - --data-dir
+      - /data
+    restart: unless-stopped
+
+  tearsheets:
+    image: tier0-sota-research:latest
+    cpus: "1.0"
+    mem_limit: 512m
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /mnt/z/sota-data/manifests
+    command:
+      - python
+      - -m
+      - http.server
+      - "8793"
+      - --bind
+      - 0.0.0.0
+    ports:
+      - "127.0.0.1:8793:8793"
+    volumes:
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+    restart: unless-stopped
+
+  finos-workspace:
+    image: tier0-sota-research:latest
+    profiles:
+      - portals
+    cpus: "2.0"
+    mem_limit: 1g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /mnt/z/sota-data/hosted-research-frameworks/finos-workspace-plugins
+    ports:
+      - "127.0.0.1:1420:1420"
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:6900:6900"
+    volumes:
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/hosted-research-frameworks:/mnt/z/sota-data/hosted-research-frameworks:ro
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+    environment:
+      - HOME=/tmp
+      - PAPER_ONLY=true
+      - LIVE_EXECUTION_ENABLED=false
+    restart: unless-stopped
+
+  aideml-sandbox:
+    profiles:
+      - sandbox
+    image: tier0-sota-aideml-sandbox:latest
+    cpus: "4.0"
+    mem_limit: 8g
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sandbox
+    network_mode: "none"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    user: "1000:1000"
+    volumes:
+      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/data/prewall-lake:ro
+    command:
+      - python
+      - -c
+      - "import importlib.metadata as m, aide; print({'aideml': m.version('aideml'), 'network': 'none'})"
+
+volumes:
+  prometheus_data:

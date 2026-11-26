@@ -1,0 +1,781 @@
+{
+  "schema": "tier0.upstream-skills-lock.v1",
+  "generated_at_utc": "2026-11-23T13:45:06.230586Z",
+  "policy": "UPSTREAM_FIRST_ZERO_OVERLAP_SKILLS",
+  "skills_count": 46,
+  "skills": [
+    {
+      "skill": "backtest-expert",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/backtest-expert/SKILL.md",
+      "keywords": [
+        "backtest",
+        "stress-test",
+        "slippage",
+        "walk-forward"
+      ],
+      "skill_sha256": "f2c9ce6501b574cdf1cc35b757b5dfc3cb5e234222af84e67ce07775dfdc689d"
+    },
+    {
+      "skill": "breakout-trade-planner",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/breakout-trade-planner/SKILL.md",
+      "keywords": [
+        "breakout",
+        "vcp",
+        "trade-plan",
+        "heat",
+        "risk-reward"
+      ],
+      "skill_sha256": "cc819f88031bbb3b2ca525b67c0a13cee72c364a929e129cb93e19b8ea6cbfdc"
+    },
+    {
+      "skill": "dagster-docs-skill",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/dagster-io/dagster",
+      "commit_sha": "939bd1ea940e326044090aa4f25b79962c9c3fd4",
+      "license": "Apache-2.0",
+      "source_rel_path": ".claude/skills/dagster-docs-skill/SKILL.md",
+      "keywords": [
+        "dagster",
+        "asset",
+        "schedule",
+        "pipeline",
+        "orchestration"
+      ],
+      "skill_sha256": "6c5d104bcae6d29acb046ec4c26d41e0e26976971969c5df3067b9f3a3c7c40f"
+    },
+    {
+      "skill": "drawdown-circuit-breaker",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/drawdown-circuit-breaker/SKILL.md",
+      "keywords": [
+        "drawdown",
+        "breaker",
+        "risk",
+        "stop-loss",
+        "rule-612"
+      ],
+      "skill_sha256": "4a2a9302a0837ee8a24f074a107df6e5cb70948c0d106a2f02ca9e18777067d2"
+    },
+    {
+      "skill": "exposure-coach",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/exposure-coach/SKILL.md",
+      "keywords": [
+        "exposure",
+        "posture",
+        "regime",
+        "cash-priority",
+        "bias"
+      ],
+      "skill_sha256": "a55c0111d64dcee2424432d7c6fb28f366f383397d91ab2e23ae60ea716c9312"
+    },
+    {
+      "skill": "finos-administer-via-cli",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/openbq-org/finos-workspace",
+      "commit_sha": "a0047d50d97c8db901eb802a224da890866dafba",
+      "license": "Apache-2.0",
+      "source_rel_path": ".agents/skills/administer-via-cli/SKILL.md",
+      "keywords": [
+        "finos",
+        "workspace",
+        "openbb",
+        "dashboard",
+        "terminal",
+        "admin"
+      ],
+      "skill_sha256": "f3f5fceb2cca86b2f0728ac3ace65d95249fe609b6aabf6cd9a372234ffc602d"
+    },
+    {
+      "skill": "finos-develop-plugins",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/openbq-org/finos-workspace",
+      "commit_sha": "a0047d50d97c8db901eb802a224da890866dafba",
+      "license": "Apache-2.0",
+      "source_rel_path": ".agents/skills/develop-plugins/SKILL.md",
+      "keywords": [
+        "finos",
+        "plugin",
+        "widget",
+        "plotly-charts",
+        "ag-grid",
+        "dashboard"
+      ],
+      "skill_sha256": "73c3e6178f77d5f464c3dccd1379bcb5caafc19c1f9c061579f361476f7b76ed"
+    },
+    {
+      "skill": "ftd-detector",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/ftd-detector/SKILL.md",
+      "keywords": [
+        "ftd",
+        "follow-through-day",
+        "bottom",
+        "rally-attempt",
+        "reversal"
+      ],
+      "skill_sha256": "174b6603d80161cca89b01cdd6159cffa84ec0b4b35a72dbcf0922615d1d0029"
+    },
+    {
+      "skill": "ibd-distribution-day-monitor",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/ibd-distribution-day-monitor/SKILL.md",
+      "keywords": [
+        "distribution-day",
+        "d5",
+        "d15",
+        "d25",
+        "trailing-stop",
+        "market-top"
+      ],
+      "skill_sha256": "627d9d614f10be92e2724ce7fd774849b7ca17c4405fe68e0d4aa0c4ff965c6a"
+    },
+    {
+      "skill": "lightweight-charts",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradingview/lightweight-charts",
+      "commit_sha": "c29c51e1e5bc61981da5832c97797cb8283d120f",
+      "license": "Apache-2.0",
+      "source_rel_path": ".github/skills/lightweight-charts/SKILL.md",
+      "keywords": [
+        "chart",
+        "candlestick",
+        "lightweight-charts",
+        "tradingview",
+        "vwap"
+      ],
+      "skill_sha256": "47d36bf245e21c878d6cfe3d3a5addf29b11bc69c2cf0d1c8a36023e821c2228"
+    },
+    {
+      "skill": "macro-regime-detector",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/macro-regime-detector/SKILL.md",
+      "keywords": [
+        "macro",
+        "vix",
+        "regime",
+        "alfred",
+        "fred"
+      ],
+      "skill_sha256": "46a19fdf3b718a51cdc869ac6d04cf63a3e77e31e6db85ff8650a3d19670b2a1"
+    },
+    {
+      "skill": "market-breadth-analyzer",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/market-breadth-analyzer/SKILL.md",
+      "keywords": [
+        "breadth",
+        "advance-decline",
+        "participation",
+        "market-health"
+      ],
+      "skill_sha256": "3d73ea43a60f1a7207d4e376defa97c15aab9ba23f76916cf581ad9458438549"
+    },
+    {
+      "skill": "market-top-detector",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/market-top-detector/SKILL.md",
+      "keywords": [
+        "market-top",
+        "distribution-day",
+        "defensive-rotation",
+        "correction",
+        "crash"
+      ],
+      "skill_sha256": "29b6dc36a5aa184911ea0201325e006152db955102440286450334f1a30e35cd"
+    },
+    {
+      "skill": "ml4t-agent-state-memory",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "advanced-ai/agent-state-memory/SKILL.md",
+      "keywords": [
+        "memory",
+        "state",
+        "rag",
+        "replay",
+        "xerj",
+        "checkpoint"
+      ],
+      "skill_sha256": "60bfe217a86a136c0229b284a64d3aa1cfa3106922835a831ed156f7ec705fce"
+    },
+    {
+      "skill": "ml4t-backtest-tearsheet",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "backtest/tearsheet/SKILL.md",
+      "keywords": [
+        "tearsheet",
+        "backtest",
+        "report",
+        "plotly",
+        "quantstats",
+        "nautilus"
+      ],
+      "skill_sha256": "9670bcaa96ac48c3d548e1408069df5a4f3795cc86e9037bd9102b817381142d"
+    },
+    {
+      "skill": "ml4t-causal-identification",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "concepts/causal-identification/SKILL.md",
+      "keywords": [
+        "causal",
+        "dowhy",
+        "econml",
+        "confounding",
+        "pit",
+        "refutation"
+      ],
+      "skill_sha256": "8f230ce7e691e93afc9b9643d2efe2cd827841a45f411edfb27e9d22dac02683"
+    },
+    {
+      "skill": "ml4t-cpcv",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "validation/cpcv/SKILL.md",
+      "keywords": [
+        "cpcv",
+        "cv",
+        "purged",
+        "embargo",
+        "overfitting",
+        "validation"
+      ],
+      "skill_sha256": "df0377fb1b6b5a9beae2d12293fbab00788ee1e681588b341574e7dbfe71b091"
+    },
+    {
+      "skill": "ml4t-deflated-sharpe",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "validation/deflated-sharpe/SKILL.md",
+      "keywords": [
+        "dsr",
+        "deflated",
+        "sharpe",
+        "pbo",
+        "multiple-testing",
+        "hlz",
+        "falsification"
+      ],
+      "skill_sha256": "0bdd5d2edd8821c37845a26c6dd14aa65e2abc277d3320be2d145d9ee4bd7adf"
+    },
+    {
+      "skill": "ml4t-drift-detection",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "validation/drift-detection/SKILL.md",
+      "keywords": [
+        "drift",
+        "psi",
+        "stationarity",
+        "river",
+        "ruptures",
+        "regime"
+      ],
+      "skill_sha256": "32518cb7d6db7a378ff0d9520c05eee5eb167f14bddd8100a214cfd310169661"
+    },
+    {
+      "skill": "ml4t-factor-research",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "workflows/factor-research/SKILL.md",
+      "keywords": [
+        "factor",
+        "alpha",
+        "ic",
+        "research",
+        "decay",
+        "signal"
+      ],
+      "skill_sha256": "cd93000c5430f613644c1a5089f731f55514bc3edae721468d3c0ca94a6bb2bf"
+    },
+    {
+      "skill": "ml4t-monitoring-alerting",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "production/monitoring-alerting/SKILL.md",
+      "keywords": [
+        "prometheus",
+        "grafana",
+        "monitoring",
+        "alerting",
+        "observability",
+        "telemetry",
+        "metrics"
+      ],
+      "skill_sha256": "5b955314a4b14f30f441dca557361d78b8ccf8efd68190a4d89bb3ba6c3f8069"
+    },
+    {
+      "skill": "ml4t-point-in-time",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "concepts/point-in-time/SKILL.md",
+      "keywords": [
+        "pit",
+        "point-in-time",
+        "lookahead",
+        "leakage",
+        "pre-wall",
+        "alfred",
+        "edgar"
+      ],
+      "skill_sha256": "cff8e72b709d54bed7bbc1edc3387fafa6a8a4191326cd1844ff6dd65c9be697"
+    },
+    {
+      "skill": "ml4t-polars-patterns",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "infrastructure/polars-patterns/SKILL.md",
+      "keywords": [
+        "polars",
+        "parquet",
+        "duckdb",
+        "etl",
+        "data-lake",
+        "columnar"
+      ],
+      "skill_sha256": "bcc9062c8b4947765ef467c3becf3c1873eac16612118c2bdd187adcaf62df8e"
+    },
+    {
+      "skill": "ml4t-research-operator",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "advanced-ai/research-operator/SKILL.md",
+      "keywords": [
+        "research",
+        "operator",
+        "experiment",
+        "ml4t",
+        "hypothesis",
+        "discovery"
+      ],
+      "skill_sha256": "8601231ce1c9a651194d8090c34c983167b96279f6cc4bc2689101969dcd49aa"
+    },
+    {
+      "skill": "ml4t-shap-analysis",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/ml4t/skills",
+      "commit_sha": "691857537a0c8befc11dc2f2ad7a458b7c7e801c",
+      "license": "Apache-2.0",
+      "source_rel_path": "validation/shap-analysis/SKILL.md",
+      "keywords": [
+        "shap",
+        "explainability",
+        "feature-importance",
+        "lightgbm",
+        "trade-shap"
+      ],
+      "skill_sha256": "232857d846d3da9d814b54d9486f97f6ba0f871276b0100c175beca3782cf571"
+    },
+    {
+      "skill": "orca-cli",
+      "origin": "ORCA_BUILTIN",
+      "upstream_repo": "https://github.com/stablyai/orca",
+      "commit_sha": "9e9ceede7543f0cc0479a7b00508a9e4883b7f9b",
+      "license": "MIT",
+      "source_rel_path": ".claude/skills/orca-cli/SKILL.md",
+      "keywords": [
+        "orca",
+        "worktree",
+        "terminal",
+        "browser",
+        "lane",
+        "claude-code"
+      ],
+      "skill_sha256": "84485364a5a7f17cf222223c25be2839d7501c9e7e92c51cf67c59dc11d0dd0b"
+    },
+    {
+      "skill": "orca-per-workspace-env",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/stablyai/orca",
+      "commit_sha": "9e9ceede7543f0cc0479a7b00508a9e4883b7f9b",
+      "license": "MIT",
+      "source_rel_path": "skills/orca-per-workspace-env/SKILL.md",
+      "keywords": [
+        "orca",
+        "worktree",
+        "env",
+        "workspace",
+        "lane"
+      ],
+      "skill_sha256": "39c457ada06e320108516f97ea81a331e6bfa484bd7dccf4d025a7ca6bde99a4"
+    },
+    {
+      "skill": "orchestration",
+      "origin": "ORCA_BUILTIN",
+      "upstream_repo": "https://github.com/stablyai/orca",
+      "commit_sha": "9e9ceede7543f0cc0479a7b00508a9e4883b7f9b",
+      "license": "MIT",
+      "source_rel_path": ".claude/skills/orchestration/SKILL.md",
+      "keywords": [
+        "orca",
+        "worker",
+        "supervision",
+        "dag",
+        "multi-agent",
+        "lane"
+      ],
+      "skill_sha256": "0a781637d8c9c1dd9409b8ca6ea7eb8a83add577a1aacfb3b8146e442213be53"
+    },
+    {
+      "skill": "parabolic-short-trade-planner",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/parabolic-short-trade-planner/SKILL.md",
+      "keywords": [
+        "parabolic",
+        "short",
+        "qullamaggie",
+        "exhaustion",
+        "climax"
+      ],
+      "skill_sha256": "d1458b33b541fc77858f2dee1f9f7c5f1a9c779ee6ab87b59a0f97cb74164f75"
+    },
+    {
+      "skill": "pead-screener",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/pead-screener/SKILL.md",
+      "keywords": [
+        "pead",
+        "earnings",
+        "drift",
+        "catalyst",
+        "8-k"
+      ],
+      "skill_sha256": "47cf00d5dc0725f51ecfa18041d49819e32f197e5e430e43c82f853b4f0989ee"
+    },
+    {
+      "skill": "position-sizer",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/position-sizer/SKILL.md",
+      "keywords": [
+        "position-size",
+        "position-sizer",
+        "atr",
+        "kelly",
+        "sizing",
+        "risk-budget",
+        "lossless"
+      ],
+      "skill_sha256": "b0eda467eef9c0804118ee34d67bda89038e10fb7471f7d0fd0b591ccd67f6ac"
+    },
+    {
+      "skill": "pre-trade-discipline-gate",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/pre-trade-discipline-gate/SKILL.md",
+      "keywords": [
+        "discipline",
+        "pre-trade",
+        "gate",
+        "cooldown",
+        "circuit-breaker"
+      ],
+      "skill_sha256": "94ad27f4c1e894eb0285b3eff0d88bf4cf4d90a5d1c6576eb666fc0fd1e29ccc"
+    },
+    {
+      "skill": "security-audit",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/cloudflare/security-audit-skill",
+      "commit_sha": "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8",
+      "license": "MIT",
+      "source_rel_path": "skills/security-audit/SKILL.md",
+      "keywords": [
+        "security",
+        "audit",
+        "redteam",
+        "vulnerability",
+        "firewall"
+      ],
+      "skill_sha256": "5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85"
+    },
+    {
+      "skill": "skillevaluator",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/NVIDIA/SkillEvaluator",
+      "commit_sha": "4327960b90d1943d3f2df9ba023a454ee5aba07b",
+      "license": "Apache-2.0",
+      "source_rel_path": "skills/skillevaluator/SKILL.md",
+      "keywords": [
+        "skill",
+        "skillevaluator",
+        "eval",
+        "evolve",
+        "tier1",
+        "landscape"
+      ],
+      "skill_sha256": "2147e4076c115b914bcd4a10c9760abc904bf2a544699e6eb4301dd2f89c3f94"
+    },
+    {
+      "skill": "stockbee-episodic-pivot-analyzer",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/stockbee-episodic-pivot-analyzer/SKILL.md",
+      "keywords": [
+        "episodic-pivot",
+        "episodic",
+        "ep",
+        "catalyst",
+        "gap",
+        "pead"
+      ],
+      "skill_sha256": "70b59bd244d42ed5b3b00609b2e4764fefefc2aceacd063bcda68a7eb4d756cd"
+    },
+    {
+      "skill": "stockbee-exhaustion-hammer-screener",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/stockbee-exhaustion-hammer-screener/SKILL.md",
+      "keywords": [
+        "exhaustion",
+        "hammer",
+        "stockbee",
+        "undercut",
+        "reversal",
+        "top-reversal"
+      ],
+      "skill_sha256": "dd0a8769bab86a09baae700573df060ecca3f38bbc808c88f805e53c2b133421"
+    },
+    {
+      "skill": "stockbee-momentum-burst-screener",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/stockbee-momentum-burst-screener/SKILL.md",
+      "keywords": [
+        "momentum-burst",
+        "burst",
+        "extreme-mover",
+        "breakout",
+        "range-expansion"
+      ],
+      "skill_sha256": "2d0d94f105689ff64844313cfab7105696198476fddc30ad11f43ff71b6d0202"
+    },
+    {
+      "skill": "tier0-code-intel-and-gates",
+      "origin": "TIER0_GOVERNANCE_DIRECTIVE",
+      "upstream_repo": "tier0-quant",
+      "commit_sha": "local",
+      "license": "MIT",
+      "source_rel_path": ".claude/skills/tier0-code-intel-and-gates/SKILL.md",
+      "keywords": [
+        "codebase-memory",
+        "ast-grep",
+        "ruff",
+        "ty",
+        "gitleaks",
+        "inspect",
+        "harbor",
+        "code-intel"
+      ],
+      "skill_sha256": "224c2410dda8c397e1d5c56ea7f7e3b7eea5014c5894eaf048ffb80ebdaabda7"
+    },
+    {
+      "skill": "tier0-quant-falsification",
+      "origin": "TIER0_GOVERNANCE_DIRECTIVE",
+      "upstream_repo": "tier0-quant",
+      "commit_sha": "local",
+      "license": "MIT",
+      "source_rel_path": ".claude/skills/tier0-quant-falsification/SKILL.md",
+      "keywords": [
+        "nautilus",
+        "hftbacktest",
+        "cpcv",
+        "falsification",
+        "decimal",
+        "risk",
+        "pit"
+      ],
+      "skill_sha256": "7e0ad0c98627052bc2645a7c06a69667b4401807bae86a5fdb688c98c06d8bbc"
+    },
+    {
+      "skill": "tier0-upstream-convergence",
+      "origin": "TIER0_GOVERNANCE_DIRECTIVE",
+      "upstream_repo": "tier0-quant",
+      "commit_sha": "local",
+      "license": "MIT",
+      "source_rel_path": ".claude/skills/tier0-upstream-convergence/SKILL.md",
+      "keywords": [
+        "adr",
+        "charter",
+        "dagster",
+        "docker",
+        "github",
+        "mlflow",
+        "optuna",
+        "orca",
+        "tailnet",
+        "upstream",
+        "zensical"
+      ],
+      "skill_sha256": "8f99854005bb15146794916437c5d51aa42a1db33c768f882b35919dca1b532d"
+    },
+    {
+      "skill": "tier0-upstream-dashboards-and-observability",
+      "origin": "TIER0_GOVERNANCE_DIRECTIVE",
+      "upstream_repo": "tier0-quant",
+      "commit_sha": "local",
+      "license": "MIT",
+      "source_rel_path": ".claude/skills/tier0-upstream-dashboards-and-observability/SKILL.md",
+      "keywords": [
+        "dashboard",
+        "prometheus",
+        "grafana",
+        "opentelemetry",
+        "finos",
+        "openbb",
+        "tearsheet",
+        "duckdb"
+      ],
+      "skill_sha256": "bd06ce1103ef542431a9ce3c84ee49cbf561514abc09471e49168b4c7ed61b46"
+    },
+    {
+      "skill": "trading-skills-navigator",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/trading-skills-navigator/SKILL.md",
+      "keywords": [
+        "trading",
+        "screener",
+        "strategy",
+        "navigator",
+        "claude-trading-skills"
+      ],
+      "skill_sha256": "65db18136321fca02f39d177e7c6babc4edc581a4a4371cc035be10cc8100ae5"
+    },
+    {
+      "skill": "uptrend-analyzer",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/uptrend-analyzer/SKILL.md",
+      "keywords": [
+        "uptrend",
+        "breadth",
+        "sector-participation",
+        "rotation"
+      ],
+      "skill_sha256": "e514dea7f48530c8f5bd8087bb136a09212b1a4d557fee8068aaad0a1fee65bd"
+    },
+    {
+      "skill": "us-market-bubble-detector",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/us-market-bubble-detector/SKILL.md",
+      "keywords": [
+        "bubble",
+        "crash",
+        "minsky",
+        "vix",
+        "margin-debt"
+      ],
+      "skill_sha256": "eb1e64b333d11315b87458bcddcf4cea73fefc2eb3e7ee1b42bdeaa5bc53583b"
+    },
+    {
+      "skill": "vcp-screener",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/tradermonty/claude-trading-skills",
+      "commit_sha": "4080042a7863f5eeb48aabeaf60bd547efb99949",
+      "license": "MIT",
+      "source_rel_path": "skills/vcp-screener/SKILL.md",
+      "keywords": [
+        "vcp",
+        "minervini",
+        "stage-2",
+        "breakout",
+        "volatility-contraction"
+      ],
+      "skill_sha256": "48f70110d416244be742116696852bd7495fe53988ef0e275fa42eb9da6b5559"
+    },
+    {
+      "skill": "verification-before-completion",
+      "origin": "UPSTREAM_VERBATIM",
+      "upstream_repo": "https://github.com/obra/superpowers",
+      "commit_sha": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "source_rel_path": "skills/verification-before-completion/SKILL.md",
+      "keywords": [
+        "verify",
+        "evidence",
+        "empirical",
+        "completion",
+        "gate",
+        "commit"
+      ],
+      "skill_sha256": "2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3"
+    }
+  ],
+  "lock_sha256": "fd95b12b164fb8d63fafa643d744787769b55654101a2824998ede77c7819f99"
+}

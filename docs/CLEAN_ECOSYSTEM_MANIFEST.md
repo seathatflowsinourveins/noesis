@@ -15,6 +15,12 @@
 | [`scripts/launch_clean_lanes.ps1`](../scripts/launch_clean_lanes.ps1) | Non-overlapping lane launcher | Supports `-DryRun`; orchestrates Pre-Wall Sim Lab (`<= 2026-10-15`), 3-Lane Paper Farm (`ALPACA_PA1..PA3` + `IBKR_DU_4002`), TV Half-Auto Cockpit, and Verifier Gate |
 | [`scripts/run_live_paper_farm.ps1`](../scripts/run_live_paper_farm.ps1) | Paper Farm controller | Supports `preflight`, `scan`, `paper-farm` (requires `-ConfirmPaper`), and `performance` |
 | [`scripts/tv_console.ps1`](../scripts/tv_console.ps1) | TradingView Half-Auto console | Display-only Pine v6 staging (`qty=1`, `semi_auto_confirmed=false`, zero CDP `:9223`) |
+| [`scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1`](../scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1) | Grand-Reset Step 00 | Safe-by-default (`-DryRun`) Disk-Z reset + fresh zero-hook AGY reinstall prep (`-Execute -CleanAgyReinstall`) |
+| [`scripts/grand_reset/01_disk_z_and_wsl_setup.ps1`](../scripts/grand_reset/01_disk_z_and_wsl_setup.ps1) | Grand-Reset Step 01 | Idempotently initializes Disk-Z dirs & WSL2 `Noesis-SOTA` via `01_wsl_bootstrap.sh` (`-DryRun` supported) |
+| [`scripts/grand_reset/02_runtimes_agy_orca_setup.ps1`](../scripts/grand_reset/02_runtimes_agy_orca_setup.ps1) | Grand-Reset Step 02 | Zero-hook sync for AGY, Claude, Codex, OpenCode, Orca, native `uv` MCPs & `UPSTREAM_SKILLS_LOCK.json` (`-DryRun` supported) |
+| [`scripts/grand_reset/03_hosted_stack_tv_paper.ps1`](../scripts/grand_reset/03_hosted_stack_tv_paper.ps1) | Grand-Reset Step 03 | Verifies `13/13` Docker portals, syncs TV Pine v6 + Paper Farm manifests (`-DryRun` supported) |
+| [`scripts/grand_reset/verify_grand_reset.ps1`](../scripts/grand_reset/verify_grand_reset.ps1) | Grand-Reset Master Verifier | Checks `ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, `12/12` ADRs, `zensical build`, `risk.py`, MCP smoke, `13/13` portals, TV, Paper Farm, `gitleaks`, `0` live ports |
+| [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) | Grand-Reset Operator Runbook | Step-by-step zero-hook Disk-Z + WSL2 + fresh AGY + TV + 4-Runtime + Orca reset guide |
 
 ### 4-Runtime MCP Parity
 

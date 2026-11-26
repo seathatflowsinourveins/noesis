@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+FROM alpine:3.20 AS fetch
+ARG XERJ_VERSION=1.0.0-rc.104
+ARG TARGETARCH
+RUN apk add --no-cache curl ca-certificates
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) triple=x86_64-unknown-linux-musl; expected_sha=1628ee401a9a121156cc380950f9d48923e6e856458ae1e6648f0ef18db7b693 ;; \
+      arm64) triple=aarch64-unknown-linux-musl; expected_sha=cd3acf3b37d7f942157bebb05efa4221651b25f07b18a85beeacb5757647ea4f ;; \
+      *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    name="xerj-${XERJ_VERSION}-${triple}.tar.gz"; \
+    base="https://github.com/xerj-org/xerj/releases/download/v${XERJ_VERSION}"; \
+    cd /tmp; \
+    curl -fsSLO "${base}/${name}"; \
+    echo "${expected_sha}  ${name}" | sha256sum -c -; \
+    tar -xzf "${name}"; \
+    BIN_PATH="$(find . -type f -name xerj | head -n 1)"; \
+    install -m 0755 "${BIN_PATH}" /usr/local/bin/xerj
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl && adduser -D -u 1000 xerj \
+    && mkdir -p /data && chown 1000:1000 /data
+COPY --from=fetch /usr/local/bin/xerj /usr/local/bin/xerj
+USER xerj
+EXPOSE 9200
+ENV HOME=/tmp \
+    XERJ_LOG=info \
+    XERJ_BIND_ADDRESS=0.0.0.0 \
+    XERJ_ALLOW_INSECURE_NETWORK_BIND=true \
+    XERJ_DISABLE_FEEDBACK=true
+ENTRYPOINT ["/usr/local/bin/xerj"]
+CMD ["--insecure", "--data-dir", "/data"]

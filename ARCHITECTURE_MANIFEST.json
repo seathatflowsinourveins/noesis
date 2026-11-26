@@ -8,9 +8,16 @@
     "sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
     "loc": 361
   },
+  "skills_lock": {
+    "path": "UPSTREAM_SKILLS_LOCK.json",
+    "schema": "tier0.upstream-skills-lock.v1",
+    "skills_count": 46
+  },
+  "sota_starred_beyond_manifest": "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
   "safety_invariants": {
     "live_execution_enabled": false,
     "paper_only": true,
+    "zero_self_invented_hooks": true,
     "loc_enforcement": "advisory",
     "prewall_pit_cutoff": "2026-10-15",
     "forbidden_live_ports": [4001, 7496, 8798, 8796],
@@ -19,13 +26,20 @@
   },
   "mcp_parity": {
     "servers": ["codebase-memory", "edgartools", "nautilus-engine", "xerj"],
+    "transport": "native-uv-stdio",
     "config_files": [
       ".mcp.json",
       ".claude/settings.json",
       ".codex/config.toml",
       ".gemini/settings.json",
       "opencode.json"
-    ]
+    ],
+    "mcp_lanes": {
+      "sim": ".claude/mcp-lanes/sim.mcp.json",
+      "paper": ".claude/mcp-lanes/paper.mcp.json",
+      "tv": ".claude/mcp-lanes/tv.mcp.json",
+      "gate": ".claude/mcp-lanes/gate.mcp.json"
+    }
   },
   "hosted_portals": [
     {"name": "xerj", "url": "http://127.0.0.1:9200/"},
@@ -52,7 +66,10 @@
         "uv.lock",
         ".python-version",
         "scripts/bootstrap_env.ps1",
-        "scripts/bootstrap_env.sh"
+        "scripts/bootstrap_env.sh",
+        "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
+        "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
+        "scripts/grand_reset/01_wsl_bootstrap.sh"
       ]
     },
     "L1": {
@@ -90,6 +107,7 @@
         "src/tier0_sota/live/scanner.py",
         "src/tier0_sota/live/paper_farm.py",
         "scripts/run_live_paper_farm.ps1",
+        "scripts/grand_reset/03_hosted_stack_tv_paper.ps1",
         "src/tier0_sota/tv/bridge.py",
         "src/tier0_sota/tv/tickets.py",
         "src/tier0_sota/tv/schema_v1.json",
@@ -109,8 +127,17 @@
       "repo_artifacts": [
         "src/tier0_sota/research.py",
         "src/tier0_sota/live/performance.py",
+        "zensical.toml",
+        "docs/index.md",
+        "docs/adr/CATALOG.md",
+        "docs/adr/ADR-0001.md",
+        "docs/adr/ADR-0012.md",
         "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
-        "docs/ARCHITECTURE_LAYER_MANIFEST.md"
+        "docs/ARCHITECTURE_LAYER_MANIFEST.md",
+        "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
+        "docker/compose.sota.yml",
+        "docker/prometheus.yml",
+        "docker/dagster.yaml"
       ]
     },
     "L7": {
@@ -122,6 +149,7 @@
         "rules/zero_self_invention.yml",
         ".gitleaks.toml",
         ".pre-commit-config.yaml",
+        "scripts/grand_reset/verify_grand_reset.ps1",
         "tests/test_core_engine.py",
         "tests/test_live_automation.py",
         "tests/test_tv_automation.py",
@@ -133,7 +161,11 @@
       "name": "Agent Evals & Prompt Optimization",
       "winners": ["inspect-ai", "dspy"],
       "rejected_overlaps": ["deepeval"],
-      "repo_artifacts": ["pyproject.toml", "upstream-map.toml"]
+      "repo_artifacts": [
+        "pyproject.toml",
+        "upstream-map.toml",
+        "SOTA_STARRED_AND_BEYOND_MANIFEST.json"
+      ]
     },
     "L9": {
       "name": "Multi-Model Harness, Code Graph & Upstream MCPs",
@@ -141,12 +173,22 @@
       "rejected_overlaps": ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"],
       "repo_artifacts": [
         "orca.yaml",
+        "UPSTREAM_SKILLS_LOCK.json",
         ".mcp.json",
         ".claude/settings.json",
+        ".claude/agents/tier0-grand-central.md",
+        ".claude/agents/paper-gatekeeper.md",
+        ".claude/commands/grand-reset-verify.md",
+        ".claude/mcp-lanes/sim.mcp.json",
+        ".claude/mcp-lanes/paper.mcp.json",
+        ".claude/mcp-lanes/tv.mcp.json",
+        ".claude/mcp-lanes/gate.mcp.json",
         ".codex/config.toml",
         ".gemini/settings.json",
         "opencode.json",
-        "scripts/nautilus_mcp_server.py"
+        ".opencode/commands/verify-tier0.md",
+        "scripts/nautilus_mcp_server.py",
+        "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1"
       ]
     }
   },
@@ -157,7 +199,13 @@
     "lane_launcher": "scripts/launch_clean_lanes.ps1",
     "paper_farm": "scripts/run_live_paper_farm.ps1",
     "tv_console": "scripts/tv_console.ps1",
-    "mcp_server": "scripts/nautilus_mcp_server.py"
+    "mcp_server": "scripts/nautilus_mcp_server.py",
+    "grand_reset_00": "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
+    "grand_reset_01": "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
+    "grand_reset_01_wsl": "scripts/grand_reset/01_wsl_bootstrap.sh",
+    "grand_reset_02": "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
+    "grand_reset_03": "scripts/grand_reset/03_hosted_stack_tv_paper.ps1",
+    "grand_reset_verify": "scripts/grand_reset/verify_grand_reset.ps1"
   },
   "advisory_loc_telemetry": {
     "src/tier0_sota/__init__.py": 6,
@@ -175,6 +223,22 @@
     "total_production_loc": 3700
   },
   "repository_files": [
+    ".claude/agents/code-intel-redteam.md",
+    ".claude/agents/memory-rag-evolution.md",
+    ".claude/agents/observability-operator.md",
+    ".claude/agents/paper-gatekeeper.md",
+    ".claude/agents/pit-data-engineer.md",
+    ".claude/agents/quant-falsifier.md",
+    ".claude/agents/tier0-grand-central.md",
+    ".claude/commands/grand-reset-verify.md",
+    ".claude/commands/lane-live.md",
+    ".claude/commands/lane-paper.md",
+    ".claude/commands/lane-sim.md",
+    ".claude/commands/lane-tv.md",
+    ".claude/mcp-lanes/gate.mcp.json",
+    ".claude/mcp-lanes/paper.mcp.json",
+    ".claude/mcp-lanes/sim.mcp.json",
+    ".claude/mcp-lanes/tv.mcp.json",
     ".claude/settings.json",
     ".codex/config.toml",
     ".editorconfig",
@@ -184,14 +248,41 @@
     ".gitignore",
     ".gitleaks.toml",
     ".mcp.json",
+    ".opencode/commands/verify-tier0.md",
     ".pre-commit-config.yaml",
     ".python-version",
     "AGENTS.md",
     "ARCHITECTURE_MANIFEST.json",
     "README.md",
+    "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+    "UPSTREAM_SKILLS_LOCK.json",
+    "docker/Dockerfile.research",
+    "docker/Dockerfile.sandbox",
+    "docker/Dockerfile.xerj",
+    "docker/compose.sota.yml",
+    "docker/dagster.yaml",
+    "docker/grafana/dashboards/tier0-sota-observability.json",
+    "docker/grafana/provisioning/dashboards/provider.yml",
+    "docker/grafana/provisioning/datasources/prometheus.yml",
+    "docker/prometheus.yml",
     "docs/ARCHITECTURE_LAYER_MANIFEST.md",
     "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
+    "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
     "docs/TV_AUTOMATION_PLAYBOOK.md",
+    "docs/adr/ADR-0001.md",
+    "docs/adr/ADR-0002.md",
+    "docs/adr/ADR-0003.md",
+    "docs/adr/ADR-0004.md",
+    "docs/adr/ADR-0005.md",
+    "docs/adr/ADR-0006.md",
+    "docs/adr/ADR-0007.md",
+    "docs/adr/ADR-0008.md",
+    "docs/adr/ADR-0009.md",
+    "docs/adr/ADR-0010.md",
+    "docs/adr/ADR-0011.md",
+    "docs/adr/ADR-0012.md",
+    "docs/adr/CATALOG.md",
+    "docs/index.md",
     "opencode.json",
     "orca.yaml",
     "pine/tier0_market_regime.pine",
@@ -200,6 +291,12 @@
     "rules/zero_self_invention.yml",
     "scripts/bootstrap_env.ps1",
     "scripts/bootstrap_env.sh",
+    "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
+    "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
+    "scripts/grand_reset/01_wsl_bootstrap.sh",
+    "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
+    "scripts/grand_reset/03_hosted_stack_tv_paper.ps1",
+    "scripts/grand_reset/verify_grand_reset.ps1",
     "scripts/launch_clean_lanes.ps1",
     "scripts/nautilus_mcp_server.py",
     "scripts/run_live_paper_farm.ps1",
@@ -225,7 +322,8 @@
     "tests/test_mcp_server.py",
     "tests/test_tv_automation.py",
     "upstream-map.toml",
-    "uv.lock"
+    "uv.lock",
+    "zensical.toml"
   ],
   "workstation_topology": {
     "active_repo": "Z:\\tier0-sota-clean",

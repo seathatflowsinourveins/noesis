@@ -1,0 +1,79 @@
+[project]
+site_name = "tier0-sota-clean — Tier-0 SOTA Architecture & Grand-Reset Portal"
+site_description = "Clean-room Python 3.13 Tier-0 SOTA quantitative architecture, bounded evolvable MADR 4.0 ADRs (ADR-0001..ADR-0012), 13-portal research stack, and Disk-Z + WSL2 Grand-Reset runbook."
+docs_dir = "docs"
+site_dir = "site"
+
+nav = [
+  { "Overview" = "index.md" },
+  { "Architecture Layer Manifest" = "ARCHITECTURE_LAYER_MANIFEST.md" },
+  { "Clean Ecosystem Manifest" = "CLEAN_ECOSYSTEM_MANIFEST.md" },
+  { "Grand-Reset Disk-Z & WSL2 Runbook" = "GRAND_RESET_DISK_Z_WSL_RUNBOOK.md" },
+  { "TradingView Automation Playbook" = "TV_AUTOMATION_PLAYBOOK.md" },
+  { "ADR Catalog (ADR-0001..0012)" = "adr/CATALOG.md" },
+  { "ADR-0001: Architecture Layers & AST Zero-Self-Invention" = "adr/ADR-0001.md" },
+  { "ADR-0002: Dual-Flywheel Compounding Learning Harness" = "adr/ADR-0002.md" },
+  { "ADR-0003: Causal Point-in-Time Data Plane" = "adr/ADR-0003.md" },
+  { "ADR-0004: Single-Engine Trading Parity" = "adr/ADR-0004.md" },
+  { "ADR-0005: Formal Immutable Decimal Risk Kernel" = "adr/ADR-0005.md" },
+  { "ADR-0006: 6-Gate Statistical Falsification" = "adr/ADR-0006.md" },
+  { "ADR-0007: 24/5 Session Protection & Progressive R-Lock" = "adr/ADR-0007.md" },
+  { "ADR-0008: Market-Aligned Short & Extreme-Mover RPM" = "adr/ADR-0008.md" },
+  { "ADR-0009: Stationary 4-Account Paper Farm" = "adr/ADR-0009.md" },
+  { "ADR-0010: ToU-Compliant TradingView Pine v6 Bridge" = "adr/ADR-0010.md" },
+  { "ADR-0011: Official 13-Portal Observability Stack" = "adr/ADR-0011.md" },
+  { "ADR-0012: Multi-Runtime Harness & Grand-Reset" = "adr/ADR-0012.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.code.copy",
+  "content.code.select",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+toc.permalink = true
+pymdownx.betterem = {}
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tabbed.combine_header_slug = true
+pymdownx.tasklist.custom_checkbox = true

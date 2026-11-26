@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "codebase-memory": {
+      "type": "stdio",
+      "command": "codebase-memory-mcp",
+      "args": []
+    },
+    "xerj": {
+      "type": "stdio",
+      "command": "xerj",
+      "args": ["mcp"],
+      "env": {"XERJ_URL": "http://127.0.0.1:9200", "XERJ_DISABLE_FEEDBACK": "true"}
+    }
+  }
+}

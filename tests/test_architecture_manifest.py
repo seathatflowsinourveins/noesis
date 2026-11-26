@@ -27,6 +27,7 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     assert isinstance(safety, dict)
     assert safety["live_execution_enabled"] is False
     assert safety["paper_only"] is True
+    assert safety["zero_self_invented_hooks"] is True
     assert safety["loc_enforcement"] == "advisory"
     assert safety["forbidden_live_ports"] == [4001, 7496, 8798, 8796]
 
@@ -68,32 +69,76 @@ def test_layers_l0_to_l9_match_upstream_map() -> None:
         assert len(manifest_layers[key]["repo_artifacts"]) >= 1
 
 
-def test_4_runtime_mcp_parity_across_all_5_configs() -> None:
+def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
     manifest = _load_manifest()
     parity = manifest["mcp_parity"]
     assert isinstance(parity, dict)
     assert sorted(parity["servers"]) == EXPECTED_MCP_SERVERS
 
-    root_mcp = json.loads((REPO_ROOT / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
-    claude_mcp = json.loads((REPO_ROOT / ".claude/settings.json").read_text(encoding="utf-8"))[
-        "mcpServers"
-    ]
-    gemini_mcp = json.loads((REPO_ROOT / ".gemini/settings.json").read_text(encoding="utf-8"))[
-        "mcpServers"
-    ]
-    opencode_mcp = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))["mcp"]
-    codex_mcp = tomllib.loads((REPO_ROOT / ".codex/config.toml").read_text(encoding="utf-8"))[
-        "mcp_servers"
-    ]
+    assert not (REPO_ROOT / ".codex/hooks.json").exists()
+
+    root_cfg = json.loads((REPO_ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    claude_cfg = json.loads((REPO_ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
+    gemini_cfg = json.loads((REPO_ROOT / ".gemini/settings.json").read_text(encoding="utf-8"))
+    opencode_cfg = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))
+    codex_cfg = tomllib.loads((REPO_ROOT / ".codex/config.toml").read_text(encoding="utf-8"))
+
+    assert "hooks" not in claude_cfg
+    assert "hooks" not in gemini_cfg
+    assert "hooks" not in codex_cfg.get("features", {})
 
     for name, section in (
-        (".mcp.json", root_mcp),
-        (".claude/settings.json", claude_mcp),
-        (".gemini/settings.json", gemini_mcp),
-        ("opencode.json", opencode_mcp),
-        (".codex/config.toml", codex_mcp),
+        (".mcp.json", root_cfg["mcpServers"]),
+        (".claude/settings.json", claude_cfg["mcpServers"]),
+        (".gemini/settings.json", gemini_cfg["mcpServers"]),
+        ("opencode.json", opencode_cfg["mcp"]),
+        (".codex/config.toml", codex_cfg["mcp_servers"]),
     ):
         assert sorted(section.keys()) == EXPECTED_MCP_SERVERS, f"MCP mismatch in {name}"
+        if name == "opencode.json":
+            assert section["nautilus-engine"]["command"] == [
+                "uv",
+                "run",
+                "--no-sync",
+                "python",
+                "scripts/nautilus_mcp_server.py",
+            ]
+            assert section["edgartools"]["command"] == ["uv", "run", "--no-sync", "edgartools-mcp"]
+        else:
+            assert section["nautilus-engine"]["command"] == "uv"
+            assert section["nautilus-engine"]["args"] == [
+                "run",
+                "--no-sync",
+                "python",
+                "scripts/nautilus_mcp_server.py",
+            ]
+            assert section["edgartools"]["command"] == "uv"
+            assert section["edgartools"]["args"] == ["run", "--no-sync", "edgartools-mcp"]
+
+
+def test_few_line_harness_and_scoped_mcp_lanes() -> None:
+    agent_files = sorted((REPO_ROOT / ".claude/agents").glob("*.md"))
+    command_files = sorted((REPO_ROOT / ".claude/commands").glob("*.md"))
+    assert len(agent_files) == 7
+    assert len(command_files) == 5
+
+    for agent_file in agent_files:
+        assert len(agent_file.read_text(encoding="utf-8").splitlines()) <= 16, agent_file.name
+    for cmd_file in command_files:
+        assert len(cmd_file.read_text(encoding="utf-8").splitlines()) <= 10, cmd_file.name
+
+    gatekeeper = (REPO_ROOT / ".claude/agents/paper-gatekeeper.md").read_text(encoding="utf-8")
+    assert "permissionMode: plan" in gatekeeper
+
+    expected_lanes = {
+        "sim.mcp.json": ["codebase-memory", "edgartools", "nautilus-engine", "xerj"],
+        "paper.mcp.json": ["codebase-memory", "nautilus-engine", "xerj"],
+        "tv.mcp.json": ["nautilus-engine", "xerj"],
+        "gate.mcp.json": ["codebase-memory", "xerj"],
+    }
+    for fname, expected_servers in expected_lanes.items():
+        data = json.loads((REPO_ROOT / ".claude/mcp-lanes" / fname).read_text(encoding="utf-8"))
+        assert sorted(data["mcpServers"].keys()) == expected_servers
 
 
 def test_architecture_layer_doc_has_mermaid_and_layers() -> None:
@@ -101,3 +146,41 @@ def test_architecture_layer_doc_has_mermaid_and_layers() -> None:
     assert "```mermaid\nflowchart TD" in doc
     for idx in range(10):
         assert f"**L{idx}**" in doc
+
+
+def test_skills_lock_starred_manifest_and_grand_reset_artifacts() -> None:
+    manifest = _load_manifest()
+    raw_files = manifest["repository_files"]
+    assert isinstance(raw_files, list)
+    repo_files = set(raw_files)
+
+    skills_lock = json.loads((REPO_ROOT / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
+    assert skills_lock["schema"] == "tier0.upstream-skills-lock.v1"
+    assert skills_lock["skills_count"] == 46
+    assert len(skills_lock["skills"]) == 46
+
+    starred = json.loads(
+        (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
+    )
+    assert starred["schema_version"] == "tier0.sota-starred-beyond-manifest.v1"
+    assert starred["zero_self_invented_hooks"] is True
+    assert list(starred["active_winners_by_layer"].keys()) == [f"L{idx}" for idx in range(10)]
+    assert len(starred["frontier_queue"]) >= 6
+
+    required_grand_reset = {
+        "zensical.toml",
+        "docs/index.md",
+        "docs/adr/CATALOG.md",
+        "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
+        "docker/compose.sota.yml",
+        "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
+        "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
+        "scripts/grand_reset/01_wsl_bootstrap.sh",
+        "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
+        "scripts/grand_reset/03_hosted_stack_tv_paper.ps1",
+        "scripts/grand_reset/verify_grand_reset.ps1",
+        ".opencode/commands/verify-tier0.md",
+        "UPSTREAM_SKILLS_LOCK.json",
+        "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+    } | {f"docs/adr/ADR-{idx:04d}.md" for idx in range(1, 13)}
+    assert required_grand_reset.issubset(repo_files)
