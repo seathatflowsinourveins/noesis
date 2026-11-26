@@ -1321,3 +1321,7 @@ def test_paper_farm_start_loop_uses_zero_window_pythonw() -> None:
     assert "CREATE_NO_WINDOW = 0x08000000" in pyw_text
     assert "shell=True" not in pyw_text
     assert "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847" in pyw_text
+    assert "timeout=55.0 if args.observe else None" in pyw_text
+    assert "paper-farm-observe.lock" in pyw_text
+    assert "paper-farm-execution.lock" in pyw_text
+    assert "paper-farm-execution-health.json" in pyw_text

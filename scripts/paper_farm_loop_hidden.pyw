@@ -137,9 +137,13 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     manifest_dir = pathlib.Path(args.manifest_dir)
     logs_dir = manifest_dir.parent / "logs"
-    health_path = logs_dir / "paper-farm-observer-health.json"
-    lock_path = logs_dir / "paper-farm-loop.lock"
     intent = "--observe" if args.observe else "--confirm-paper"
+    health_path = logs_dir / (
+        "paper-farm-observer-health.json" if args.observe else "paper-farm-execution-health.json"
+    )
+    lock_path = logs_dir / (
+        "paper-farm-observe.lock" if args.observe else "paper-farm-execution.lock"
+    )
 
     lock_handle = _acquire_single_instance_lock(lock_path)
     if lock_handle is None:
@@ -200,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
             capture_output=True,
             text=True,
-            timeout=55.0,
+            timeout=55.0 if args.observe else None,
             check=False,
             creationflags=CREATE_NO_WINDOW,
             stdin=subprocess.DEVNULL,
