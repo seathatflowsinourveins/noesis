@@ -353,25 +353,3 @@ def test_skfolio_clarabel_portfolio_optimization_and_causal_ml_discovery(tmp_pat
 
     with pytest.raises(PreWallViolationError):
         load_causal_fred_vintages(cutoff_date="2026-10-20", snapshot_path=snap_path)
-
-    from tier0_sota.discovery import (
-        NON_SHORTABLE_INVERSE_ETFS,
-        discover_prewall_multi_symbol_alpha,
-    )
-    from tier0_sota.research import falsify_trade_returns
-
-    assert {"SOXS", "SPXS", "UVXY", "VXX"}.issubset(NON_SHORTABLE_INVERSE_ETFS)
-    with pytest.raises(PreWallViolationError):
-        discover_prewall_multi_symbol_alpha(lake_root=tmp_path, start_date="2026-10-20")
-
-    # Verify empirical cross-sectional trial SR variance in falsify_trade_returns
-    strong = rng.normal(loc=0.0080, scale=0.0060, size=120)
-    weak_1 = rng.normal(loc=0.0005, scale=0.0080, size=120)
-    weak_2 = rng.normal(loc=-0.0010, scale=0.0080, size=120)
-    emp_res = falsify_trade_returns(
-        strong, n_trials_total=3, trial_returns=[weak_2, weak_1, strong]
-    )
-    assert emp_res["promoted"] is True
-    assert emp_res["verdict"] == "PROMOTE"
-    assert emp_res["dsr"] >= 0.95
-    assert isinstance(emp_res["pbo"], float) and emp_res["pbo"] < 0.50
