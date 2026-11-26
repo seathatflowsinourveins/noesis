@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 142,
+    "repository_files_count": 143,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -688,6 +688,7 @@
     "src/tier0_sota/tv/tickets.py",
     "tests/test_architecture_manifest.py",
     "tests/test_core_engine.py",
+    "tests/test_definitions.py",
     "tests/test_formal_and_evals.py",
     "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",

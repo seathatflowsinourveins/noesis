@@ -7,7 +7,13 @@ import json
 import os
 from pathlib import Path
 
-from dagster import Definitions, ScheduleDefinition, asset, define_asset_job
+from dagster import (
+    DefaultScheduleStatus,
+    Definitions,
+    ScheduleDefinition,
+    asset,
+    define_asset_job,
+)
 from evals.dspy_self_reflect import verify_dspy_reflection_module
 from evals.tier0_inspect_eval import verify_inspect_safety_suite
 
@@ -58,12 +64,24 @@ def paper_farm_performance_snapshot() -> dict[str, object]:
     if not manifest_path.is_file():
         return {"present": False, "paper_only": True, "live_execution_enabled": False}
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary = payload.get("summary") or {}
+    per_lane = payload.get("per_lane") or {}
+    combined_equity_usd = (
+        summary.get("combined_equity_usd", payload.get("combined_equity_usd"))
+        if isinstance(summary, dict)
+        else payload.get("combined_equity_usd")
+    )
+    accounts_count = (
+        len(per_lane)
+        if isinstance(per_lane, dict) and per_lane
+        else len(payload.get("accounts", {}))
+    )
     return {
         "present": True,
         "paper_only": bool(payload.get("paper_only", True)),
         "live_execution_enabled": bool(payload.get("live_execution_enabled", False)),
-        "combined_equity_usd": payload.get("combined_equity_usd"),
-        "accounts_count": len(payload.get("accounts", {})),
+        "combined_equity_usd": combined_equity_usd,
+        "accounts_count": accounts_count,
     }
 
 
@@ -120,6 +138,7 @@ daily_compounding_reflection_schedule = ScheduleDefinition(
     job=compounding_reflection_job,
     cron_schedule="0 18 * * 1-5",
     execution_timezone="America/New_York",
+    default_status=DefaultScheduleStatus.RUNNING,
 )
 
 defs = Definitions(
