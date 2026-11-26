@@ -231,6 +231,7 @@ foreach ($acct in @("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")) {
     $duckFiles = @(Get-ChildItem -LiteralPath $ManifestDir -Filter "*${laneTag}*.duckdb" -File -ErrorAction SilentlyContinue)
     $paperOnly = $false
     $liveDisabled = $false
+    $liveEnabled = $false
     $heartbeat = ""
     $fresh = $false
     if (Test-Path -LiteralPath $statusFile) {
@@ -238,6 +239,7 @@ foreach ($acct in @("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")) {
             $st = Get-Content -LiteralPath $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json
             $paperOnly = ($st.paper_only -eq $true)
             $liveDisabled = ($st.live_execution_enabled -eq $false)
+            $liveEnabled = ($st.live_execution_enabled -eq $true)
             $hbProp = $st.PSObject.Properties["heartbeat_utc"]
             $genProp = $st.PSObject.Properties["generated_at_utc"]
             $rawTs = $null
@@ -271,7 +273,7 @@ foreach ($acct in @("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")) {
         status_present         = (Test-Path -LiteralPath $statusFile)
         duckdb_present         = ($duckFiles.Count -gt 0)
         paper_only             = $paperOnly
-        live_execution_enabled = $liveDisabled
+        live_execution_enabled = $liveEnabled
         heartbeat_utc          = $heartbeat
         heartbeat_fresh        = $fresh
     }
