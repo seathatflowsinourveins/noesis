@@ -6,7 +6,7 @@
     Verifies:
       1. Clean .venv (Python 3.13 + pinned upstream imports) and immutable risk.py SHA-256
       2. 4-runtime MCP parity (.mcp.json, Claude, Codex, Gemini, OpenCode)
-      3. 13 hosted SOTA portals HTTP health on 127.0.0.1
+      3. 15 hosted SOTA portals HTTP health on 127.0.0.1
       4. 4-account Paper Farm readiness (ALPACA_PA1..PA3 + IBKR_DU_4002)
       5. Fail-closed zero live broker ports (:4001, :7496, :8798, :8796)
 #>
@@ -238,9 +238,23 @@ foreach ($acct in @("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")) {
             $st = Get-Content -LiteralPath $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json
             $paperOnly = ($st.paper_only -eq $true)
             $liveDisabled = ($st.live_execution_enabled -eq $false)
-            $heartbeat = [string]$st.heartbeat_utc
-            if ($heartbeat) {
-                $dt = [datetimeoffset]::Parse($heartbeat)
+            $hbProp = $st.PSObject.Properties["heartbeat_utc"]
+            $genProp = $st.PSObject.Properties["generated_at_utc"]
+            $rawTs = $null
+            if ($null -ne $hbProp -and -not [string]::IsNullOrWhiteSpace([string]$hbProp.Value)) {
+                $rawTs = $hbProp.Value
+            } elseif ($null -ne $genProp -and -not [string]::IsNullOrWhiteSpace([string]$genProp.Value)) {
+                $rawTs = $genProp.Value
+            }
+            if ($null -ne $rawTs) {
+                $dt = if ($rawTs -is [datetimeoffset]) {
+                    $rawTs.ToUniversalTime()
+                } elseif ($rawTs -is [datetime]) {
+                    [datetimeoffset]::new($rawTs.ToUniversalTime(), [timespan]::Zero)
+                } else {
+                    [datetimeoffset]::Parse(([string]$rawTs).Trim()).ToUniversalTime()
+                }
+                $heartbeat = $dt.ToString("o")
                 $fresh = (([datetimeoffset]::UtcNow - $dt).TotalSeconds -lt 180)
             }
             if (-not $paperOnly -or -not $liveDisabled) {

@@ -135,5 +135,28 @@ account-switch:
 reflect *args:
     {{uv_run}} python scripts/run_compounding_reflection.py {{args}}
 
+# Run full fail-closed ecosystem automation cycle (reconcile -> portals/TV -> scan -> paper-farm -> reflect -> verify)
+[windows]
+automate: resume
+    pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/03_hosted_stack_tv_paper.ps1
+    pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode scan
+    pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode paper-farm -ConfirmPaper
+    just reflect
+    pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/verify_grand_reset.ps1
+
+# Run full fail-closed ecosystem automation cycle (reconcile -> reflect -> check -> docs-build)
+[unix]
+automate: resume reflect check docs-build
+
+# Launch a fresh Antigravity window attached to Z:\noesis (without killing running instances)
+[windows]
+open-agy:
+    Start-Process (Join-Path $env:LOCALAPPDATA 'Programs\antigravity\Antigravity.exe') -ArgumentList @('--new-window', 'Z:\noesis') -WorkingDirectory 'Z:\noesis'
+
+# Launch a fresh Antigravity window attached to Z:\noesis (Windows-only helper)
+[unix]
+open-agy:
+    @echo "open-agy is Windows-only; run 'just open-agy' from Windows pwsh."
+
 # Run complete local SOTA verification suite
 check: fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke test gitleaks

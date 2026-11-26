@@ -1,9 +1,9 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Brings up/verifies the 13 hosted SOTA portals, TradingView Pine v6 pack, and Paper Farm.
+    Brings up/verifies the 15 hosted SOTA portals, TradingView Pine v6 pack, and Paper Farm.
 .DESCRIPTION
-    Idempotently checks/starts docker/compose.sota.yml, verifies all 13 loopback portals,
+    Idempotently checks/starts docker/compose.sota.yml, verifies all 15 loopback portals,
     refreshes TradingView Half-Auto tickets/watchlists via tv_console.ps1 helpers, runs
     Paper Farm preflight, and emits paper_farm_live_performance_manifest.json +
     finos_paper_farm_performance.json (strictly paper_only=$true, live_execution_enabled=$false).
@@ -62,7 +62,9 @@ $Portals = @(
     "http://127.0.0.1:8793/",
     "http://127.0.0.1:1420/",
     "http://127.0.0.1:8000/health",
-    "http://127.0.0.1:6900/"
+    "http://127.0.0.1:6900/",
+    "http://127.0.0.1:4213/",
+    "http://127.0.0.1:13133/"
 )
 
 $PyExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
