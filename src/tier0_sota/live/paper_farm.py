@@ -41,6 +41,17 @@ ALPACA_LANE_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+def default_manifest_dir() -> Path:
+    """Resolve manifest directory via TIER0_DATA_ROOT (default Z:/sota-data)."""
+    root = os.environ.get("TIER0_DATA_ROOT", "").strip() or r"Z:\sota-data"
+    return Path(root) / "manifests"
+
+
+def _duckdb_filename(account: str) -> str:
+    short = account.lower().removeprefix("alpaca_").replace("ibkr_du_4002", "ibkr")
+    return f"paper_lane_{short}.duckdb"
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -134,7 +145,7 @@ class AlpacaPaperLane:
 
     @property
     def duckdb_path(self) -> Path:
-        return self.manifest_dir / f"{self.account.lower()}_seamless_orders.duckdb"
+        return self.manifest_dir / _duckdb_filename(self.account)
 
     def _record_order(self, row: tuple[Any, ...]) -> None:
         self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)

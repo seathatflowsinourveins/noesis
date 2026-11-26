@@ -2,7 +2,34 @@
   "schema_version": "tier0.sota-starred-beyond-manifest.v1",
   "repo_name": "tier0-sota-clean",
   "zero_self_invented_hooks": true,
-  "static_security_gate_home": [".pre-commit-config.yaml", "rules/zero_self_invention.yml", "pytest"],
+  "standalone_repo": true,
+  "static_security_gate_home": [".pre-commit-config.yaml", "rules/zero_self_invention.yml", "pytest", "deptry"],
+  "spdx_license_firewall": [
+    {
+      "repo": "treeverse/lakeFS",
+      "spdx": "BSL-1.1",
+      "decision": "excluded",
+      "reason": "Non-OSI source-available license excluded under Tier-0 SPDX OSI firewall."
+    },
+    {
+      "repo": "restatedev/restate",
+      "spdx": "BSL-1.1",
+      "decision": "excluded",
+      "reason": "Non-OSI source-available license excluded under Tier-0 SPDX OSI firewall."
+    },
+    {
+      "repo": "Arize-ai/phoenix",
+      "spdx": "ELv2",
+      "decision": "excluded",
+      "reason": "Non-OSI Elastic License 2.0 excluded under Tier-0 SPDX OSI firewall."
+    },
+    {
+      "repo": "NX-AI/tirex",
+      "spdx": "custom",
+      "decision": "excluded",
+      "reason": "Custom non-OSI license excluded under Tier-0 SPDX OSI firewall."
+    }
+  ],
   "active_winners_by_layer": {
     "L0": {
       "name": "Runtime, Lockfile & Provenance",
@@ -11,12 +38,28 @@
     },
     "L1": {
       "name": "Data, Schema Validation, Calendars & Causal PIT",
-      "winners": ["pola-rs/polars", "duckdb/duckdb", "unionai-oss/pandera", "stefanhoelzl/exchange_calendars", "dgunning/edgartools", "mortada/fredapi", "iterative/dvc"],
+      "winners": [
+        "pola-rs/polars",
+        "duckdb/duckdb",
+        "unionai-oss/pandera",
+        "stefanhoelzl/exchange_calendars",
+        "dgunning/edgartools",
+        "mortada/fredapi",
+        "treeverse/dvc"
+      ],
       "artifacts": ["src/tier0_sota/discovery.py", "src/tier0_sota/live/paper_farm.py"]
     },
     "L2": {
-      "name": "Features, Streaming Drift, Regime Change & ML",
-      "winners": ["ml4t/engineer", "online-ml/river", "deepcharles/ruptures", "TDAmeritrade/stumpy", "microsoft/LightGBM", "catboost/catboost", "shap/shap"],
+      "name": "Features, Streaming Drift, Regime Change, Explainability & ML",
+      "winners": [
+        "ml4t/engineer",
+        "online-ml/river",
+        "deepcharles/ruptures",
+        "stumpy-dev/stumpy",
+        "microsoft/LightGBM",
+        "catboost/catboost",
+        "shap/shap"
+      ],
       "artifacts": ["src/tier0_sota/discovery.py"]
     },
     "L3": {
@@ -27,81 +70,199 @@
     "L4": {
       "name": "Paper Broker Adapters & Market Data Feeds",
       "winners": ["alpacahq/alpaca-py", "tradermonty/claude-trading-skills"],
-      "artifacts": ["src/tier0_sota/live/scanner.py", "src/tier0_sota/live/paper_farm.py", "src/tier0_sota/tv/bridge.py", "src/tier0_sota/tv/tickets.py"]
+      "artifacts": [
+        "src/tier0_sota/live/scanner.py",
+        "src/tier0_sota/live/paper_farm.py",
+        "src/tier0_sota/tv/bridge.py",
+        "src/tier0_sota/tv/tickets.py"
+      ]
     },
     "L5": {
       "name": "Statistical Falsification & Portfolio Construction",
-      "winners": ["skfolio/skfolio", "ml4t/diagnostic", "bashtage/arch", "statsmodels/statsmodels", "ranaroussi/quantstats"],
+      "winners": ["skfolio/skfolio", "ml4t/diagnostic", "bashtage/arch", "statsmodels/statsmodels"],
       "artifacts": ["src/tier0_sota/research.py"]
     },
     "L6": {
-      "name": "Hosted Portals, Orchestration, Observability & ADR Docs",
-      "winners": ["dagster-io/dagster", "mlflow/mlflow", "optuna/optuna", "openbq-org/finos-workspace", "OpenBB-finance/OpenBB", "grafana/grafana", "prometheus/prometheus", "open-telemetry/opentelemetry-python", "zensical/zensical"],
-      "artifacts": ["docker/compose.sota.yml", "zensical.toml", "docs/adr/CATALOG.md", "src/tier0_sota/live/performance.py"]
+      "name": "Hosted Research Portals, Orchestration, Observability & ADR Docs",
+      "winners": [
+        "dagster-io/dagster",
+        "mlflow/mlflow",
+        "optuna/optuna",
+        "grafana/grafana",
+        "prometheus/prometheus",
+        "open-telemetry/opentelemetry-python",
+        "zensical/zensical"
+      ],
+      "artifacts": ["docker/compose.sota.yml", "zensical.toml", "docs/adr/CATALOG.md"]
     },
     "L7": {
-      "name": "Static Quality, AST, Fuzzing & Supply-Chain Security",
-      "winners": ["pre-commit/pre-commit", "j178/prek", "astral-sh/ruff", "astral-sh/ty", "ast-grep/ast-grep", "gitleaks/gitleaks", "HypothesisWorks/hypothesis", "pytest-dev/pytest"],
-      "artifacts": [".pre-commit-config.yaml", "sgconfig.yml", "rules/zero_self_invention.yml", ".gitleaks.toml", "tests/"]
+      "name": "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security",
+      "winners": [
+        "pre-commit/pre-commit",
+        "j178/prek",
+        "astral-sh/ruff",
+        "astral-sh/ty",
+        "ast-grep/ast-grep",
+        "gitleaks/gitleaks",
+        "HypothesisWorks/hypothesis",
+        "pytest-dev/pytest",
+        "Z3Prover/z3 (z3-solver)",
+        "fpgmaas/deptry",
+        "aquasecurity/trivy",
+        "anchore/syft",
+        "google/osv-scanner",
+        "koalaman/shellcheck",
+        "zizmorcore/zizmor"
+      ],
+      "artifacts": [
+        ".pre-commit-config.yaml",
+        "sgconfig.yml",
+        "rules/zero_self_invention.yml",
+        ".gitleaks.toml",
+        "evals/formal_risk_z3.py",
+        "tests/"
+      ]
     },
     "L8": {
-      "name": "Agent Evals & Prompt Optimization",
-      "winners": ["UKGovernmentBEIS/inspect_ai", "stanfordnlp/dspy"],
-      "artifacts": ["pyproject.toml", "upstream-map.toml"]
+      "name": "Agent Evals, Sandboxes & Prompt Optimization",
+      "winners": [
+        "UKGovernmentBEIS/inspect_ai",
+        "stanfordnlp/dspy",
+        "harbor-framework/harbor",
+        "promptfoo/promptfoo",
+        "NVIDIA/SkillEvaluator",
+        "OpenHands/OpenHands",
+        "WecoAI/aideml"
+      ],
+      "artifacts": ["evals/tier0_inspect_eval.py", "pyproject.toml", "upstream-map.toml"]
     },
     "L9": {
-      "name": "Multi-Model Harness, Code Graph & Upstream MCPs",
-      "winners": ["stablyai/orca", "DeusData/codebase-memory-mcp", "xerj-org/xerj", "dgunning/edgartools", "modelcontextprotocol/python-sdk"],
-      "artifacts": ["orca.yaml", ".mcp.json", ".claude/mcp-lanes/", "UPSTREAM_SKILLS_LOCK.json", "scripts/nautilus_mcp_server.py"]
+      "name": "Multi-Model Harness, Code Graph, Skills & Upstream MCPs",
+      "winners": [
+        "stablyai/orca",
+        "DeusData/codebase-memory-mcp",
+        "xerj-org/xerj",
+        "dgunning/edgartools",
+        "modelcontextprotocol/python-sdk"
+      ],
+      "artifacts": [
+        "orca.yaml",
+        ".mcp.json",
+        ".claude/mcp-lanes/",
+        ".claude/skills/",
+        "UPSTREAM_SKILLS_LOCK.json",
+        "scripts/nautilus_mcp_server.py"
+      ]
+    },
+    "L10": {
+      "name": "Institutional UI & Visual Analytics",
+      "winners": [
+        "openbq-org/finos-workspace",
+        "OpenBB-finance/OpenBB",
+        "finos/perspective",
+        "tradingview/lightweight-charts",
+        "ag-grid/ag-grid"
+      ],
+      "watches": ["rerun-io/rerun", "uwdata/mosaic", "finos/FDC3", "evidence-dev/evidence"],
+      "artifacts": ["src/tier0_sota/live/performance.py", "src/tier0_sota/tv/bridge.py", "docker/compose.sota.yml"]
     }
   },
   "skills_lock": {
     "path": "UPSTREAM_SKILLS_LOCK.json",
+    "skills_dir": ".claude/skills",
     "skills_count": 46,
-    "includes": ["tradermonty/claude-trading-skills", "ml4t/skills", "openbq-org/finos-workspace", "tradingview/lightweight-charts", "dagster-io/dagster"]
+    "includes": [
+      "tradermonty/claude-trading-skills",
+      "ml4t/skills",
+      "openbq-org/finos-workspace",
+      "tradingview/lightweight-charts",
+      "dagster-io/dagster"
+    ]
   },
-  "frontier_queue": [
-    {
-      "slug": "UKGovernmentBEIS/inspect_scout",
-      "layer": "L8",
-      "mode": "eval-audit",
-      "status": "queued",
-      "why": "Agent transcript & red-team failure mode scanner complementing Inspect AI."
+  "earned_trigger_frontier_l11_to_l15": {
+    "L11": {
+      "name": "High-Volume Data Lake, Multimodal Filings & SQL Lint",
+      "candidates": [
+        {"slug": "vortex-data/vortex", "trigger": "lake > 100 GB/run"},
+        {"slug": "lancedb/lancedb", "trigger": "multimodal SEC filings"},
+        {"slug": "tobymao/sqlglot", "trigger": "PIT SQL static transpilation"},
+        {"slug": "dlt-hub/dlt", "trigger": "declarative PIT ingest pipelines"}
+      ]
     },
-    {
-      "slug": "gepa-ai/gepa",
-      "layer": "L8",
-      "mode": "prompt-evolution",
-      "status": "queued",
-      "why": "Reflective prompt optimizer already transitive in uv.lock via dspy."
+    "L12": {
+      "name": "Tabular Foundation, Time-Series Foundation, Drift & Attribution",
+      "candidates": [
+        {"slug": "PriorLabs/TabPFN", "trigger": "tabular baseline benchmark"},
+        {"slug": "soda-inria/tabicl", "alias": "TabICLv2", "trigger": "in-context tabular benchmark"},
+        {"slug": "yandex-research/tabm", "alias": "TabM", "trigger": "parameter-efficient MLP tabular"},
+        {"slug": "autogluon/tabarena", "alias": "TabArena", "trigger": "tabular arena evaluation"},
+        {"slug": "amazon-science/chronos-forecasting", "alias": "Chronos-2", "trigger": "L5 proof + pre-wall audit"},
+        {"slug": "SalesforceAIResearch/toto", "alias": "Toto", "trigger": "time-series foundation eval"},
+        {"slug": "SalesforceAIResearch/gift-eval", "alias": "GIFT-Eval", "trigger": "time-series benchmark gate"},
+        {"slug": "mmschlk/shapiq", "alias": "shapiq", "trigger": "interaction Shapley attribution"},
+        {"slug": "evidentlyai/evidently", "alias": "evidently", "trigger": "production feature drift"},
+        {"slug": "NorskRegnesentral/skchange", "alias": "skchange", "trigger": "online changepoint upgrade"}
+      ]
     },
-    {
-      "slug": "SakanaAI/ShinkaEvolve",
-      "layer": "L8",
-      "mode": "sandbox-evolution",
-      "status": "queued",
-      "why": "Sample-efficient evolutionary loop for sandboxed strategy hypothesis refinement."
+    "L13": {
+      "name": "Zero-Copy IPC, Generative L2 Sim, Portfolio Opt, Causal & UQ",
+      "candidates": [
+        {"slug": "eclipse-iceoryx/iceoryx2", "trigger": "zero-copy Rust IPC"},
+        {"slug": "microsoft/MarS", "trigger": "generative L2 market simulation"},
+        {"slug": "peernagy/LOBS5", "trigger": "state-space LOB simulation"},
+        {"slug": "cvxgrp/cvxportfolio", "trigger": "> 10 concurrent multi-day positions"},
+        {"slug": "oxfordcontrol/Clarabel.rs", "trigger": "conic portfolio solver"},
+        {"slug": "ERGO-Code/HiGHS", "trigger": "MILP/LP portfolio constraints"},
+        {"slug": "DoubleML/doubleml-for-py", "alias": "DoubleML", "trigger": "causal factor neutralization"},
+        {"slug": "pytorch/botorch", "alias": "BoTorch", "trigger": "multi-objective Bayesian HPO"},
+        {"slug": "facebook/Ax", "alias": "Ax", "trigger": "adaptive experimentation"},
+        {"slug": "scikit-learn-contrib/MAPIE", "alias": "MAPIE", "trigger": "conformal prediction intervals"}
+      ]
     },
-    {
-      "slug": "snyk/agent-scan",
-      "layer": "L7",
-      "mode": "mcp-security-audit",
-      "status": "queued",
-      "why": "Static MCP & skill supply-chain scanner across 4-runtime configs."
+    "L14": {
+      "name": "Interactive Notebooks, Durable Workflows, Observability & LLM Tracing",
+      "candidates": [
+        {"slug": "marimo-team/marimo", "trigger": "reactive Python research apps"},
+        {"slug": "temporalio/temporal", "alias": "Temporal", "trigger": "durable multi-hour loops"},
+        {"slug": "grafana/loki", "trigger": "24/5 centralized logs"},
+        {"slug": "grafana/tempo", "trigger": "distributed OTel trace storage"},
+        {"slug": "grafana/pyroscope", "trigger": "continuous Rust/Python profiling"},
+        {"slug": "prometheus/alertmanager", "trigger": "24/5 alert routing"},
+        {"slug": "open-telemetry/opentelemetry-collector", "alias": "OTel Collector", "trigger": "unified telemetry fan-out"},
+        {"slug": "langfuse/langfuse", "trigger": "LLM trace scaling beyond MLflow"}
+      ]
     },
-    {
-      "slug": "alpacahq/alpaca-mcp-server",
-      "layer": "L4",
-      "mode": "paper-only",
-      "status": "queued",
-      "why": "Upstream Alpaca MCP gated strictly to paper-api.alpaca.markets with live endpoints refused."
-    },
-    {
-      "slug": "tradingview-mcp",
-      "layer": "L4",
-      "mode": "display-only",
-      "status": "queued",
-      "why": "Read-only/display-only Pine/chart companion with zero CDP :9223 or auto-submit."
+    "L15": {
+      "name": "Formal Verification, Sandboxes, Red-Teaming, Evolution & Agent Protocols",
+      "candidates": [
+        {"slug": "pschanely/CrossHair", "trigger": "symbolic execution on risk.py"},
+        {"slug": "boxed/mutmut", "trigger": "mutation testing on risk.py"},
+        {"slug": "semgrep/semgrep", "trigger": "cross-file SAST rules"},
+        {"slug": "sigstore/cosign", "trigger": "container artifact signing"},
+        {"slug": "slsa-framework/slsa-verifier", "trigger": "build provenance verification"},
+        {"slug": "open-policy-agent/opa", "trigger": "policy-as-code admission gates"},
+        {"slug": "microsoft/PyRIT", "trigger": "automated LLM red-teaming"},
+        {"slug": "ethz-spylab/agentdojo", "trigger": "prompt-injection benchmark"},
+        {"slug": "superradcompany/microsandbox", "trigger": "libkrun microVM agent isolation"},
+        {"slug": "pydantic/monty", "trigger": "Rust Python sandbox"},
+        {"slug": "gvisor/gvisor", "trigger": "user-space container kernel"},
+        {"slug": "e2b-dev/E2B", "trigger": "cloud microVM sandbox"},
+        {"slug": "UKGovernmentBEIS/inspect_scout", "trigger": "agent transcript failure scanner"},
+        {"slug": "gepa-ai/gepa", "trigger": "reflective prompt evolution"},
+        {"slug": "SakanaAI/ShinkaEvolve", "trigger": "sandbox evolutionary coding"},
+        {"slug": "algorithmicsuperintelligence/openevolve", "trigger": "open-ended evolutionary search"},
+        {"slug": "snyk/agent-scan", "trigger": "static MCP & skill supply-chain audit"},
+        {"slug": "agentskills/agentskills", "trigger": "cross-runtime skill spec"},
+        {"slug": "a2aproject/A2A", "trigger": "agent-to-agent interoperability"},
+        {"slug": "agentclientprotocol/agent-client-protocol", "alias": "ACP", "trigger": "client/editor agent protocol"},
+        {"slug": "ag-ui-protocol/ag-ui", "trigger": "agent-to-UI event stream"},
+        {"slug": "jlowin/fastmcp", "trigger": "Pythonic MCP server primitives"},
+        {"slug": "pydantic/pydantic-ai", "trigger": "typed agent orchestration"},
+        {"slug": "upstash/context7", "trigger": "live versioned library docs MCP"},
+        {"slug": "vectorize-io/hindsight", "trigger": "long-horizon agent memory"},
+        {"slug": "alpacahq/alpaca-mcp-server", "mode": "paper-only", "trigger": "paper-api.alpaca.markets MCP"},
+        {"slug": "tradingview-mcp", "mode": "display-only", "trigger": "display-only Pine/chart MCP"}
+      ]
     }
-  ]
+  }
 }

@@ -17,6 +17,7 @@ banned_libraries = [
 ]
 banned_packages = [
   "yfinance",
+  "quantstats",
   "backtrader",
   "backtesting",
   "zipline-reloaded",
@@ -49,6 +50,12 @@ banned_packages = [
   "mypy",
   "pyright",
 ]
+spdx_license_firewall = [
+  { repo = "treeverse/lakeFS", license = "BSL-1.1", reason = "Non-OSI source-available license" },
+  { repo = "restatedev/restate", license = "BSL-1.1", reason = "Non-OSI source-available license" },
+  { repo = "Arize-ai/phoenix", license = "ELv2", reason = "Non-OSI Elastic License 2.0" },
+  { repo = "NX-AI/tirex", license = "custom", reason = "Non-OSI custom research license" },
+]
 loc_enforcement = "advisory"
 advisory_production_loc = 1800
 advisory_risk_loc = 400
@@ -56,7 +63,7 @@ default_advisory_module_loc = 400
 
 # Advisory telemetry LOC targets (never used as brittle build-failing gates or to force code-golfing;
 # Zero Self-Invention is strictly enforced via ast-grep rules, banned-package locks, exact risk.py SHA-256,
-# and live_execution_enabled = False).
+# Z3 SMT proofs, and live_execution_enabled = False).
 [rules.advisory_module_loc]
 "src/tier0_sota/risk.py" = 400
 "src/tier0_sota/engine.py" = 650
@@ -75,12 +82,12 @@ rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools"]
 
 [layers.L1]
 name = "Data, Schema Validation, Calendars & Causal PIT"
-winners = ["polars", "duckdb", "pandera", "exchange_calendars", "edgartools", "fredapi", "dvc"]
+winners = ["polars", "duckdb", "pandera", "exchange_calendars", "edgartools", "fredapi", "treeverse/dvc"]
 rejected_overlaps = ["pandas-datareader", "yfinance", "clickhouse-local-server"]
 
 [layers.L2]
 name = "Features, Streaming Drift, Regime Change, Explainability & ML"
-winners = ["ml4t-engineer", "river", "ruptures", "stumpy", "lightgbm", "catboost", "shap"]
+winners = ["ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap"]
 rejected_overlaps = ["ta-lib", "sktime", "fingpt", "finrl", "rd-agent"]
 
 [layers.L3]
@@ -90,33 +97,39 @@ rejected_overlaps = ["backtrader", "backtesting", "zipline-reloaded", "vectorbt"
 
 [layers.L4]
 name = "Paper Broker Adapters & Market Data Feeds"
-winners = ["alpaca-py"]
+winners = ["alpaca-py", "tradermonty/claude-trading-skills"]
 rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "nautilus-alpaca"]
 
 [layers.L5]
 name = "Statistical Falsification & Portfolio Construction"
-winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "quantstats"]
-rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab"]
+winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels"]
+rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab", "quantstats"]
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk", "grafana"]
 rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
 
 [layers.L7]
-name = "Static Quality, AST, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "pre-commit"]
+name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "osv-scanner", "shellcheck", "zizmor"]
 rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright"]
 
 [layers.L8]
-name = "Agent Evals & Prompt Optimization"
-winners = ["inspect-ai", "dspy"]
+name = "Agent Evals, Sandboxes & Prompt Optimization"
+winners = ["inspect-ai", "dspy", "harbor", "promptfoo", "skillevaluator", "OpenHands", "aideml"]
 rejected_overlaps = ["deepeval"]
 
 [layers.L9]
-name = "Multi-Model Harness, Code Graph & Upstream MCPs"
+name = "Multi-Model Harness, Code Graph, Skills & Upstream MCPs"
 winners = ["orca", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
 rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"]
+
+[layers.L10]
+name = "Institutional UI & Visual Analytics"
+winners = ["finos-workspace", "OpenBB", "perspective", "lightweight-charts", "ag-grid"]
+watches = ["rerun", "mosaic", "FDC3", "evidence"]
+rejected_overlaps = ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter"]
 
 [files."src/tier0_sota/__init__.py"]
 how = "install"
@@ -128,7 +141,7 @@ why = "Expose clean-room package metadata"
 how = "own-logic"
 upstream = "own-logic"
 feature = "Exact Decimal Rule-612 stop <=2.00%, latched -1.50% breaker, >=10% exit reserve"
-why = "Immutable pure Decimal Rule-612 risk kernel (SHA-pinned from tier0-quant)"
+why = "Immutable pure Decimal Rule-612 risk kernel (SHA-256 & Z3 UNSAT verified)"
 
 [files."src/tier0_sota/engine.py"]
 how = "integrate"
@@ -140,7 +153,7 @@ why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity direct
 [files."src/tier0_sota/discovery.py"]
 how = "integrate"
 upstream = "polars"
-secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy"]
+secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy"]
 feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), multi-feed regime & market-aligned reversal signal adapter"
 why = "Delegates causal data transforms, calendar ops, drift, changepoint & motif signals to pinned upstreams"
 

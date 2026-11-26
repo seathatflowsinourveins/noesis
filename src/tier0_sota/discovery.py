@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 from collections import deque
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
@@ -25,9 +26,29 @@ from nautilus_trader.indicators import SimpleMovingAverage, VolumeWeightedAverag
 from nautilus_trader.persistence import BarDataWrangler
 from river.drift import ADWIN
 
-DISCOVERY_WALL_DATE: date = date(2026, 10, 15)
-DISCOVERY_WALL_ISO: str = "2026-10-15"
-DISCOVERY_WALL_UTC_NS: int = 1_792_108_799_999_999_999
+_RAW_WALL_ISO = os.environ.get("TIER0_PREWALL_CUTOFF", "").strip() or "2026-10-15"
+DISCOVERY_WALL_DATE: date = date.fromisoformat(_RAW_WALL_ISO)
+DISCOVERY_WALL_ISO: str = DISCOVERY_WALL_DATE.isoformat()
+DISCOVERY_WALL_UTC_NS: int = (
+    int(
+        datetime(
+            DISCOVERY_WALL_DATE.year,
+            DISCOVERY_WALL_DATE.month,
+            DISCOVERY_WALL_DATE.day,
+            23,
+            59,
+            59,
+            tzinfo=UTC,
+        ).timestamp()
+    )
+    * 1_000_000_000
+    + 999_999_999
+)
+DEFAULT_DATA_ROOT: Path = Path(os.environ.get("TIER0_DATA_ROOT", "").strip() or "Z:/sota-data")
+DEFAULT_MARKET_DATA_ROOT: Path = Path(
+    os.environ.get("TIER0_MARKET_DATA_ROOT", "").strip()
+    or str(DEFAULT_DATA_ROOT / "prewall-lake")
+)
 BAR_DURATION_NS: int = 60_000_000_000
 WARMUP_BARS: int = 40
 FEATURE_COLS: list[str] = ["roc", "rsi", "natr", "vol_ratio"]
@@ -98,7 +119,11 @@ def validate_causal_bars(df: pl.DataFrame, *, validate: bool = True) -> pl.DataF
 
 
 def load_minute_bars_day(
-    day: date | str, *, symbols: Sequence[str] | None = None, root: Path, validate: bool = True
+    day: date | str,
+    *,
+    symbols: Sequence[str] | None = None,
+    root: Path = DEFAULT_MARKET_DATA_ROOT,
+    validate: bool = True,
 ) -> pl.DataFrame:
     """Load one pre-wall XNYS session of 1-minute SIP bars with causal `t_close_ns`."""
     d = assert_pre_wall_date(day)

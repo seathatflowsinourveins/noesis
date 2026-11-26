@@ -9,10 +9,10 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$DataRoot = "Z:\sota-data",
+    [string]$DataRoot = $(if ($env:TIER0_DATA_ROOT) { $env:TIER0_DATA_ROOT } else { "Z:\sota-data" }),
     [string]$CacheRoot = "Z:\sota-cache",
     [string]$ArchiveRoot = "Z:\archive",
-    [string]$WslDistro = "Noesis-SOTA",
+    [string]$WslDistro = $(if ($env:TIER0_WSL_DISTRO) { $env:TIER0_WSL_DISTRO } else { "Noesis-SOTA" }),
     [string]$WslUser = "sota",
     [switch]$DryRun
 )
@@ -20,7 +20,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ScriptRepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$RepoRoot = if ($env:TIER0_REPO_ROOT -and (Test-Path (Join-Path $env:TIER0_REPO_ROOT "src\tier0_sota"))) {
+    $env:TIER0_REPO_ROOT
+} else {
+    $ScriptRepoRoot
+}
 $ForbiddenLivePorts = @(4001, 7496, 8798, 8796)
 
 $ListeningLive = @(

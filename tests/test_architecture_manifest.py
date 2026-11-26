@@ -3,11 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import re
 import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXPECTED_RISK_SHA256 = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 EXPECTED_MCP_SERVERS = ["codebase-memory", "edgartools", "nautilus-engine", "xerj"]
+LEGACY_PATTERN = re.compile(
+    r"tier0-quant|CLEAN LIVE|sota-live-tv-harness|sota_compounding_1000rpm_harness|RTX 4090"
+)
+NON_OSI_REPOS = {"treeverse/lakeFS", "restatedev/restate", "Arize-ai/phoenix", "NX-AI/tirex"}
 
 
 def _load_manifest() -> dict[str, object]:
@@ -22,12 +27,14 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     assert manifest["schema_version"] == "tier0.architecture-layer-manifest.v1"
     assert manifest["repo_name"] == "tier0-sota-clean"
     assert manifest["branch"] == "main"
+    assert manifest["standalone_repo"] is True
 
     safety = manifest["safety_invariants"]
     assert isinstance(safety, dict)
     assert safety["live_execution_enabled"] is False
     assert safety["paper_only"] is True
     assert safety["zero_self_invented_hooks"] is True
+    assert safety["zero_yfinance_in_uv_lock"] is True
     assert safety["loc_enforcement"] == "advisory"
     assert safety["forbidden_live_ports"] == [4001, 7496, 8798, 8796]
 
@@ -50,14 +57,14 @@ def test_risk_kernel_sha256_and_loc_exact() -> None:
     assert len(risk_path.read_text(encoding="utf-8").splitlines()) == 361
 
 
-def test_layers_l0_to_l9_match_upstream_map() -> None:
+def test_layers_l0_to_l10_and_spdx_firewall() -> None:
     manifest = _load_manifest()
     upstream = tomllib.loads((REPO_ROOT / "upstream-map.toml").read_text(encoding="utf-8"))
     upstream_layers = upstream["layers"]
     manifest_layers = manifest["layers"]
     assert isinstance(manifest_layers, dict)
 
-    expected_keys = [f"L{idx}" for idx in range(10)]
+    expected_keys = [f"L{idx}" for idx in range(11)]
     assert list(manifest_layers.keys()) == expected_keys
     for key in expected_keys:
         assert key in upstream_layers
@@ -67,6 +74,13 @@ def test_layers_l0_to_l9_match_upstream_map() -> None:
             manifest_layers[key]["rejected_overlaps"] == upstream_layers[key]["rejected_overlaps"]
         )
         assert len(manifest_layers[key]["repo_artifacts"]) >= 1
+
+    up_fw = {entry["repo"] for entry in upstream["rules"]["spdx_license_firewall"]}
+    man_fw_raw = manifest["spdx_license_firewall"]
+    assert isinstance(man_fw_raw, list)
+    man_fw = {entry["repo"] for entry in man_fw_raw}
+    assert up_fw == NON_OSI_REPOS
+    assert man_fw == NON_OSI_REPOS
 
 
 def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
@@ -144,35 +158,48 @@ def test_few_line_harness_and_scoped_mcp_lanes() -> None:
 def test_architecture_layer_doc_has_mermaid_and_layers() -> None:
     doc = (REPO_ROOT / "docs/ARCHITECTURE_LAYER_MANIFEST.md").read_text(encoding="utf-8")
     assert "```mermaid\nflowchart TD" in doc
-    for idx in range(10):
+    for idx in range(11):
         assert f"**L{idx}**" in doc
 
 
-def test_skills_lock_starred_manifest_and_grand_reset_artifacts() -> None:
+def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     manifest = _load_manifest()
     raw_files = manifest["repository_files"]
     assert isinstance(raw_files, list)
     repo_files = set(raw_files)
 
+    uv_lock_text = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
+    assert "yfinance" not in uv_lock_text.lower()
+    assert "quantstats" not in uv_lock_text.lower()
+
     skills_lock = json.loads((REPO_ROOT / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
     assert skills_lock["schema"] == "tier0.upstream-skills-lock.v1"
     assert skills_lock["skills_count"] == 46
     assert len(skills_lock["skills"]) == 46
+    for entry in skills_lock["skills"]:
+        skill_md = REPO_ROOT / ".claude/skills" / entry["skill"] / "SKILL.md"
+        assert skill_md.is_file(), f"Missing standalone skill {entry['skill']}"
+        assert hashlib.sha256(skill_md.read_bytes()).hexdigest() == entry["skill_sha256"]
 
     starred = json.loads(
         (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
     )
     assert starred["schema_version"] == "tier0.sota-starred-beyond-manifest.v1"
     assert starred["zero_self_invented_hooks"] is True
-    assert list(starred["active_winners_by_layer"].keys()) == [f"L{idx}" for idx in range(10)]
-    assert len(starred["frontier_queue"]) >= 6
+    assert list(starred["active_winners_by_layer"].keys()) == [f"L{idx}" for idx in range(11)]
+    assert {e["repo"] for e in starred["spdx_license_firewall"]} == NON_OSI_REPOS
+    assert list(starred["earned_trigger_frontier_l11_to_l15"].keys()) == [
+        f"L{idx}" for idx in range(11, 16)
+    ]
 
-    required_grand_reset = {
+    required_files = {
         "zensical.toml",
         "docs/index.md",
         "docs/adr/CATALOG.md",
         "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
         "docker/compose.sota.yml",
+        "evals/formal_risk_z3.py",
+        "evals/tier0_inspect_eval.py",
         "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
         "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
         "scripts/grand_reset/01_wsl_bootstrap.sh",
@@ -183,4 +210,18 @@ def test_skills_lock_starred_manifest_and_grand_reset_artifacts() -> None:
         "UPSTREAM_SKILLS_LOCK.json",
         "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
     } | {f"docs/adr/ADR-{idx:04d}.md" for idx in range(1, 13)}
-    assert required_grand_reset.issubset(repo_files)
+    assert required_files.issubset(repo_files)
+
+    scan_targets = [
+        REPO_ROOT / "pyproject.toml",
+        REPO_ROOT / "ARCHITECTURE_MANIFEST.json",
+        REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+        *sorted((REPO_ROOT / "src").rglob("*.py")),
+        *sorted((REPO_ROOT / "docs").rglob("*.md")),
+    ]
+    hits = [
+        str(p.relative_to(REPO_ROOT))
+        for p in scan_targets
+        if LEGACY_PATTERN.search(p.read_text(encoding="utf-8"))
+    ]
+    assert hits == [], f"Stale legacy references found in: {hits}"

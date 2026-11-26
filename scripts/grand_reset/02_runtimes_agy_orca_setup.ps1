@@ -1,17 +1,17 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Idempotent zero-hook setup & sync for Antigravity (AGY), Claude Code, Codex, OpenCode, and Orca.
+    Idempotent standalone zero-hook setup & sync for Antigravity (AGY), Claude Code, Codex, OpenCode, and Orca.
 .DESCRIPTION
-    Syncs from Z:\tier0-sota-clean:
+    Syncs strictly from standalone Z:\tier0-sota-clean ($RepoRoot):
       - Zero self-invented hooks (no .codex/hooks.json, no "hooks" in Claude/Gemini/Codex configs)
       - 4-runtime native uv MCP parity (codebase-memory, xerj, nautilus-engine, edgartools)
       - Fresh AGY (~/.gemini/settings.json, ~/.gemini/config/mcp_config.json, ~/.gemini/config/skills)
-      - Claude Code (.claude/settings.json, agents, commands, mcp-lanes, ~/.claude/skills)
+      - Claude Code (.claude/settings.json, agents, commands, mcp-lanes, skills, ~/.claude/skills)
       - Codex (.codex/config.toml, ~/.codex/skills)
       - OpenCode (opencode.json, .opencode/commands)
       - Orca (orca.yaml + clean lane launch readiness)
-      - Vetted skills matching UPSTREAM_SKILLS_LOCK.json (zero secrets, zero live broker ports)
+      - All 46 vetted skills copied strictly from $RepoRoot\.claude\skills per UPSTREAM_SKILLS_LOCK.json
 #>
 [CmdletBinding()]
 param(
@@ -38,16 +38,7 @@ if ($LivePorts.Count -ne 0) {
 }
 
 if ([string]::IsNullOrWhiteSpace($SkillsSourceDir)) {
-    foreach ($candidate in @(
-        (Join-Path $HomeDir ".gemini\config\skills"),
-        "Z:\tier0-quant\.claude\skills",
-        "Z:\sota-data\hosted-research-frameworks\claude-trading-skills\skills"
-    )) {
-        if (Test-Path -LiteralPath $candidate) {
-            $SkillsSourceDir = $candidate
-            break
-        }
-    }
+    $SkillsSourceDir = Join-Path $RepoRoot ".claude\skills"
 }
 
 $LockPath = Join-Path $RepoRoot "UPSTREAM_SKILLS_LOCK.json"
@@ -148,7 +139,7 @@ foreach ($cmd in @("claude", "codex", "gemini", "opencode", "orca", "uv", "codeb
 }
 
 if ($DryRun) {
-    Write-Host "[DRY-RUN] Grand-Reset Step 02: Zero-Hook 4-Runtime + Fresh AGY + Orca Sync" -ForegroundColor Yellow
+    Write-Host "[DRY-RUN] Grand-Reset Step 02: Standalone Zero-Hook 4-Runtime + Fresh AGY + Orca Sync" -ForegroundColor Yellow
     Write-Host "  RepoRoot        : $RepoRoot" -ForegroundColor Cyan
     Write-Host "  HomeDir         : $HomeDir" -ForegroundColor Cyan
     Write-Host "  MCP Parity      : OK (5/5 repo configs -> $($ExpectedMcps -join ', '))" -ForegroundColor Green
@@ -202,9 +193,9 @@ $OpenCodeUserTarget = Join-Path $OpenCodeConfigDir "opencode.json"
 Save-BackupIfExists -TargetPath $OpenCodeUserTarget
 Copy-Item -LiteralPath $RepoOpenCode -Destination $OpenCodeUserTarget -Force
 
-# 3. Sync vetted skills from UPSTREAM_SKILLS_LOCK.json across AGY, Claude, and Codex
+# 3. Sync vetted standalone skills strictly from $RepoRoot\.claude\skills across AGY, Claude, and Codex
 $SyncedSkillsCount = 0
-if (-not $SkipSkillsSync -and $LockedSkills.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($SkillsSourceDir) -and (Test-Path -LiteralPath $SkillsSourceDir)) {
+if (-not $SkipSkillsSync -and $LockedSkills.Count -gt 0 -and (Test-Path -LiteralPath $SkillsSourceDir)) {
     foreach ($tRoot in $SkillTargets) {
         New-Item -ItemType Directory -Path $tRoot -Force | Out-Null
     }
@@ -234,5 +225,5 @@ if ($CliChecks["orca"]) {
     }
 }
 
-Write-Host ("[GRAND-RESET 02 OK] Zero-Hook AGY + 4-Runtime MCPs synced (hooks_zero={0}) | LockedSkills={1}/{2} | OrcaWorktrees={3} | LivePorts=0" -f `
+Write-Host ("[GRAND-RESET 02 OK] Standalone Zero-Hook AGY + 4-Runtime MCPs synced (hooks_zero={0}) | LockedSkills={1}/{2} | OrcaWorktrees={3} | LivePorts=0" -f `
     $HooksZero, $SyncedSkillsCount, $LockedSkills.Count, $OrcaWorktrees) -ForegroundColor Green

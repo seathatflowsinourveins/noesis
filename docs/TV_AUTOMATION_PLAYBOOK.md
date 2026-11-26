@@ -7,8 +7,8 @@ Display-only Pine v6 indicators + Half-Automation order ticket staging (`semi_au
 ## 1. Compliance & Safety Posture
 
 - **Non-Repainting Pine v6:** `barstate.isconfirmed`, `gaps=barmerge.gaps_off`, `lookahead=barmerge.lookahead_off`.
-- **Fail-Closed Staging:** Every alert validates against Draft 2020-12 [`schema_v1.json`](file:///Z:/tier0-sota-clean/src/tier0_sota/tv/schema_v1.json) in [`bridge.py`](file:///Z:/tier0-sota-clean/src/tier0_sota/tv/bridge.py) with `qty=1`, `semi_auto_confirmed=false`, `60s` re-entry cooldown, exact `Decimal` Rule-612 inward stops (`<= 2.00%` cap), and live endpoint refusal (`paper-api` / Paper `:4002` only).
-- **ToU Boundary:** Zero TradingView Desktop CDP attachment, zero unofficial screeners, zero automated browser clicking.
+- **Fail-Closed Staging:** Every alert validates against Draft 2020-12 [`schema_v1.json`](../src/tier0_sota/tv/schema_v1.json) in [`bridge.py`](../src/tier0_sota/tv/bridge.py) with `qty=1`, `semi_auto_confirmed=false`, `60s` re-entry cooldown, exact `Decimal` Rule-612 inward stops (`<= 2.00%` cap, Z3-proven in `evals/formal_risk_z3.py`), and live endpoint refusal (`paper-api` / Paper `:4002` only).
+- **`L10` UI & ToU Boundary:** `L10` visual analytics run via `FINOS Workspace` (`:1420`) / `OpenBB` (`:6900`) / `lightweight-charts`; zero TradingView Desktop CDP attachment, zero unofficial screeners, zero automated browser clicking.
 
 ---
 

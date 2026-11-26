@@ -25,11 +25,12 @@ bash scripts/bootstrap_env.sh
 ## Verification & Ecosystem Gates
 
 ```bash
-ruff check src tests scripts
-ruff format --check src tests scripts
-ty check src tests scripts
+ruff check src tests scripts evals
+ruff format --check src tests scripts evals
+ty check src tests scripts evals
 ast-grep scan
 pytest -v
+python evals/formal_risk_z3.py
 zensical build --clean
 python scripts/nautilus_mcp_server.py --smoke
 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/verify_grand_reset.ps1
@@ -38,14 +39,14 @@ gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner
 
 ## Architecture, ADRs & Grand-Reset Documentation
 
-- [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](docs/ARCHITECTURE_LAYER_MANIFEST.md) — Complete `L0`–`L9` architecture, Mermaid topology diagram, repository map, `13/13` hosted portals, and workstation multi-repo topology.
+- [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](docs/ARCHITECTURE_LAYER_MANIFEST.md) — Complete `L0`–`L10` active layers + `L11`–`L15` earned triggers, SPDX OSI License Firewall, Mermaid topology diagram, repository map, `13/13` hosted portals, and standalone workstation topology.
 - [`ARCHITECTURE_MANIFEST.json`](ARCHITECTURE_MANIFEST.json) — Machine-readable SSOT (`tier0.architecture-layer-manifest.v1`) verified by [`tests/test_architecture_manifest.py`](tests/test_architecture_manifest.py).
-- [`SOTA_STARRED_AND_BEYOND_MANIFEST.json`](SOTA_STARRED_AND_BEYOND_MANIFEST.json) — Active `L0`–`L9` upstream winners + Starred-Repos Frontier Queue (`zero_self_invented_hooks = true`).
+- [`SOTA_STARRED_AND_BEYOND_MANIFEST.json`](SOTA_STARRED_AND_BEYOND_MANIFEST.json) — Active `L0`–`L10` upstream winners, `L11`–`L15` earned-trigger frontier catalog, and SPDX OSI firewall (`zero_self_invented_hooks = true`).
 - [`docs/adr/CATALOG.md`](docs/adr/CATALOG.md) & [`zensical.toml`](zensical.toml) — Bounded evolvable MADR 4.0 ADRs (`ADR-0001`..`ADR-0012`) rendered cleanly via Zensical.
 - [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) — Step-by-step Disk-Z (`00_clean_disk_z_and_agy_reset.ps1`), WSL2, AGY, TradingView, Docker, and 4-runtime Grand-Reset runbook.
 - [`docs/CLEAN_ECOSYSTEM_MANIFEST.md`](docs/CLEAN_ECOSYSTEM_MANIFEST.md) — Paper Farm readiness, portal health, Orca terminal audit, and safe archive receipts.
 - [`docs/TV_AUTOMATION_PLAYBOOK.md`](docs/TV_AUTOMATION_PLAYBOOK.md) — TradingView Pine v6 indicators and Half-Auto ticket/bridge workflow.
 
-## Zero-Hook 4-Runtime MCP, Skills Lock & Scoped Lanes
+## Zero-Hook 4-Runtime MCP, Standalone Skills & Scoped Lanes
 
-Configured identically with native `uv run --no-sync` commands and **zero self-invented runtime hooks** across `.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, and `opencode.json` (`.opencode/commands/verify-tier0.md`) for `codebase-memory`, `xerj`, `nautilus-engine` ([`scripts/nautilus_mcp_server.py`](scripts/nautilus_mcp_server.py)), and `edgartools`, plus scoped lane MCPs in `.claude/mcp-lanes/` (`sim`, `paper`, `tv`, `gate`), `46` SHA-pinned skills in [`UPSTREAM_SKILLS_LOCK.json`](UPSTREAM_SKILLS_LOCK.json), and `7` few-line lanes in `.claude/agents/`.
+Configured identically with native `uv run --no-sync` commands and **zero self-invented runtime hooks** across `.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, and `opencode.json` (`.opencode/commands/verify-tier0.md`) for `codebase-memory`, `xerj`, `nautilus-engine` ([`scripts/nautilus_mcp_server.py`](scripts/nautilus_mcp_server.py)), and `edgartools`, plus scoped lane MCPs in `.claude/mcp-lanes/` (`sim`, `paper`, `tv`, `gate`), `46` standalone SHA-pinned skills in `.claude/skills/` ([`UPSTREAM_SKILLS_LOCK.json`](UPSTREAM_SKILLS_LOCK.json)), and `7` few-line lanes in `.claude/agents/`.

@@ -32,7 +32,6 @@ dependencies = [
     "polars>=2.1.0",
     "prometheus-client>=0.21.0",
     "pyarrow>=26.0.0",
-    "quantstats>=0.0.64",
     "river>=0.22.0",
     "ruptures>=1.1.9",
     "scipy>=1.14.0",
@@ -40,6 +39,7 @@ dependencies = [
     "skfolio>=1.12.7",
     "statsmodels>=0.15.0",
     "stumpy>=1.13.0",
+    "z3-solver>=4.13.0",
     "zensical>=0.1.3",
 ]
 
@@ -53,6 +53,7 @@ llm = [
 [dependency-groups]
 dev = [
     "ast-grep-cli>=0.51.3",
+    "deptry>=0.23.0",
     "hypothesis>=6.170.15",
     "pre-commit>=4.0.0",
     "pytest>=9.2.0",
@@ -72,17 +73,22 @@ default-groups = ["dev"]
 
 [tool.ruff]
 line-length = 100
-src = ["src", "tests", "scripts"]
+src = ["src", "tests", "scripts", "evals"]
+extend-exclude = [".claude/skills"]
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S603"]
+"evals/*" = ["S101", "S603"]
+
+[tool.ty.src]
+exclude = [".claude/skills/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 markers = [
-  "noesis_data_gpu: requires local pre-wall Parquet lake and RTX 4090 GPU on Noesis",
+  "noesis_data_gpu: requires local pre-wall Parquet lake and local CUDA GPU",
 ]

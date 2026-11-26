@@ -1,12 +1,12 @@
 [project]
 site_name = "tier0-sota-clean — Tier-0 SOTA Architecture & Grand-Reset Portal"
-site_description = "Clean-room Python 3.13 Tier-0 SOTA quantitative architecture, bounded evolvable MADR 4.0 ADRs (ADR-0001..ADR-0012), 13-portal research stack, and Disk-Z + WSL2 Grand-Reset runbook."
+site_description = "100% standalone Python 3.13 Tier-0 SOTA quantitative architecture (L0..L10), bounded evolvable MADR 4.0 ADRs (ADR-0001..ADR-0012), Z3 formal risk & Inspect AI evals, 13-portal research stack, and Disk-Z + WSL2 Grand-Reset runbook."
 docs_dir = "docs"
 site_dir = "site"
 
 nav = [
   { "Overview" = "index.md" },
-  { "Architecture Layer Manifest" = "ARCHITECTURE_LAYER_MANIFEST.md" },
+  { "Architecture Layer Manifest (L0..L10)" = "ARCHITECTURE_LAYER_MANIFEST.md" },
   { "Clean Ecosystem Manifest" = "CLEAN_ECOSYSTEM_MANIFEST.md" },
   { "Grand-Reset Disk-Z & WSL2 Runbook" = "GRAND_RESET_DISK_Z_WSL_RUNBOOK.md" },
   { "TradingView Automation Playbook" = "TV_AUTOMATION_PLAYBOOK.md" },

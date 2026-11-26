@@ -10,7 +10,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$ManifestDir = "Z:\sota-data\manifests",
+    [string]$DataRoot = $(if ($env:TIER0_DATA_ROOT) { $env:TIER0_DATA_ROOT } else { "Z:\sota-data" }),
+    [string]$ManifestDir = "",
     [switch]$StartDocker,
     [switch]$DryRun
 )
@@ -18,7 +19,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ScriptRepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$RepoRoot = if ($env:TIER0_REPO_ROOT -and (Test-Path (Join-Path $env:TIER0_REPO_ROOT "src\tier0_sota"))) {
+    $env:TIER0_REPO_ROOT
+} else {
+    $ScriptRepoRoot
+}
+if ([string]::IsNullOrWhiteSpace($ManifestDir)) {
+    $ManifestDir = Join-Path $DataRoot "manifests"
+}
 $ComposeFile = Join-Path $RepoRoot "docker\compose.sota.yml"
 $ForbiddenLivePorts = @(4001, 7496, 8798, 8796)
 $PaperOnly = $true

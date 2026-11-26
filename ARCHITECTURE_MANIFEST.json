@@ -3,6 +3,7 @@
   "repo_name": "tier0-sota-clean",
   "branch": "main",
   "python_version": "3.13",
+  "standalone_repo": true,
   "risk_kernel": {
     "path": "src/tier0_sota/risk.py",
     "sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
@@ -10,14 +11,22 @@
   },
   "skills_lock": {
     "path": "UPSTREAM_SKILLS_LOCK.json",
+    "skills_dir": ".claude/skills",
     "schema": "tier0.upstream-skills-lock.v1",
     "skills_count": 46
   },
   "sota_starred_beyond_manifest": "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+  "spdx_license_firewall": [
+    {"repo": "treeverse/lakeFS", "license": "BSL-1.1"},
+    {"repo": "restatedev/restate", "license": "BSL-1.1"},
+    {"repo": "Arize-ai/phoenix", "license": "ELv2"},
+    {"repo": "NX-AI/tirex", "license": "custom"}
+  ],
   "safety_invariants": {
     "live_execution_enabled": false,
     "paper_only": true,
     "zero_self_invented_hooks": true,
+    "zero_yfinance_in_uv_lock": true,
     "loc_enforcement": "advisory",
     "prewall_pit_cutoff": "2026-10-15",
     "forbidden_live_ports": [4001, 7496, 8798, 8796],
@@ -74,7 +83,7 @@
     },
     "L1": {
       "name": "Data, Schema Validation, Calendars & Causal PIT",
-      "winners": ["polars", "duckdb", "pandera", "exchange_calendars", "edgartools", "fredapi", "dvc"],
+      "winners": ["polars", "duckdb", "pandera", "exchange_calendars", "edgartools", "fredapi", "treeverse/dvc"],
       "rejected_overlaps": ["pandas-datareader", "yfinance", "clickhouse-local-server"],
       "repo_artifacts": [
         "src/tier0_sota/discovery.py",
@@ -84,7 +93,7 @@
     },
     "L2": {
       "name": "Features, Streaming Drift, Regime Change, Explainability & ML",
-      "winners": ["ml4t-engineer", "river", "ruptures", "stumpy", "lightgbm", "catboost", "shap"],
+      "winners": ["ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap"],
       "rejected_overlaps": ["ta-lib", "sktime", "fingpt", "finrl", "rd-agent"],
       "repo_artifacts": ["src/tier0_sota/discovery.py"]
     },
@@ -101,7 +110,7 @@
     },
     "L4": {
       "name": "Paper Broker Adapters & Market Data Feeds",
-      "winners": ["alpaca-py"],
+      "winners": ["alpaca-py", "tradermonty/claude-trading-skills"],
       "rejected_overlaps": ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "nautilus-alpaca"],
       "repo_artifacts": [
         "src/tier0_sota/live/scanner.py",
@@ -116,13 +125,13 @@
     },
     "L5": {
       "name": "Statistical Falsification & Portfolio Construction",
-      "winners": ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "quantstats"],
-      "rejected_overlaps": ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab"],
+      "winners": ["skfolio", "ml4t-diagnostic", "arch", "statsmodels"],
+      "rejected_overlaps": ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab", "quantstats"],
       "repo_artifacts": ["src/tier0_sota/research.py"]
     },
     "L6": {
       "name": "Hosted Research Portals, Orchestration, Observability & ADR Docs",
-      "winners": ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk"],
+      "winners": ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk", "grafana"],
       "rejected_overlaps": ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"],
       "repo_artifacts": [
         "src/tier0_sota/research.py",
@@ -141,34 +150,39 @@
       ]
     },
     "L7": {
-      "name": "Static Quality, AST, Fuzzing & Supply-Chain Security",
-      "winners": ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "pre-commit"],
+      "name": "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security",
+      "winners": ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "osv-scanner", "shellcheck", "zizmor"],
       "rejected_overlaps": ["black", "isort", "flake8", "bandit", "mypy", "pyright"],
       "repo_artifacts": [
         "sgconfig.yml",
         "rules/zero_self_invention.yml",
         ".gitleaks.toml",
         ".pre-commit-config.yaml",
+        "evals/formal_risk_z3.py",
         "scripts/grand_reset/verify_grand_reset.ps1",
         "tests/test_core_engine.py",
         "tests/test_live_automation.py",
         "tests/test_tv_automation.py",
         "tests/test_mcp_server.py",
-        "tests/test_architecture_manifest.py"
+        "tests/test_architecture_manifest.py",
+        "tests/test_grand_reset_kit.py",
+        "tests/test_formal_and_evals.py"
       ]
     },
     "L8": {
-      "name": "Agent Evals & Prompt Optimization",
-      "winners": ["inspect-ai", "dspy"],
+      "name": "Agent Evals, Sandboxes & Prompt Optimization",
+      "winners": ["inspect-ai", "dspy", "harbor", "promptfoo", "skillevaluator", "OpenHands", "aideml"],
       "rejected_overlaps": ["deepeval"],
       "repo_artifacts": [
+        "evals/__init__.py",
+        "evals/tier0_inspect_eval.py",
         "pyproject.toml",
         "upstream-map.toml",
         "SOTA_STARRED_AND_BEYOND_MANIFEST.json"
       ]
     },
     "L9": {
-      "name": "Multi-Model Harness, Code Graph & Upstream MCPs",
+      "name": "Multi-Model Harness, Code Graph, Skills & Upstream MCPs",
       "winners": ["orca", "codebase-memory-mcp", "xerj", "mcp", "edgartools"],
       "rejected_overlaps": ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"],
       "repo_artifacts": [
@@ -190,6 +204,17 @@
         "scripts/nautilus_mcp_server.py",
         "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1"
       ]
+    },
+    "L10": {
+      "name": "Institutional UI & Visual Analytics",
+      "winners": ["finos-workspace", "OpenBB", "perspective", "lightweight-charts", "ag-grid"],
+      "watches": ["rerun", "mosaic", "FDC3", "evidence"],
+      "rejected_overlaps": ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter"],
+      "repo_artifacts": [
+        "src/tier0_sota/live/performance.py",
+        "src/tier0_sota/tv/bridge.py",
+        "docker/compose.sota.yml"
+      ]
     }
   },
   "entrypoints": {
@@ -200,6 +225,8 @@
     "paper_farm": "scripts/run_live_paper_farm.ps1",
     "tv_console": "scripts/tv_console.ps1",
     "mcp_server": "scripts/nautilus_mcp_server.py",
+    "formal_risk_z3": "evals/formal_risk_z3.py",
+    "inspect_safety_eval": "evals/tier0_inspect_eval.py",
     "grand_reset_00": "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
     "grand_reset_01": "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
     "grand_reset_01_wsl": "scripts/grand_reset/01_wsl_bootstrap.sh",
@@ -283,6 +310,9 @@
     "docs/adr/ADR-0012.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
+    "evals/__init__.py",
+    "evals/formal_risk_z3.py",
+    "evals/tier0_inspect_eval.py",
     "opencode.json",
     "orca.yaml",
     "pine/tier0_market_regime.pine",
@@ -318,6 +348,8 @@
     "src/tier0_sota/tv/tickets.py",
     "tests/test_architecture_manifest.py",
     "tests/test_core_engine.py",
+    "tests/test_formal_and_evals.py",
+    "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",
     "tests/test_mcp_server.py",
     "tests/test_tv_automation.py",
@@ -327,7 +359,6 @@
   ],
   "workstation_topology": {
     "active_repo": "Z:\\tier0-sota-clean",
-    "immutable_reference": "Z:\\tier0-quant",
     "shared_manifests_root": "Z:\\sota-data\\manifests",
     "prewall_lake_root": "Z:\\sota-data\\prewall-lake",
     "superseded_archive_root": "Z:\\archive\\superseded_2026-11-25"

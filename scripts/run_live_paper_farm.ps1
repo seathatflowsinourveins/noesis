@@ -10,14 +10,24 @@ param(
 
   [int]$TopK = 15,
 
-  [string]$ManifestDir = "Z:\sota-data\manifests",
+  [string]$DataRoot = $(if ($env:TIER0_DATA_ROOT) { $env:TIER0_DATA_ROOT } else { "Z:\sota-data" }),
+
+  [string]$ManifestDir = "",
 
   [switch]$ConfirmPaper
 )
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$ScriptRepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = if ($env:TIER0_REPO_ROOT -and (Test-Path (Join-Path $env:TIER0_REPO_ROOT "src\tier0_sota"))) {
+  $env:TIER0_REPO_ROOT
+} else {
+  $ScriptRepoRoot
+}
+if ([string]::IsNullOrWhiteSpace($ManifestDir)) {
+  $ManifestDir = Join-Path $DataRoot "manifests"
+}
 $PyExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $PyExe)) {
   $PyExe = "python"

@@ -1,24 +1,26 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Master end-to-end verifier for the Z:\tier0-sota-clean Zero-Hook Grand-Reset blueprint.
+    Master 12-gate end-to-end verifier for the standalone Z:\tier0-sota-clean Zero-Hook Grand-Reset blueprint.
 .DESCRIPTION
-    Checks:
+    Checks all 12 master gates:
       1. Zero live broker ports (:4001/:7496/:8798/:8796)
       2. Immutable risk.py SHA-256 (ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847)
-      3. ARCHITECTURE_MANIFEST.json across L0..L9 + all declared repository_files on disk
+      3. ARCHITECTURE_MANIFEST.json across L0..L10 (11 layers) + all declared repository_files on disk
       4. All 12 MADR 4.0 ADRs (ADR-0001..ADR-0012), CATALOG.md, docs/index.md, zensical.toml, and zensical build --clean
       5. 5/5 native uv MCP parity configs (zero bash -c wrappers) + scripts/nautilus_mcp_server.py --smoke (10/10 tools)
       6. 13/13 hosted portals HTTP 200 on 127.0.0.1
       7. TradingView Pine v6 balance + JSON schema_v1.json safety invariants
       8. Paper Farm preflight + Z:\sota-data\manifests\paper_farm_live_performance_manifest.json
-      9. Zero self-invented hooks (hooks_zero=True across .claude/settings.json, .gemini/settings.json, .codex/config.toml, no .codex/hooks.json) + .claude/mcp-lanes/*.mcp.json + SOTA_STARRED_AND_BEYOND_MANIFEST.json + UPSTREAM_SKILLS_LOCK.json + paper-gatekeeper.md
+      9. Zero self-invented hooks (hooks_zero=True) + .claude/mcp-lanes/*.mcp.json + SOTA_STARRED_AND_BEYOND_MANIFEST.json + UPSTREAM_SKILLS_LOCK.json + paper-gatekeeper.md
      10. gitleaks detect --no-git = 0 leaks
+     11. uv_lock_zero_yfinance_and_standalone (0 yfinance in uv.lock, 46/46 standalone .claude/skills/, 0 legacy refs in src/docs/pyproject.toml/manifests)
+     12. z3_formal_risk_and_inspect_evals (evals/formal_risk_z3.py UNSAT PASS + evals/tier0_inspect_eval.py OK)
 #>
 [CmdletBinding()]
 param(
     [string]$RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
-    [string]$ManifestDir = "Z:\sota-data\manifests",
+    [string]$ManifestDir = $(if ($env:TIER0_DATA_ROOT) { Join-Path $env:TIER0_DATA_ROOT "manifests" } else { "Z:\sota-data\manifests" }),
     [switch]$Json
 )
 
@@ -77,19 +79,19 @@ if (Test-Path -LiteralPath $RiskPath) {
 }
 Record-Gate -Name "risk_kernel_sha256" -Passed $RiskOk -Detail $RiskSha
 
-# 3. ARCHITECTURE_MANIFEST.json across L0..L9
+# 3. ARCHITECTURE_MANIFEST.json across L0..L10 (11 layers)
 $ArchPath = Join-Path $RepoRoot "ARCHITECTURE_MANIFEST.json"
 $ArchOk = $false
 $ArchDetail = "missing"
 if (Test-Path -LiteralPath $ArchPath) {
     $arch = Get-Content -LiteralPath $ArchPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $layers = @($arch.layers.PSObject.Properties.Name)
-    $expectedLayers = @("L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9")
+    $expectedLayers = @("L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10")
     $missingLayers = @($expectedLayers | Where-Object { $_ -notin $layers })
     $missingFiles = @($arch.repository_files | Where-Object { -not (Test-Path -LiteralPath (Join-Path $RepoRoot $_)) })
     $safetyOk = ($arch.safety_invariants.live_execution_enabled -eq $false -and $arch.safety_invariants.paper_only -eq $true)
     $ArchOk = ($missingLayers.Count -eq 0 -and $missingFiles.Count -eq 0 -and $safetyOk -and $arch.risk_kernel.sha256 -eq $ExpectedRiskSha)
-    $ArchDetail = "layers=$($layers.Count)/10 missing_files=$($missingFiles.Count) safety=$safetyOk"
+    $ArchDetail = "layers=$($layers.Count)/11 missing_files=$($missingFiles.Count) safety=$safetyOk"
 }
 Record-Gate -Name "architecture_manifest" -Passed $ArchOk -Detail $ArchDetail
 
@@ -269,7 +271,11 @@ $McpLanesOk = (@(
 $StarredOk = $false
 if (Test-Path -LiteralPath $StarredPath) {
     $sm = Get-Content -LiteralPath $StarredPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $StarredOk = ($sm.schema_version -eq "tier0.sota-starred-beyond-manifest.v1" -and $sm.zero_self_invented_hooks -eq $true)
+    $StarredOk = (
+        $sm.schema_version -eq "tier0.sota-starred-beyond-manifest.v1" -and
+        $sm.zero_self_invented_hooks -eq $true -and
+        ($sm.PSObject.Properties.Name -contains "spdx_license_firewall")
+    )
 }
 
 $GatekeeperOk = (Test-Path -LiteralPath $GatekeeperPath) -and ((Get-Content -LiteralPath $GatekeeperPath -Raw -Encoding UTF8) -match 'permissionMode:\s*plan')
@@ -286,9 +292,80 @@ if (Get-Command gitleaks -ErrorAction SilentlyContinue) {
 }
 Record-Gate -Name "gitleaks_zero_leaks" -Passed $GitleaksOk -Detail "exit_zero=$GitleaksOk"
 
+# 11. Zero transitive yfinance in uv.lock, 46/46 standalone .claude/skills/, and 0 legacy refs
+$UvLockPath = Join-Path $RepoRoot "uv.lock"
+$YfinanceMatches = if (Test-Path -LiteralPath $UvLockPath) {
+    @(Select-String -LiteralPath $UvLockPath -Pattern "yfinance" -CaseSensitive:$false).Count
+} else { -1 }
+
+$StandaloneSkillsOk = $false
+$StandaloneSkillsCount = 0
+if (Test-Path -LiteralPath $LockPath) {
+    $lockData = Get-Content -LiteralPath $LockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $lockedNames = @($lockData.skills | ForEach-Object { [string]$_.skill })
+    $skillsRoot = Join-Path $RepoRoot ".claude\skills"
+    $presentCount = @(
+        $lockedNames | Where-Object {
+            Test-Path -LiteralPath (Join-Path (Join-Path $skillsRoot $_) "SKILL.md")
+        }
+    ).Count
+    $StandaloneSkillsCount = $presentCount
+    $StandaloneSkillsOk = ($lockedNames.Count -ge 46 -and $presentCount -eq $lockedNames.Count)
+}
+
+$LegacyRegex = [string]::Join("|", @(
+    ("tier0" + "-quant"),
+    ("CLEAN" + " LIVE"),
+    ("sota-live-tv" + "-harness"),
+    ("sota_compounding_1000rpm" + "_harness")
+))
+$ScanTargets = [System.Collections.Generic.List[string]]::new()
+foreach ($relFile in @("pyproject.toml", "ARCHITECTURE_MANIFEST.json", "SOTA_STARRED_AND_BEYOND_MANIFEST.json")) {
+    $p = Join-Path $RepoRoot $relFile
+    if (Test-Path -LiteralPath $p) { $ScanTargets.Add($p) }
+}
+foreach ($relDir in @("src", "docs", "evals", "scripts")) {
+    $d = Join-Path $RepoRoot $relDir
+    if (Test-Path -LiteralPath $d) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\__pycache__\\' })) {
+            $ScanTargets.Add($f.FullName)
+        }
+    }
+}
+$LegacyHits = @(Select-String -Path $ScanTargets.ToArray() -Pattern $LegacyRegex -ErrorAction SilentlyContinue).Count
+Record-Gate -Name "uv_lock_zero_yfinance_and_standalone" -Passed ($YfinanceMatches -eq 0 -and $StandaloneSkillsOk -and $LegacyHits -eq 0) `
+    -Detail "uv_lock_yfinance=$YfinanceMatches standalone_skills=$StandaloneSkillsCount/46 legacy_refs=$LegacyHits"
+
+# 12. Z3 formal risk UNSAT proof + Inspect AI deterministic safety eval suite
+$Z3Script = Join-Path $RepoRoot "evals\formal_risk_z3.py"
+$InspectScript = Join-Path $RepoRoot "evals\tier0_inspect_eval.py"
+$Z3Ok = $false
+$InspectOk = $false
+Push-Location $RepoRoot
+try {
+    $prevPyPath = $env:PYTHONPATH
+    $env:PYTHONPATH = "$RepoRoot;$(Join-Path $RepoRoot 'src')"
+    try {
+        if ((Test-Path -LiteralPath $VenvPy) -and (Test-Path -LiteralPath $Z3Script)) {
+            $z3Out = (& $VenvPy $Z3Script 2>&1) -join "`n"
+            $Z3Ok = ($LASTEXITCODE -eq 0 -and $z3Out -match 'Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1')
+        }
+        if ((Test-Path -LiteralPath $VenvPy) -and (Test-Path -LiteralPath $InspectScript)) {
+            & $VenvPy -c "from evals.tier0_inspect_eval import verify_inspect_safety_suite; r = verify_inspect_safety_suite(); assert (r.get('ok', True) if isinstance(r, dict) else bool(r))" *> $null
+            $InspectOk = ($LASTEXITCODE -eq 0)
+        }
+    } finally {
+        $env:PYTHONPATH = $prevPyPath
+    }
+} finally {
+    Pop-Location
+}
+Record-Gate -Name "z3_formal_risk_and_inspect_evals" -Passed ($Z3Ok -and $InspectOk) `
+    -Detail "z3_unsat=$Z3Ok inspect_eval=$InspectOk"
+
 if ($Json) {
     [ordered]@{
-        schema_version = "tier0.grand-reset-verify.v2"
+        schema_version = "tier0.grand-reset-verify.v3"
         repo_root      = $RepoRoot
         passed         = ($Failures.Count -eq 0)
         failures       = @($Failures)
@@ -301,5 +378,5 @@ if ($Failures.Count -gt 0) {
 }
 
 if (-not $Json) {
-    Write-Host "[VERDICT: PASS] Zero-Hook Grand-Reset Master Verification PASSED (10/10 gates green, hooks_zero=True, 0 live ports)." -ForegroundColor Green
+    Write-Host "[VERDICT: PASS] Standalone Zero-Hook Grand-Reset Master Verification PASSED (12/12 gates green, hooks_zero=True, 0 live ports)." -ForegroundColor Green
 }

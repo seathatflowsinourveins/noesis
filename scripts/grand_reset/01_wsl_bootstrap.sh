@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${1:-/mnt/z/tier0-sota-clean}"
+REPO_ROOT="${1:-${TIER0_REPO_ROOT:-/mnt/z/tier0-sota-clean}}"
+DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"
+WSL_DISTRO="${TIER0_WSL_DISTRO:-Noesis-SOTA}"
 DRY_RUN="${DRY_RUN:-0}"
 export PATH="$HOME/.local/bin:$PATH"
 export PYTHONDONTWRITEBYTECODE=1
@@ -28,9 +30,9 @@ create_placeholder_env() {
     return 0
   fi
   if [[ "$kind" == "data" ]]; then
-    cat >"$target" <<'EOF'
+    cat >"$target" <<EOF
 # Owner-managed Tier-0 data env placeholders (fill offline; chmod 600)
-TIER0_MARKET_DATA_ROOT=/mnt/z/sota-data/prewall-lake
+TIER0_MARKET_DATA_ROOT=${DATA_ROOT}/prewall-lake
 FRED_API_KEY=
 ALPACA_PA1_API_KEY=
 ALPACA_PA1_SECRET=
@@ -74,7 +76,7 @@ EOF
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
-  echo "uv is required inside WSL2 Noesis-SOTA." >&2
+  echo "uv is required inside WSL2 ${WSL_DISTRO}." >&2
   exit 1
 fi
 

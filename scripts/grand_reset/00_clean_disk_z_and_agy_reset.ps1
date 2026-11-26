@@ -4,23 +4,25 @@
     Safe-by-default Clean Disk-Z Reset & Fresh Antigravity (AGY) Reinstall preparation.
 .DESCRIPTION
     Defaults to -DryRun unless -Execute is explicitly passed.
-    - Archives any remaining superseded Disk-Z legacy folders/artifacts into Z:\archive\pre_grand_reset_2026-11-25\
-    - Strictly protects Z:\tier0-sota-clean, Z:\sota-data\prewall-lake, Z:\sota-data\manifests,
-      Z:\sota-cache, Z:\WSL, and Z:\tier0-quant (unless -ArchiveLegacyReference is explicitly passed)
+    - Optionally archives operator-specified superseded Disk-Z directories via -ArchiveLegacyDirs <string[]>
+      and stray Z:\tmp_*.diff files into Z:\archive\pre_grand_reset_2026-11-25\
+    - Strictly protects Z:\tier0-sota-clean ($TIER0_REPO_ROOT), Z:\sota-data\prewall-lake,
+      Z:\sota-data\manifests, Z:\sota-cache, Z:\WSL, and Z:\archive
     - Supports -CleanAgyReinstall: backs up ~/.gemini to Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\,
       writes a fresh ZERO-hook ~/.gemini/settings.json from Z:\tier0-sota-clean\.gemini\settings.json,
-      syncs ONLY vetted skills from UPSTREAM_SKILLS_LOCK.json into ~/.gemini/config/skills/, and
-      prints fresh Antigravity (AGY) reinstall & clean workspace open steps.
+      syncs ONLY the 46 standalone locked skills from $RepoRoot\.claude\skills into ~/.gemini/config/skills/,
+      and prints fresh Antigravity (AGY) reinstall & clean workspace open steps.
     - NEVER formats drives or runs wsl --shutdown.
 #>
 [CmdletBinding()]
 param(
     [string]$RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+    [string]$DataRoot = $(if ($env:TIER0_DATA_ROOT) { $env:TIER0_DATA_ROOT } else { "Z:\sota-data" }),
+    [string]$CacheRoot = "Z:\sota-cache",
     [string]$HomeDir = $env:USERPROFILE,
     [string]$ArchiveRoot = "Z:\archive\pre_grand_reset_2026-11-25",
-    [string]$SkillsSourceDir = "",
+    [string[]]$ArchiveLegacyDirs = @(),
     [switch]$CleanAgyReinstall,
-    [switch]$ArchiveLegacyReference,
     [switch]$Execute,
     [switch]$DryRun
 )
@@ -41,58 +43,37 @@ if ($LivePorts.Count -ne 0) {
 }
 
 $ProtectedRoots = @(
-    "Z:\tier0-sota-clean",
-    "Z:\sota-data\prewall-lake",
-    "Z:\sota-data\manifests",
-    "Z:\sota-cache",
+    $RepoRoot,
+    (Join-Path $DataRoot "prewall-lake"),
+    (Join-Path $DataRoot "manifests"),
+    $CacheRoot,
     "Z:\WSL",
     "Z:\archive"
 )
-if (-not $ArchiveLegacyReference) {
-    $ProtectedRoots += "Z:\tier0-quant"
-}
+$ProtectedNormalized = @($ProtectedRoots | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\').ToLowerInvariant() })
 
-# Enumerate candidate superseded artifacts on Disk Z (never touching protected roots)
 $ArchiveCandidates = [System.Collections.Generic.List[hashtable]]::new()
-foreach ($cand in @(
-    @{ Source = "Z:\CLEAN LIVE"; Target = (Join-Path $ArchiveRoot "CLEAN_LIVE") },
-    @{ Source = "Z:\sota-live-tv-harness"; Target = (Join-Path $ArchiveRoot "sota-live-tv-harness") },
-    @{ Source = "Z:\tmp_pine.diff"; Target = (Join-Path $ArchiveRoot "tmp_pine.diff") },
-    @{ Source = "Z:\tmp_rev.diff"; Target = (Join-Path $ArchiveRoot "tmp_rev.diff") }
-)) {
-    if (Test-Path -LiteralPath $cand.Source) {
-        $ArchiveCandidates.Add($cand)
+foreach ($dirPath in $ArchiveLegacyDirs) {
+    if ([string]::IsNullOrWhiteSpace($dirPath)) { continue }
+    $full = [System.IO.Path]::GetFullPath($dirPath).TrimEnd('\')
+    if ($full.ToLowerInvariant() -in $ProtectedNormalized) {
+        throw "Refused archival of protected path: $full"
     }
-}
-$HarnessDir = "Z:\sota-data\research-runs\sota_compounding_1000rpm_harness"
-if (Test-Path -LiteralPath $HarnessDir) {
-    foreach ($bak in @(Get-ChildItem -LiteralPath $HarnessDir -Filter "*.bak-*" -File -ErrorAction SilentlyContinue)) {
+    if (Test-Path -LiteralPath $full) {
         $ArchiveCandidates.Add(@{
-            Source = $bak.FullName
-            Target = (Join-Path (Join-Path $ArchiveRoot "sota_compounding_1000rpm_harness") $bak.Name)
+            Source = $full
+            Target = (Join-Path $ArchiveRoot (Split-Path -Leaf $full))
         })
     }
 }
-if ($ArchiveLegacyReference -and (Test-Path -LiteralPath "Z:\tier0-quant")) {
+foreach ($tmpDiff in @(Get-ChildItem -LiteralPath "Z:\" -Filter "tmp_*.diff" -File -ErrorAction SilentlyContinue)) {
     $ArchiveCandidates.Add(@{
-        Source = "Z:\tier0-quant"
-        Target = (Join-Path $ArchiveRoot "tier0-quant")
+        Source = $tmpDiff.FullName
+        Target = (Join-Path $ArchiveRoot $tmpDiff.Name)
     })
 }
 
-if ([string]::IsNullOrWhiteSpace($SkillsSourceDir)) {
-    foreach ($candidate in @(
-        "Z:\tier0-quant\.claude\skills",
-        (Join-Path $HomeDir ".gemini\config\skills"),
-        "Z:\sota-data\hosted-research-frameworks\claude-trading-skills\skills"
-    )) {
-        if (Test-Path -LiteralPath $candidate) {
-            $SkillsSourceDir = $candidate
-            break
-        }
-    }
-}
-
+$SkillsSourceDir = Join-Path $RepoRoot ".claude\skills"
 $LockPath = Join-Path $RepoRoot "UPSTREAM_SKILLS_LOCK.json"
 $LockedSkills = @()
 if (Test-Path -LiteralPath $LockPath) {
@@ -114,14 +95,15 @@ if ($IsDryRun) {
     foreach ($c in $ArchiveCandidates) {
         Write-Host ("    - {0} -> {1}" -f $c.Source, $c.Target) -ForegroundColor Gray
     }
-    Write-Host "  CleanAgyReinstall: $([bool]$CleanAgyReinstall) (zero-hook settings -> $AgySettingsTarget, locked_skills=$($LockedSkills.Count))" -ForegroundColor Cyan
+    Write-Host "  Skills Source    : $SkillsSourceDir (locked=$($LockedSkills.Count))" -ForegroundColor Cyan
+    Write-Host "  CleanAgyReinstall: $([bool]$CleanAgyReinstall) (zero-hook settings -> $AgySettingsTarget)" -ForegroundColor Cyan
     Write-Host "  Live Broker Ports: 0 (fail-closed)" -ForegroundColor Green
     return
 }
 
 New-Item -ItemType Directory -Path $ArchiveRoot -Force | Out-Null
 
-# 1. Non-destructive archival of remaining superseded Disk-Z items
+# 1. Non-destructive archival of operator-selected legacy directories & stray root diffs
 $MovedCount = 0
 $LockedCount = 0
 foreach ($c in $ArchiveCandidates) {
@@ -171,25 +153,24 @@ if ($CleanAgyReinstall) {
     Write-Host "[AGY SETTINGS] Wrote zero-hook settings -> $AgySettingsTarget" -ForegroundColor Green
 
     $SyncedSkills = 0
-    if ($LockedSkills.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($SkillsSourceDir) -and (Test-Path -LiteralPath $SkillsSourceDir)) {
+    if ($LockedSkills.Count -gt 0 -and (Test-Path -LiteralPath $SkillsSourceDir)) {
         New-Item -ItemType Directory -Path $AgySkillsTarget -Force | Out-Null
         foreach ($skillName in $LockedSkills) {
             $srcSkill = Join-Path $SkillsSourceDir $skillName
             if (-not (Test-Path -LiteralPath $srcSkill)) { continue }
             $dstSkill = Join-Path $AgySkillsTarget $skillName
-            if ($srcSkill.TrimEnd('\') -eq $dstSkill.TrimEnd('\')) { $SyncedSkills++; continue }
             New-Item -ItemType Directory -Path $dstSkill -Force | Out-Null
             Copy-Item -Path (Join-Path $srcSkill "*") -Destination $dstSkill -Recurse -Force
             $SyncedSkills++
         }
     }
-    Write-Host "[AGY SKILLS] Synced $SyncedSkills/$($LockedSkills.Count) locked skills -> $AgySkillsTarget" -ForegroundColor Green
+    Write-Host "[AGY SKILLS] Synced $SyncedSkills/$($LockedSkills.Count) standalone locked skills -> $AgySkillsTarget" -ForegroundColor Green
 
     Write-Host "`n[NEXT STEPS - FRESH ANTIGRAVITY (AGY) REINSTALL]" -ForegroundColor Cyan
     Write-Host "  1. Close Antigravity UI cleanly and uninstall/reinstall the fresh Antigravity desktop build (keeps ~/.gemini settings & skills)." -ForegroundColor Gray
-    Write-Host "  2. Launch Antigravity and open active workspace: Z:\tier0-sota-clean" -ForegroundColor Gray
+    Write-Host "  2. Launch Antigravity and open active workspace: $RepoRoot" -ForegroundColor Gray
     Write-Host "  3. Confirm 4 vetted MCPs (codebase-memory, xerj, nautilus-engine, edgartools) and run:" -ForegroundColor Gray
-    Write-Host "     pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\verify_grand_reset.ps1" -ForegroundColor Gray
+    Write-Host "     pwsh -NoProfile -ExecutionPolicy Bypass -File $RepoRoot\scripts\grand_reset\verify_grand_reset.ps1" -ForegroundColor Gray
 }
 
 Write-Host "[GRAND-RESET 00 OK] Moved=$MovedCount | LockedSkipped=$LockedCount | Protected=$($ProtectedRoots.Count) | LivePorts=0" -ForegroundColor Green

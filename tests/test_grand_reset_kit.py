@@ -98,12 +98,36 @@ def test_few_line_harnesses_mcp_lanes_and_sota_manifest() -> None:
     sota = json.loads((REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text("utf-8"))
     assert sota["schema_version"] == "tier0.sota-starred-beyond-manifest.v1"
     assert sota["zero_self_invented_hooks"] is True
-    assert {f"L{i}" for i in range(10)}.issubset(sota["active_winners_by_layer"])
+    assert {f"L{i}" for i in range(11)}.issubset(sota["active_winners_by_layer"])
 
     lock = json.loads((REPO_ROOT / "UPSTREAM_SKILLS_LOCK.json").read_text("utf-8"))
     assert lock["skills_count"] == len(lock["skills"]) == 46
     for entry in lock["skills"]:
         assert len(entry["skill_sha256"]) == 64
+        assert (REPO_ROOT / ".claude" / "skills" / entry["skill"] / "SKILL.md").is_file()
+
+
+def test_zero_legacy_references_and_zero_yfinance_in_uv_lock() -> None:
+    uv_lock = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
+    assert "yfinance" not in uv_lock.lower(), "uv.lock must contain 0 yfinance entries"
+
+    legacy_tokens = (
+        "tier0-quant",
+        "sota_compounding_1000rpm_harness",
+        "CLEAN LIVE",
+        "sota-live-tv-harness",
+    )
+    targets: list[Path] = [REPO_ROOT / "pyproject.toml"]
+    targets.extend((REPO_ROOT / "scripts" / "grand_reset").rglob("*"))
+    targets.extend((REPO_ROOT / "docs").rglob("*"))
+    targets.extend((REPO_ROOT / "src").rglob("*.py"))
+
+    for path in targets:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for tok in legacy_tokens:
+            assert tok not in text, f"Stale legacy token {tok!r} found in {path}"
 
 
 def test_madr_adrs_catalog_and_zensical_toml() -> None:

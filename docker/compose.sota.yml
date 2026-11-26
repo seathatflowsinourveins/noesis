@@ -28,8 +28,8 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
-      - ..:/workspace
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
+      - ${TIER0_REPO_ROOT:-..}:/workspace
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
     environment:
       - HOME=/tmp
       - USER=sota
@@ -56,8 +56,8 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ..:/workspace
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
+      - ${TIER0_REPO_ROOT:-..}:/workspace
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
     environment:
       - HOME=/tmp
       - USER=sota
@@ -84,11 +84,11 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - ..:/workspace
+      - ${TIER0_REPO_ROOT:-..}:/workspace
       - ./dagster.yaml:/workspace/dagster_home/dagster.yaml:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
     environment:
       - HOME=/tmp
       - USER=sota
@@ -116,11 +116,11 @@ services:
       - -f
       - src/tier0_sota/research.py
     volumes:
-      - ..:/workspace
+      - ${TIER0_REPO_ROOT:-..}:/workspace
       - ./dagster.yaml:/workspace/dagster_home/dagster.yaml:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
     environment:
       - HOME=/tmp
       - USER=sota
@@ -156,8 +156,8 @@ services:
     ports:
       - "127.0.0.1:7575:7575"
     volumes:
-      - ..:/workspace
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/logs:/mnt/z/sota-data/logs
+      - ${TIER0_REPO_ROOT:-..}:/workspace
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/logs:/mnt/z/sota-data/logs
     environment:
       - HOME=/tmp
       - USER=sota
@@ -181,7 +181,7 @@ services:
     ports:
       - "127.0.0.1:8010:8000"
     volumes:
-      - ..:/workspace
+      - ${TIER0_REPO_ROOT:-..}:/workspace
     environment:
       - HOME=/tmp
       - USER=sota
@@ -204,7 +204,7 @@ services:
     ports:
       - "127.0.0.1:9464:9464"
     volumes:
-      - ..:/workspace
+      - ${TIER0_REPO_ROOT:-..}:/workspace
     environment:
       - HOME=/tmp
       - USER=sota
@@ -258,7 +258,7 @@ services:
     ports:
       - "127.0.0.1:9200:9200"
     volumes:
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/logs/xerj-data:/data
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/logs/xerj-data:/data
     environment:
       - HOME=/tmp
       - XERJ_LOG=info
@@ -288,7 +288,7 @@ services:
     ports:
       - "127.0.0.1:8793:8793"
     volumes:
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
     restart: unless-stopped
 
   finos-workspace:
@@ -305,8 +305,8 @@ services:
       - "127.0.0.1:8000:8000"
       - "127.0.0.1:6900:6900"
     volumes:
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/hosted-research-frameworks:/mnt/z/sota-data/hosted-research-frameworks:ro
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/hosted-research-frameworks:/mnt/z/sota-data/hosted-research-frameworks:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
     environment:
       - HOME=/tmp
       - PAPER_ONLY=true
@@ -332,7 +332,7 @@ services:
       - /tmp
     user: "1000:1000"
     volumes:
-      - ${SOTA_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/data/prewall-lake:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/data/prewall-lake:ro
     command:
       - python
       - -c

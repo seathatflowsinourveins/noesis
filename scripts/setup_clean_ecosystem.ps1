@@ -13,7 +13,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$ManifestDir = "Z:\sota-data\manifests",
+    [string]$ManifestDir = $(if ($env:TIER0_DATA_ROOT) { Join-Path $env:TIER0_DATA_ROOT "manifests" } else { "Z:\sota-data\manifests" }),
     [switch]$SyncVenv,
     [switch]$Strict,
     [switch]$Json
@@ -224,8 +224,9 @@ if ($HealthyPortals -eq $Portals.Count) {
 $PaperFarmAccounts = @()
 foreach ($acct in @("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")) {
     $slug = $acct.ToLowerInvariant()
+    $laneTag = $slug.Replace("alpaca_", "")
     $statusFile = Join-Path $ManifestDir "${slug}_live_automation_status.json"
-    $duckFile = Join-Path $ManifestDir "${slug}_seamless_orders.duckdb"
+    $duckFiles = @(Get-ChildItem -LiteralPath $ManifestDir -Filter "*${laneTag}*.duckdb" -File -ErrorAction SilentlyContinue)
     $paperOnly = $false
     $liveDisabled = $false
     $heartbeat = ""
@@ -252,7 +253,7 @@ foreach ($acct in @("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")) {
     $PaperFarmAccounts += [ordered]@{
         account                = $acct
         status_present         = (Test-Path -LiteralPath $statusFile)
-        duckdb_present         = (Test-Path -LiteralPath $duckFile)
+        duckdb_present         = ($duckFiles.Count -gt 0)
         paper_only             = $paperOnly
         live_execution_enabled = $liveDisabled
         heartbeat_utc          = $heartbeat

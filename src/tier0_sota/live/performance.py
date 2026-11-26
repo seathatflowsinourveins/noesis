@@ -13,7 +13,12 @@ from typing import Any
 import duckdb
 import polars as pl
 
-from tier0_sota.live.paper_farm import ALPACA_LANE_PROFILES, IBKR_PAPER_ACCOUNT
+from tier0_sota.live.paper_farm import (
+    ALPACA_LANE_PROFILES,
+    IBKR_PAPER_ACCOUNT,
+    _duckdb_filename,
+    default_manifest_dir,
+)
 
 ALL_FARM_ACCOUNTS: tuple[str, ...] = (*ALPACA_LANE_PROFILES.keys(), IBKR_PAPER_ACCOUNT)
 
@@ -70,13 +75,22 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
 class PaperPerformanceAggregator:
     """Aggregate isolated per-lane status & DuckDB telemetry into manifest + FINOS JSON."""
 
-    def __init__(self, manifest_dir: Path) -> None:
-        self.manifest_dir = manifest_dir
+    def __init__(self, manifest_dir: Path | None = None, *, duckdb_glob: str | None = None) -> None:
+        self.manifest_dir = manifest_dir or default_manifest_dir()
+        self.duckdb_glob = duckdb_glob
+
+    def _resolve_duckdb_path(self, account: str) -> Path:
+        primary = self.manifest_dir / _duckdb_filename(account)
+        if primary.is_file():
+            return primary
+        pattern = self.duckdb_glob or f"{account.lower()}_*.duckdb"
+        matches = sorted(self.manifest_dir.glob(pattern))
+        return matches[0] if matches else primary
 
     def collect_lane_metrics(self, account: str) -> dict[str, Any]:
         slug = account.lower()
         status = _read_json_safe(self.manifest_dir / f"{slug}_live_automation_status.json")
-        duck = _read_duckdb_counts(self.manifest_dir / f"{slug}_seamless_orders.duckdb")
+        duck = _read_duckdb_counts(self._resolve_duckdb_path(account))
         default_lane = (
             ALPACA_LANE_PROFILES[account]["lane_id"]
             if account in ALPACA_LANE_PROFILES
@@ -199,12 +213,13 @@ def build_finos_openbb_export(
 
 
 def aggregate_paper_farm_performance(
-    manifest_dir: Path,
+    manifest_dir: Path | None = None,
     *,
     output_path: Path | None = None,
     finos_output_path: Path | None = None,
+    duckdb_glob: str | None = None,
 ) -> dict[str, Any]:
     """Aggregate Paper Farm performance manifest and FINOS/OpenBB export."""
-    return PaperPerformanceAggregator(manifest_dir).aggregate(
+    return PaperPerformanceAggregator(manifest_dir, duckdb_glob=duckdb_glob).aggregate(
         output_path=output_path, finos_output_path=finos_output_path
     )
