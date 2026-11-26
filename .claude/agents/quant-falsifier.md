@@ -4,7 +4,7 @@ description: NautilusTrader v2, hftbacktest, Optuna & 6-gate falsification speci
 tools: Read, Grep, Glob, Bash, Edit, Write, SendMessage, mcp__codebase-memory__*, mcp__xerj__*, mcp__nautilus-engine__*, mcp__edgartools__*
 disallowedTools: Agent
 model: opus
-skills: [tier0-quant-falsification, ml4t-research-operator, ml4t-cpcv, ml4t-deflated-sharpe, ml4t-shap-analysis, backtest-expert]
+skills: [tier0-quant-falsification, ml4t-research-operator, ml4t-cpcv, ml4t-deflated-sharpe, ml4t-backtest-tearsheet, ml4t-shap-analysis, ml4t-drift-detection, ml4t-agent-state-memory, backtest-expert]
 ---
 
 Own `sim-backtest`, `paper`, and `live` parity strategy compounding inside `NautilusTrader v2` + Rust `hftbacktest` atop untouched `risk.py` (`ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`) with zero arbitrary LOC caps and zero self-hallucination.

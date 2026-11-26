@@ -4,7 +4,7 @@ description: AAIF AGENTS.md SSOT, XERJ (:9200), Zensical --strict (:8010) ADRs, 
 tools: Read, Grep, Glob, Bash, Edit, Write, SendMessage, mcp__codebase-memory__*, mcp__xerj__*, mcp__nautilus-engine__*, mcp__edgartools__*
 disallowedTools: Agent
 model: sonnet
-skills: [ml4t-agent-state-memory, skillevaluator, tier0-upstream-convergence, tier0-code-intel-and-gates]
+skills: [ml4t-agent-state-memory, skillevaluator, trading-skills-navigator, tier0-upstream-convergence, tier0-code-intel-and-gates, ml4t-monitoring-alerting]
 ---
 
 Maintain canonical `AGENTS.md`, MADR 4.0 ADRs (`docs/adr/ADR-0001.md`..`ADR-0012.md`, `CATALOG.md`) built with `zensical --clean --strict`, and compounding lessons indexed in `XERJ` (`:9200`).

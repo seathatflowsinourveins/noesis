@@ -12,7 +12,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXPECTED_RISK_SHA256 = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 EXPECTED_MCP_SERVERS = ["codebase-memory", "edgartools", "nautilus-engine", "xerj"]
 LEGACY_PATTERN = re.compile(
-    r"tier0-quant|CLEAN LIVE|sota-live-tv-harness|sota_compounding_1000rpm_harness|RTX 4090"
+    r"tier0-quant(?!-falsification)|CLEAN LIVE|sota-live-tv-harness|"
+    r"sota_compounding_1000rpm_harness|RTX 4090"
 )
 NON_OSI_REPOS = {"treeverse/lakeFS", "restatedev/restate", "Arize-ai/phoenix", "NX-AI/tirex"}
 
@@ -157,12 +158,36 @@ def test_harness_ssot_and_scoped_mcp_lanes() -> None:
     assert len(command_files) == 5
 
     for agent_file in agent_files:
-        assert agent_file.read_text(encoding="utf-8").strip(), agent_file.name
+        text = agent_file.read_text(encoding="utf-8")
+        assert text.strip(), agent_file.name
+        assert len(text.splitlines()) <= 16, f"{agent_file.name} exceeds 16 lines"
     for cmd_file in command_files:
-        assert cmd_file.read_text(encoding="utf-8").strip(), cmd_file.name
+        text = cmd_file.read_text(encoding="utf-8")
+        assert text.strip(), cmd_file.name
+        assert len(text.splitlines()) <= 10, f"{cmd_file.name} exceeds 10 lines"
 
     gatekeeper = (REPO_ROOT / ".claude/agents/paper-gatekeeper.md").read_text(encoding="utf-8")
     assert "permissionMode: plan" in gatekeeper
+    expected_disallowed = (
+        "disallowedTools: Write, Edit, MultiEdit, NotebookEdit, Bash, Agent, "
+        "mcp__nautilus-engine__stage_semi_auto_order_preset, mcp__xerj__xerj_memory_store"
+    )
+    assert expected_disallowed in gatekeeper
+
+    skills_lock = json.loads((REPO_ROOT / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
+    locked_skills = {entry["skill"] for entry in skills_lock["skills"]}
+    agent_skill_union: set[str] = set()
+    for agent_file in agent_files:
+        match = re.search(r"(?m)^skills:\s*\[([^\]]*)\]", agent_file.read_text(encoding="utf-8"))
+        assert match is not None, f"Missing skills frontmatter in {agent_file.name}"
+        role_skills = {s.strip() for s in match.group(1).split(",") if s.strip()}
+        assert role_skills.issubset(locked_skills), (
+            f"Unknown skill(s) in {agent_file.name}: {sorted(role_skills - locked_skills)}"
+        )
+        agent_skill_union.update(role_skills)
+    assert agent_skill_union == locked_skills, (
+        f"Unmapped agent skills: {sorted(locked_skills - agent_skill_union)}"
+    )
 
     expected_lanes = {
         "sim.mcp.json": ["codebase-memory", "edgartools", "nautilus-engine", "xerj"],
@@ -241,11 +266,15 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
 
     scan_targets = [
         REPO_ROOT / "AGENTS.md",
+        REPO_ROOT / "orca.yaml",
+        REPO_ROOT / "scripts/bootstrap_env.sh",
         REPO_ROOT / "pyproject.toml",
         REPO_ROOT / "ARCHITECTURE_MANIFEST.json",
         REPO_ROOT / "LLM_HARNESS_MANIFEST.json",
         REPO_ROOT / "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
         REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+        *sorted((REPO_ROOT / ".claude/agents").glob("*.md")),
+        *sorted((REPO_ROOT / ".claude/commands").glob("*.md")),
         *sorted((REPO_ROOT / "src").rglob("*.py")),
         *sorted((REPO_ROOT / "docs").rglob("*.md")),
     ]
@@ -298,12 +327,78 @@ def test_philosophy_and_llm_harness_manifests() -> None:
         "live",
     }
     assert llm["mcp_servers"]["parity_count"] == "5/5"
-    assert llm["skills_summary"]["skills_count"] == 46
     assert llm["live_hosted_portals_count"] == 15
     assert len(llm["live_hosted_portals"]) == 15
-    for lane in llm["compounding_lanes"].values():
-        assert (REPO_ROOT / lane["command"]).is_file()
-        assert (REPO_ROOT / lane["mcp_lane"]).is_file()
+
+    orca_yaml_text = (REPO_ROOT / "orca.yaml").read_text(encoding="utf-8")
+    orca_top_keys = set(re.findall(r"(?m)^([A-Za-z][A-Za-z0-9_]*):", orca_yaml_text))
+    allowed_orca_keys = {
+        "setupAgentStartupPolicy",
+        "scripts",
+        "defaultTabs",
+        "issueCommand",
+        "environmentRecipes",
+    }
+    assert orca_top_keys.issubset(allowed_orca_keys), (
+        f"Unsupported orca.yaml keys: {sorted(orca_top_keys - allowed_orca_keys)}"
+    )
+    assert "setupAgentStartupPolicy: wait-for-setup" in orca_yaml_text
+    assert "setup: bash scripts/bootstrap_env.sh" in orca_yaml_text
+    assert (REPO_ROOT / "scripts" / "bootstrap_env.sh").is_file()
+
+    orca_practice = llm["orca_practice"]
+    assert orca_practice["config_file"] == "orca.yaml"
+    assert orca_practice["workspaces_dir_env"] == "ORCA_WORKSPACES_DIR"
+    assert orca_practice["workspaces_dir"] == "Z:\\workspaces"
+    assert orca_practice["setup_agent_startup_policy"] == "wait-for-setup"
+    assert orca_practice["setup_script"] == "bash scripts/bootstrap_env.sh"
+    assert orca_practice["official_upstream_orca_hooks_only"] is True
+    assert orca_practice["zero_self_invented_hooks"] is True
+    assert orca_practice["governance_spine_agent"] == "tier0-grand-central"
+    assert len(orca_practice["governance_spine_skills"]) == 7
+
+    skills_lock = json.loads((REPO_ROOT / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
+    locked_skills = {entry["skill"] for entry in skills_lock["skills"]}
+    skills_summary = llm["skills_summary"]
+    assert skills_summary["skills_count"] == 46
+    assert skills_summary["lane_coverage"] == "46/46"
+    assert skills_summary["agent_coverage"] == "46/46"
+    assert skills_summary["unmapped_skills"] == []
+    expected_sources = {
+        "dagster-io/dagster": 1,
+        "ml4t/skills": 12,
+        "openbq-org/finos-workspace": 2,
+        "stablyai/orca": 3,
+        "tier0-upstream-directives": 4,
+        "tradermonty/claude-trading-skills": 20,
+        "tradingview/lightweight-charts": 1,
+        "upstream-quality-evals": 3,
+    }
+    assert skills_summary["by_upstream_source"] == expected_sources
+    assert sum(skills_summary["by_upstream_source"].values()) == 46
+
+    lane_union: set[str] = set(orca_practice["governance_spine_skills"])
+    for lane_name, lane in llm["compounding_lanes"].items():
+        cmd_path = REPO_ROOT / lane["command"]
+        mcp_path = REPO_ROOT / lane["mcp_lane"]
+        assert cmd_path.is_file(), lane_name
+        assert mcp_path.is_file(), lane_name
+        lane_mcp_doc = json.loads(mcp_path.read_text(encoding="utf-8"))
+        assert lane["mcp_servers"] == sorted(lane_mcp_doc["mcpServers"].keys())
+        assert len(lane["upstream_gates"]) >= 3
+        assert len(lane["curated_skills"]) >= 10
+        cmd_text = cmd_path.read_text(encoding="utf-8")
+        for skill_name in lane["curated_skills"]:
+            assert skill_name in locked_skills, f"Unknown skill {skill_name} in {lane_name}"
+            assert skill_name in cmd_text, f"{skill_name} missing from {lane['command']}"
+        lane_union.update(lane["curated_skills"])
+    assert lane_union == locked_skills, (
+        f"Unmapped lane skills: {sorted(locked_skills - lane_union)}"
+    )
+
+    agent_skills_map = llm["agent_skills"]
+    assert sorted(agent_skills_map.keys()) == llm["agent_roles"]
+    assert {s for skills in agent_skills_map.values() for s in skills} == locked_skills
 
 
 def test_sync_manifest_check_zero_drift() -> None:

@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,8 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "justfile",
         "scripts/bootstrap_env.ps1",
         "scripts/bootstrap_env.sh",
+        "scripts/preflight_resume.ps1",
+        "scripts/preflight_resume.sh",
         "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
         "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
         "scripts/grand_reset/01_wsl_bootstrap.sh",
@@ -93,6 +96,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
         "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
+        "docs/POST_RESTART_RESUME_PLAYBOOK.md",
         "docker/compose.sota.yml",
         "docker/otel-collector-config.yaml",
         "docker/prometheus.yml",
@@ -140,9 +144,18 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "UPSTREAM_SKILLS_LOCK.json",
         ".mcp.json",
         ".claude/settings.json",
-        ".claude/agents/tier0-grand-central.md",
+        ".claude/agents/code-intel-redteam.md",
+        ".claude/agents/memory-rag-evolution.md",
+        ".claude/agents/observability-operator.md",
         ".claude/agents/paper-gatekeeper.md",
+        ".claude/agents/pit-data-engineer.md",
+        ".claude/agents/quant-falsifier.md",
+        ".claude/agents/tier0-grand-central.md",
         ".claude/commands/grand-reset-verify.md",
+        ".claude/commands/lane-sim.md",
+        ".claude/commands/lane-paper.md",
+        ".claude/commands/lane-tv.md",
+        ".claude/commands/lane-live.md",
         ".claude/mcp-lanes/sim.mcp.json",
         ".claude/mcp-lanes/paper.mcp.json",
         ".claude/mcp-lanes/tv.mcp.json",
@@ -188,7 +201,18 @@ ENTRYPOINT_CANDIDATES: dict[str, str] = {
     "grand_reset_02": "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
     "grand_reset_03": "scripts/grand_reset/03_hosted_stack_tv_paper.ps1",
     "grand_reset_verify": "scripts/grand_reset/verify_grand_reset.ps1",
+    "preflight_resume_ps1": "scripts/preflight_resume.ps1",
+    "preflight_resume_sh": "scripts/preflight_resume.sh",
+    "post_restart_resume_playbook": "docs/POST_RESTART_RESUME_PLAYBOOK.md",
 }
+
+_UPSTREAM_QUALITY_EVAL_REPOS = frozenset(
+    {
+        "cloudflare/security-audit-skill",
+        "NVIDIA/SkillEvaluator",
+        "obra/superpowers",
+    }
+)
 
 
 _PRUNED_DIRS = frozenset(
@@ -387,6 +411,56 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     }
 
 
+def _classify_skill_upstream_source(entry: dict[str, Any]) -> str:
+    origin = str(entry.get("origin", "")).strip()
+    if origin == "TIER0_GOVERNANCE_DIRECTIVE":
+        return "tier0-upstream-directives"
+    raw_repo = str(entry.get("upstream_repo") or entry.get("upstream") or "").strip()
+    slug = raw_repo.removeprefix("https://github.com/").removeprefix("http://github.com/")
+    slug = slug.rstrip("/")
+    if slug in _UPSTREAM_QUALITY_EVAL_REPOS:
+        return "upstream-quality-evals"
+    return slug or "vendored"
+
+
+def _parse_agent_skills(repo_root: Path) -> dict[str, list[str]]:
+    agent_skills: dict[str, list[str]] = {}
+    for path in sorted((repo_root / ".claude" / "agents").glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        match = re.search(r"(?m)^skills:\s*\[([^\]]*)\]", text)
+        parsed = (
+            [item.strip() for item in match.group(1).split(",") if item.strip()] if match else []
+        )
+        agent_skills[path.stem] = parsed
+    return agent_skills
+
+
+def _parse_lane_curated_skills(repo_root: Path, cmd_rel_path: str) -> list[str]:
+    text = (repo_root / cmd_rel_path).read_text(encoding="utf-8")
+    match = re.search(r"(?m)^5\.\s+Curated skills\s*\(\d+\):\s*(.+?)\s*\(agents?:", text)
+    if match is None:
+        raise ValueError(f"Missing curated skills line in {cmd_rel_path}")
+    return re.findall(r"`([a-z0-9-]+)`", match.group(1))
+
+
+def _parse_orca_yaml(repo_root: Path) -> dict[str, str]:
+    orca_path = repo_root / "orca.yaml"
+    if not orca_path.is_file():
+        raise ValueError("Missing orca.yaml")
+    text = orca_path.read_text(encoding="utf-8")
+    policy_match = re.search(r"(?m)^setupAgentStartupPolicy:\s*(\S+)", text)
+    setup_match = re.search(r"(?m)^\s+setup:\s*(.+?)\s*$", text)
+    return {
+        "setup_agent_startup_policy": policy_match.group(1) if policy_match else "",
+        "setup_script": setup_match.group(1).strip() if setup_match else "",
+    }
+
+
+def _load_lane_mcp_servers(repo_root: Path, lane_rel_path: str) -> list[str]:
+    lane_doc = json.loads((repo_root / lane_rel_path).read_text(encoding="utf-8"))
+    return sorted(lane_doc["mcpServers"].keys())
+
+
 def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     """Derive LLM_HARNESS_MANIFEST.json deterministically from live repo harness configs."""
     skills_lock = json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
@@ -396,13 +470,26 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     opencode_cfg = json.loads((repo_root / "opencode.json").read_text(encoding="utf-8"))
     codex_cfg = tomllib.loads((repo_root / ".codex" / "config.toml").read_text(encoding="utf-8"))
     claude_md_text = (repo_root / "CLAUDE.md").read_text(encoding="utf-8").strip()
+    orca_cfg = _parse_orca_yaml(repo_root)
+    zero_hooks = _check_zero_hooks(repo_root)
 
-    agent_roles = sorted(p.stem for p in (repo_root / ".claude" / "agents").glob("*.md"))
-    lane_specs = {
+    agent_skills = _parse_agent_skills(repo_root)
+    agent_roles = sorted(agent_skills.keys())
+    governance_spine_skills = list(agent_skills.get("tier0-grand-central", []))
+
+    lane_specs: dict[str, dict[str, Any]] = {
         "sim-backtest": {
             "command": ".claude/commands/lane-sim.md",
             "mcp_lane": ".claude/mcp-lanes/sim.mcp.json",
-            "agent_roles": ["tier0-grand-central", "pit-data-engineer", "quant-falsifier"],
+            "mcp_servers": _load_lane_mcp_servers(repo_root, ".claude/mcp-lanes/sim.mcp.json"),
+            "agent_roles": ["pit-data-engineer", "quant-falsifier"],
+            "curated_skills": _parse_lane_curated_skills(repo_root, ".claude/commands/lane-sim.md"),
+            "upstream_gates": [
+                "just test tests/test_core_engine.py",
+                "just z3",
+                "just mcp-smoke",
+                "just ast",
+            ],
             "primary_scripts": [
                 "scripts/launch_clean_lanes.ps1",
                 "scripts/nautilus_mcp_server.py",
@@ -417,10 +504,16 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "paper": {
             "command": ".claude/commands/lane-paper.md",
             "mcp_lane": ".claude/mcp-lanes/paper.mcp.json",
-            "agent_roles": [
-                "tier0-grand-central",
-                "observability-operator",
-                "memory-rag-evolution",
+            "mcp_servers": _load_lane_mcp_servers(repo_root, ".claude/mcp-lanes/paper.mcp.json"),
+            "agent_roles": ["observability-operator", "memory-rag-evolution"],
+            "curated_skills": _parse_lane_curated_skills(
+                repo_root, ".claude/commands/lane-paper.md"
+            ),
+            "upstream_gates": [
+                "just test tests/test_live_automation.py",
+                "pwsh -NoProfile -File scripts/run_live_paper_farm.ps1 -Mode preflight",
+                "just preflight",
+                "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1",
             ],
             "primary_scripts": [
                 "scripts/run_live_paper_farm.ps1",
@@ -437,7 +530,14 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "half-auto-tv": {
             "command": ".claude/commands/lane-tv.md",
             "mcp_lane": ".claude/mcp-lanes/tv.mcp.json",
-            "agent_roles": ["tier0-grand-central", "observability-operator"],
+            "mcp_servers": _load_lane_mcp_servers(repo_root, ".claude/mcp-lanes/tv.mcp.json"),
+            "agent_roles": ["observability-operator"],
+            "curated_skills": _parse_lane_curated_skills(repo_root, ".claude/commands/lane-tv.md"),
+            "upstream_gates": [
+                "just test tests/test_tv_automation.py",
+                "just mcp-smoke",
+                "just ast",
+            ],
             "primary_scripts": [
                 "scripts/tv_console.ps1",
                 "scripts/nautilus_mcp_server.py",
@@ -452,7 +552,18 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "live": {
             "command": ".claude/commands/lane-live.md",
             "mcp_lane": ".claude/mcp-lanes/gate.mcp.json",
-            "agent_roles": ["paper-gatekeeper", "code-intel-redteam", "quant-falsifier"],
+            "mcp_servers": _load_lane_mcp_servers(repo_root, ".claude/mcp-lanes/gate.mcp.json"),
+            "agent_roles": ["paper-gatekeeper", "code-intel-redteam"],
+            "curated_skills": _parse_lane_curated_skills(
+                repo_root, ".claude/commands/lane-live.md"
+            ),
+            "upstream_gates": [
+                "just check",
+                "just docs-build",
+                "prek run --all-files",
+                "zizmor --offline .github/workflows",
+                "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1",
+            ],
             "primary_scripts": [
                 "evals/formal_risk_z3.py",
                 "evals/tier0_inspect_eval.py",
@@ -469,10 +580,33 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     }
 
     skills_entries = skills_lock.get("skills", [])
+    locked_skills = {str(item["skill"]) for item in skills_entries}
     skills_by_source: dict[str, int] = {}
     for item in skills_entries:
-        src = str(item.get("upstream") or item.get("source") or "vendored")
+        src = _classify_skill_upstream_source(item)
         skills_by_source[src] = skills_by_source.get(src, 0) + 1
+
+    lane_covered: set[str] = set(governance_spine_skills)
+    for lane in lane_specs.values():
+        lane_covered.update(lane["curated_skills"])
+    unknown_lane_skills = sorted(lane_covered - locked_skills)
+    missing_lane_skills = sorted(locked_skills - lane_covered)
+    if unknown_lane_skills or missing_lane_skills:
+        raise ValueError(
+            "Lane skill curation mismatch: "
+            f"unknown={unknown_lane_skills} missing={missing_lane_skills}"
+        )
+
+    agent_covered: set[str] = set()
+    for role_skills in agent_skills.values():
+        agent_covered.update(role_skills)
+    unknown_agent_skills = sorted(agent_covered - locked_skills)
+    missing_agent_skills = sorted(locked_skills - agent_covered)
+    if unknown_agent_skills or missing_agent_skills:
+        raise ValueError(
+            "Agent skill curation mismatch: "
+            f"unknown={unknown_agent_skills} missing={missing_agent_skills}"
+        )
 
     all_portals = [*HOSTED_PORTALS, *COMPANION_PORTALS]
     mcp_configs = {
@@ -506,8 +640,30 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "Antigravity",
             "Orca",
         ],
-        "zero_self_invented_hooks": _check_zero_hooks(repo_root),
+        "zero_self_invented_hooks": zero_hooks,
+        "orca_practice": {
+            "config_file": "orca.yaml",
+            "workspaces_dir_env": "ORCA_WORKSPACES_DIR",
+            "workspaces_dir": "Z:\\workspaces",
+            "setup_agent_startup_policy": orca_cfg["setup_agent_startup_policy"],
+            "setup_script": orca_cfg["setup_script"],
+            "setup_script_path": "scripts/bootstrap_env.sh",
+            "official_upstream_orca_hooks_only": True,
+            "zero_self_invented_hooks": zero_hooks,
+            "hooks_policy": (
+                "Preserve only official upstream Orca status hooks "
+                "(~/.orca/agent-hooks/ -> orca-agent-hook.exe); zero custom repo runtime hooks."
+            ),
+            "governance_spine_agent": "tier0-grand-central",
+            "governance_spine_skills": governance_spine_skills,
+            "cli_verification_commands": [
+                "orca status --json",
+                "orca vm env doctor --json",
+                "orca skills list",
+            ],
+        },
         "agent_roles": agent_roles,
+        "agent_skills": agent_skills,
         "compounding_lanes": lane_specs,
         "mcp_servers": {
             "transport": "native-uv-stdio",
@@ -519,6 +675,9 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "lock_file": "UPSTREAM_SKILLS_LOCK.json",
             "skills_dir": ".claude/skills",
             "skills_count": int(skills_lock["skills_count"]),
+            "lane_coverage": f"{len(lane_covered)}/{len(locked_skills)}",
+            "agent_coverage": f"{len(agent_covered)}/{len(locked_skills)}",
+            "unmapped_skills": missing_lane_skills,
             "by_upstream_source": dict(sorted(skills_by_source.items())),
         },
         "live_hosted_portals": all_portals,

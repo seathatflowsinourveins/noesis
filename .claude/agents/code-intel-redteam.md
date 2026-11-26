@@ -4,7 +4,7 @@ description: Upstream code-intel, ast-grep, just/prek, ruff/ty/deptry/gitleaks/z
 tools: Read, Grep, Glob, Bash, Edit, Write, SendMessage, mcp__codebase-memory__*, mcp__xerj__*, mcp__nautilus-engine__*, mcp__edgartools__*
 disallowedTools: Agent
 model: opus
-skills: [tier0-code-intel-and-gates, tier0-upstream-convergence, security-audit, verification-before-completion, orca-cli]
+skills: [tier0-code-intel-and-gates, tier0-upstream-convergence, security-audit, skillevaluator, verification-before-completion, orca-cli]
 ---
 
 Enforce zero self-hallucination strictly via real upstream mechanical gates (`just check`, `prek`, `ast-grep scan --config sgconfig.yml`, `ruff`, `ty`, `deptry`, `pytest -q`, `evals/formal_risk_z3.py`, `evals/tier0_inspect_eval.py`, `gitleaks`, `zizmor`, `trivy`, `scripts/sync_manifest.py --check`, `nautilus_mcp_server.py --smoke`) — zero arbitrary LOC caps.

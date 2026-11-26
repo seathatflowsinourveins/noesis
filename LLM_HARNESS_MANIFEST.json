@@ -27,6 +27,32 @@
     "Orca"
   ],
   "zero_self_invented_hooks": true,
+  "orca_practice": {
+    "config_file": "orca.yaml",
+    "workspaces_dir_env": "ORCA_WORKSPACES_DIR",
+    "workspaces_dir": "Z:\\workspaces",
+    "setup_agent_startup_policy": "wait-for-setup",
+    "setup_script": "bash scripts/bootstrap_env.sh",
+    "setup_script_path": "scripts/bootstrap_env.sh",
+    "official_upstream_orca_hooks_only": true,
+    "zero_self_invented_hooks": true,
+    "hooks_policy": "Preserve only official upstream Orca status hooks (~/.orca/agent-hooks/ -> orca-agent-hook.exe); zero custom repo runtime hooks.",
+    "governance_spine_agent": "tier0-grand-central",
+    "governance_spine_skills": [
+      "orca-cli",
+      "orca-per-workspace-env",
+      "orchestration",
+      "tier0-upstream-convergence",
+      "tier0-code-intel-and-gates",
+      "tier0-quant-falsification",
+      "verification-before-completion"
+    ],
+    "cli_verification_commands": [
+      "orca status --json",
+      "orca vm env doctor --json",
+      "orca skills list"
+    ]
+  },
   "agent_roles": [
     "code-intel-redteam",
     "memory-rag-evolution",
@@ -36,14 +62,123 @@
     "quant-falsifier",
     "tier0-grand-central"
   ],
+  "agent_skills": {
+    "code-intel-redteam": [
+      "tier0-code-intel-and-gates",
+      "tier0-upstream-convergence",
+      "security-audit",
+      "skillevaluator",
+      "verification-before-completion",
+      "orca-cli"
+    ],
+    "memory-rag-evolution": [
+      "ml4t-agent-state-memory",
+      "skillevaluator",
+      "trading-skills-navigator",
+      "tier0-upstream-convergence",
+      "tier0-code-intel-and-gates",
+      "ml4t-monitoring-alerting"
+    ],
+    "observability-operator": [
+      "tier0-upstream-dashboards-and-observability",
+      "ml4t-monitoring-alerting",
+      "ml4t-backtest-tearsheet",
+      "finos-develop-plugins",
+      "finos-administer-via-cli",
+      "lightweight-charts",
+      "stockbee-episodic-pivot-analyzer",
+      "stockbee-momentum-burst-screener",
+      "stockbee-exhaustion-hammer-screener",
+      "vcp-screener",
+      "pead-screener",
+      "parabolic-short-trade-planner",
+      "breakout-trade-planner",
+      "trading-skills-navigator"
+    ],
+    "paper-gatekeeper": [
+      "drawdown-circuit-breaker",
+      "tier0-quant-falsification",
+      "exposure-coach",
+      "position-sizer",
+      "pre-trade-discipline-gate"
+    ],
+    "pit-data-engineer": [
+      "ml4t-point-in-time",
+      "ml4t-polars-patterns",
+      "ml4t-factor-research",
+      "ml4t-causal-identification",
+      "dagster-docs-skill",
+      "macro-regime-detector",
+      "market-breadth-analyzer",
+      "uptrend-analyzer",
+      "ftd-detector",
+      "market-top-detector",
+      "ibd-distribution-day-monitor",
+      "us-market-bubble-detector"
+    ],
+    "quant-falsifier": [
+      "tier0-quant-falsification",
+      "ml4t-research-operator",
+      "ml4t-cpcv",
+      "ml4t-deflated-sharpe",
+      "ml4t-backtest-tearsheet",
+      "ml4t-shap-analysis",
+      "ml4t-drift-detection",
+      "ml4t-agent-state-memory",
+      "backtest-expert"
+    ],
+    "tier0-grand-central": [
+      "orca-cli",
+      "orca-per-workspace-env",
+      "orchestration",
+      "tier0-upstream-convergence",
+      "tier0-code-intel-and-gates",
+      "tier0-quant-falsification",
+      "verification-before-completion"
+    ]
+  },
   "compounding_lanes": {
     "sim-backtest": {
       "command": ".claude/commands/lane-sim.md",
       "mcp_lane": ".claude/mcp-lanes/sim.mcp.json",
+      "mcp_servers": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
+      ],
       "agent_roles": [
-        "tier0-grand-central",
         "pit-data-engineer",
         "quant-falsifier"
+      ],
+      "curated_skills": [
+        "ml4t-point-in-time",
+        "ml4t-polars-patterns",
+        "ml4t-factor-research",
+        "ml4t-causal-identification",
+        "ml4t-cpcv",
+        "ml4t-deflated-sharpe",
+        "ml4t-backtest-tearsheet",
+        "ml4t-shap-analysis",
+        "ml4t-drift-detection",
+        "ml4t-research-operator",
+        "ml4t-agent-state-memory",
+        "backtest-expert",
+        "dagster-docs-skill",
+        "macro-regime-detector",
+        "market-breadth-analyzer",
+        "uptrend-analyzer",
+        "ftd-detector",
+        "market-top-detector",
+        "ibd-distribution-day-monitor",
+        "us-market-bubble-detector",
+        "tier0-quant-falsification"
+      ],
+      "upstream_gates": [
+        "just test tests/test_core_engine.py",
+        "just z3",
+        "just mcp-smoke",
+        "just ast"
       ],
       "primary_scripts": [
         "scripts/launch_clean_lanes.ps1",
@@ -59,10 +194,38 @@
     "paper": {
       "command": ".claude/commands/lane-paper.md",
       "mcp_lane": ".claude/mcp-lanes/paper.mcp.json",
+      "mcp_servers": [
+        "codebase-memory",
+        "nautilus-engine",
+        "xerj"
+      ],
       "agent_roles": [
-        "tier0-grand-central",
         "observability-operator",
         "memory-rag-evolution"
+      ],
+      "curated_skills": [
+        "stockbee-episodic-pivot-analyzer",
+        "stockbee-momentum-burst-screener",
+        "stockbee-exhaustion-hammer-screener",
+        "vcp-screener",
+        "pead-screener",
+        "parabolic-short-trade-planner",
+        "breakout-trade-planner",
+        "position-sizer",
+        "exposure-coach",
+        "drawdown-circuit-breaker",
+        "pre-trade-discipline-gate",
+        "ml4t-monitoring-alerting",
+        "finos-develop-plugins",
+        "finos-administer-via-cli",
+        "tier0-upstream-dashboards-and-observability",
+        "trading-skills-navigator"
+      ],
+      "upstream_gates": [
+        "just test tests/test_live_automation.py",
+        "pwsh -NoProfile -File scripts/run_live_paper_farm.ps1 -Mode preflight",
+        "just preflight",
+        "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1"
       ],
       "primary_scripts": [
         "scripts/run_live_paper_farm.ps1",
@@ -79,9 +242,30 @@
     "half-auto-tv": {
       "command": ".claude/commands/lane-tv.md",
       "mcp_lane": ".claude/mcp-lanes/tv.mcp.json",
+      "mcp_servers": [
+        "nautilus-engine",
+        "xerj"
+      ],
       "agent_roles": [
-        "tier0-grand-central",
         "observability-operator"
+      ],
+      "curated_skills": [
+        "lightweight-charts",
+        "breakout-trade-planner",
+        "parabolic-short-trade-planner",
+        "stockbee-episodic-pivot-analyzer",
+        "stockbee-momentum-burst-screener",
+        "stockbee-exhaustion-hammer-screener",
+        "vcp-screener",
+        "pead-screener",
+        "position-sizer",
+        "pre-trade-discipline-gate",
+        "trading-skills-navigator"
+      ],
+      "upstream_gates": [
+        "just test tests/test_tv_automation.py",
+        "just mcp-smoke",
+        "just ast"
       ],
       "primary_scripts": [
         "scripts/tv_console.ps1",
@@ -97,10 +281,32 @@
     "live": {
       "command": ".claude/commands/lane-live.md",
       "mcp_lane": ".claude/mcp-lanes/gate.mcp.json",
+      "mcp_servers": [
+        "codebase-memory",
+        "xerj"
+      ],
       "agent_roles": [
         "paper-gatekeeper",
-        "code-intel-redteam",
-        "quant-falsifier"
+        "code-intel-redteam"
+      ],
+      "curated_skills": [
+        "drawdown-circuit-breaker",
+        "exposure-coach",
+        "position-sizer",
+        "pre-trade-discipline-gate",
+        "tier0-quant-falsification",
+        "tier0-code-intel-and-gates",
+        "tier0-upstream-convergence",
+        "security-audit",
+        "skillevaluator",
+        "verification-before-completion"
+      ],
+      "upstream_gates": [
+        "just check",
+        "just docs-build",
+        "prek run --all-files",
+        "zizmor --offline .github/workflows",
+        "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1"
       ],
       "primary_scripts": [
         "evals/formal_risk_z3.py",
@@ -193,8 +399,18 @@
     "lock_file": "UPSTREAM_SKILLS_LOCK.json",
     "skills_dir": ".claude/skills",
     "skills_count": 46,
+    "lane_coverage": "46/46",
+    "agent_coverage": "46/46",
+    "unmapped_skills": [],
     "by_upstream_source": {
-      "vendored": 46
+      "dagster-io/dagster": 1,
+      "ml4t/skills": 12,
+      "openbq-org/finos-workspace": 2,
+      "stablyai/orca": 3,
+      "tier0-upstream-directives": 4,
+      "tradermonty/claude-trading-skills": 20,
+      "tradingview/lightweight-charts": 1,
+      "upstream-quality-evals": 3
     }
   },
   "live_hosted_portals": [

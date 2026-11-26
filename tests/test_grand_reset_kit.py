@@ -240,3 +240,133 @@ def test_grand_reset_scripts_ps1_ast_dryrun_and_wsl_safety() -> None:
     for forbidden in ("mkfs", "rm -rf /mnt/z", "wsl --shutdown"):
         assert forbidden not in wsl_sh
     assert all(port in wsl_sh for port in LIVE_PORTS)
+
+
+def test_preflight_resume_kit_scripts_and_playbook() -> None:
+    ps1_path = REPO_ROOT / "scripts" / "preflight_resume.ps1"
+    sh_path = REPO_ROOT / "scripts" / "preflight_resume.sh"
+    playbook_path = REPO_ROOT / "docs" / "POST_RESTART_RESUME_PLAYBOOK.md"
+
+    assert ps1_path.is_file(), "Missing scripts/preflight_resume.ps1"
+    assert sh_path.is_file(), "Missing scripts/preflight_resume.sh"
+    assert playbook_path.is_file(), "Missing docs/POST_RESTART_RESUME_PLAYBOOK.md"
+
+    ps1_txt = ps1_path.read_text(encoding="utf-8")
+    for token in (
+        "-Reconcile",
+        "-CleanLegacyLocked",
+        "-Json",
+        "Noesis-SOTA",
+        "tier0-duckdb-ui",
+        "tier0-openbb-backend",
+        "tier0-ollama-docker-bridge",
+        "tier0-openbb-docker-bridge",
+        "otelcol_",
+        "Caddy",
+        "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c",
+        "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+        "seathatflowsinourveins/noesis",
+        "workstation_preflight_resume_manifest.json",
+        "tier0.workstation-preflight-resume.v1",
+        "finish_post_restart_cleanup.ps1",
+    ):
+        assert token in ps1_txt, f"preflight_resume.ps1 missing required token {token!r}"
+    assert all(port in ps1_txt for port in LIVE_PORTS)
+    for forbidden in ("wsl --shutdown", "Restart-Computer", "Stop-Computer"):
+        assert forbidden not in ps1_txt
+
+    pwsh_exe = shutil.which("pwsh")
+    if os.name == "nt":
+        assert pwsh_exe is not None
+    if pwsh_exe is not None:
+        ast_cmd = (
+            "$ErrorActionPreference='Stop'; "
+            "$tok=$null; $err=$null; "
+            "[void][System.Management.Automation.Language.Parser]::ParseFile("
+            f"'{ps1_path}',[ref]$tok,[ref]$err); "
+            "if($err.Count -gt 0){ throw ($err | Out-String) }"
+        )
+        proc = subprocess.run(
+            [pwsh_exe, "-NoProfile", "-Command", ast_cmd],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, f"preflight_resume.ps1 AST error: {proc.stderr or proc.stdout}"
+
+    sh_bytes = sh_path.read_bytes()
+    assert b"\r\n" not in sh_bytes, "scripts/preflight_resume.sh must use LF line endings"
+    sh_txt = sh_bytes.decode("utf-8")
+    assert sh_txt.startswith("#!/usr/bin/env bash\n")
+    for token in (
+        "--reconcile",
+        "--json",
+        "Noesis-SOTA",
+        "tier0-duckdb-ui",
+        "tier0-openbb-backend",
+        "tier0-ollama-docker-bridge",
+        "tier0-openbb-docker-bridge",
+        "otelcol_",
+        "caddy",
+        "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c",
+        "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+        "seathatflowsinourveins/noesis",
+        "workstation_preflight_resume_manifest.json",
+        "tier0.workstation-preflight-resume.v1",
+    ):
+        assert token in sh_txt, f"preflight_resume.sh missing required token {token!r}"
+    assert all(port in sh_txt for port in LIVE_PORTS)
+    for forbidden in ("mkfs", "rm -rf /mnt/z", "wsl --shutdown"):
+        assert forbidden not in sh_txt
+
+    bash_exe = shutil.which("bash")
+    if bash_exe is not None and not bash_exe.lower().endswith("\\system32\\bash.exe"):
+        bash_proc = subprocess.run(
+            [bash_exe, "-n", str(sh_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert bash_proc.returncode == 0, f"bash -n failed: {bash_proc.stderr or bash_proc.stdout}"
+
+    shellcheck_exe = shutil.which("shellcheck")
+    if shellcheck_exe is not None:
+        sc_proc = subprocess.run(
+            [shellcheck_exe, str(sh_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert sc_proc.returncode == 0, f"shellcheck failed: {sc_proc.stderr or sc_proc.stdout}"
+
+    playbook_txt = playbook_path.read_text(encoding="utf-8")
+    for token in (
+        "just resume",
+        "just preflight",
+        "AGENTS.md",
+        "LLM_HARNESS_MANIFEST.json",
+        "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
+        "workstation_preflight_resume_manifest.json",
+        "codebase-memory",
+        "XERJ",
+        "sim-backtest",
+        "paper",
+        "half-auto-tv",
+        "live",
+        "finish_post_restart_cleanup.ps1",
+        "gh auth refresh",
+    ):
+        assert token in playbook_txt, f"POST_RESTART_RESUME_PLAYBOOK.md missing {token!r}"
+    assert not BANNED_IMPORT_RE.search(playbook_txt)
+    assert not LIVE_ENABLE_RE.search(playbook_txt)
+
+    z_cfg = tomllib.loads((REPO_ROOT / "zensical.toml").read_text(encoding="utf-8"))
+    nav_targets = [next(iter(item.values())) for item in z_cfg["project"]["nav"]]
+    assert "POST_RESTART_RESUME_PLAYBOOK.md" in nav_targets
+    assert "POST_RESTART_RESUME_PLAYBOOK.md" in (REPO_ROOT / "docs" / "index.md").read_text(
+        encoding="utf-8"
+    )
+
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    assert "preflight" in just_txt and "scripts/preflight_resume.ps1" in just_txt
+    assert "resume" in just_txt and "scripts/preflight_resume.sh" in just_txt

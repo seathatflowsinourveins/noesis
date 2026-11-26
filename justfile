@@ -115,5 +115,13 @@ docker-build:
 docker-ps:
     docker compose -p docker -f docker/compose.sota.yml ps
 
+# Run read-only workstation & ecosystem preflight (writes workstation_preflight_resume_manifest.json)
+preflight *args:
+    {{ if os_family() == "windows" { "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/preflight_resume.ps1" } else { "bash scripts/preflight_resume.sh" } }} {{args}}
+
+# Reconcile WSL2 systemd services + Docker Compose stack and verify 15/15 portals post-restart
+resume *args:
+    {{ if os_family() == "windows" { "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/preflight_resume.ps1 -Reconcile" } else { "bash scripts/preflight_resume.sh --reconcile" } }} {{args}}
+
 # Run complete local SOTA verification suite
 check: fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke test gitleaks

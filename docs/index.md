@@ -27,5 +27,6 @@ flowchart LR
 - [Architecture Layer Manifest (`L0..L10`)](ARCHITECTURE_LAYER_MANIFEST.md)
 - [Clean Ecosystem Manifest](CLEAN_ECOSYSTEM_MANIFEST.md)
 - [Grand-Reset Disk-Z & WSL2 Runbook](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md)
+- [Post-Restart Seamless Resume Playbook](POST_RESTART_RESUME_PLAYBOOK.md)
 - [TradingView Automation Playbook](TV_AUTOMATION_PLAYBOOK.md)
 - [MADR 4.0 ADR Catalog (`ADR-0001..ADR-0012`)](adr/CATALOG.md)

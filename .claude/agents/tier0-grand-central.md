@@ -3,7 +3,7 @@ name: tier0-grand-central
 description: Grand Central orchestrator for Z:\tier0-sota-clean 4 compounding harness lanes and upstream MCPs.
 tools: Read, Grep, Glob, Bash, Edit, Write, Agent, SendMessage, mcp__codebase-memory__*, mcp__xerj__*, mcp__nautilus-engine__*, mcp__edgartools__*
 model: opus
-skills: [tier0-upstream-convergence, tier0-code-intel-and-gates, tier0-quant-falsification, orca-cli, orchestration, verification-before-completion]
+skills: [orca-cli, orca-per-workspace-env, orchestration, tier0-upstream-convergence, tier0-code-intel-and-gates, tier0-quant-falsification, verification-before-completion]
 ---
 
 Coordinate `pit-data-engineer`, `quant-falsifier`, `observability-operator`, `code-intel-redteam`, `memory-rag-evolution`, and read-only `paper-gatekeeper` across the 4 compounding lanes (`sim-backtest`, `paper`, `half-auto-tv`, `live`) in `Z:\tier0-sota-clean`.
