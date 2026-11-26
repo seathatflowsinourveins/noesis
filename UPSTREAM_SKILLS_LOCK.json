@@ -621,7 +621,7 @@
     {
       "skill": "tier0-code-intel-and-gates",
       "origin": "TIER0_GOVERNANCE_DIRECTIVE",
-      "upstream_repo": "tier0-quant",
+      "upstream_repo": "seathatflowsinourveins/noesis",
       "commit_sha": "local",
       "license": "MIT",
       "source_rel_path": ".claude/skills/tier0-code-intel-and-gates/SKILL.md",
@@ -635,12 +635,12 @@
         "harbor",
         "code-intel"
       ],
-      "skill_sha256": "224c2410dda8c397e1d5c56ea7f7e3b7eea5014c5894eaf048ffb80ebdaabda7"
+      "skill_sha256": "472bc83ed7d1a06516fa85d1fcb4f182d1ff8b30310d9aa09ad0a3e3d314d1cf"
     },
     {
       "skill": "tier0-quant-falsification",
       "origin": "TIER0_GOVERNANCE_DIRECTIVE",
-      "upstream_repo": "tier0-quant",
+      "upstream_repo": "seathatflowsinourveins/noesis",
       "commit_sha": "local",
       "license": "MIT",
       "source_rel_path": ".claude/skills/tier0-quant-falsification/SKILL.md",
@@ -653,12 +653,12 @@
         "risk",
         "pit"
       ],
-      "skill_sha256": "7e0ad0c98627052bc2645a7c06a69667b4401807bae86a5fdb688c98c06d8bbc"
+      "skill_sha256": "fb56579d7a9b185585b481069cf3933040ba5806e5e913aaca447b92816b455f"
     },
     {
       "skill": "tier0-upstream-convergence",
       "origin": "TIER0_GOVERNANCE_DIRECTIVE",
-      "upstream_repo": "tier0-quant",
+      "upstream_repo": "seathatflowsinourveins/noesis",
       "commit_sha": "local",
       "license": "MIT",
       "source_rel_path": ".claude/skills/tier0-upstream-convergence/SKILL.md",
@@ -675,12 +675,12 @@
         "upstream",
         "zensical"
       ],
-      "skill_sha256": "8f99854005bb15146794916437c5d51aa42a1db33c768f882b35919dca1b532d"
+      "skill_sha256": "1d3b919a0eecabbe799c1adc5073a68e4eb781dda08b8dafb3751d49548a506c"
     },
     {
       "skill": "tier0-upstream-dashboards-and-observability",
       "origin": "TIER0_GOVERNANCE_DIRECTIVE",
-      "upstream_repo": "tier0-quant",
+      "upstream_repo": "seathatflowsinourveins/noesis",
       "commit_sha": "local",
       "license": "MIT",
       "source_rel_path": ".claude/skills/tier0-upstream-dashboards-and-observability/SKILL.md",
@@ -694,7 +694,7 @@
         "tearsheet",
         "duckdb"
       ],
-      "skill_sha256": "bd06ce1103ef542431a9ce3c84ee49cbf561514abc09471e49168b4c7ed61b46"
+      "skill_sha256": "5b0b05a1c6d5f5f62e8a9084c31e78f820fdc2de21413ec000e7cc512e5a21d7"
     },
     {
       "skill": "trading-skills-navigator",

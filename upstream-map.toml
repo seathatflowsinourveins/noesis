@@ -64,6 +64,29 @@ allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_200"]
 # deptry, ruff, ty, prek, zizmor, trivy, gitleaks, Z3 SMT proofs, exact risk.py SHA-256,
 # and live_execution_enabled = False (zero arbitrary LOC caps).
 
+[meta_convergence_practice]
+standards = [
+  "AAIF AGENTS.md",
+  "MADR 4.0 (living evolvable ADRs)",
+  "PEP 735 (uv.lock default-groups)",
+  "SPDX OSI License Firewall",
+  "Conventional Commits",
+]
+reflection_stack = [
+  "nautilus_trader",
+  "hftbacktest",
+  "optuna",
+  "mlflow",
+  "inspect-ai",
+  "dspy",
+  "dagster",
+  "skillevaluator",
+  "xerj",
+  "orca",
+  "omniroute",
+]
+convergence_principle = "SOTA upstream convergence directed by Core Trading Philosophy is the sole source of truth; self-reflection continuously evaluates strategy metrics and harness invariants inside verified upstreams."
+
 [layers.L0]
 name = "Runtime, Lockfile & Provenance"
 winners = ["uv", "mise", "just"]
@@ -101,8 +124,8 @@ rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune",
 
 [layers.L7]
 name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "osv-scanner", "shellcheck", "zizmor"]
-rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright"]
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
+rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner"]
 
 [layers.L8]
 name = "Agent Evals, Sandboxes & Prompt Optimization"
@@ -110,8 +133,8 @@ winners = ["inspect-ai", "dspy", "harbor", "promptfoo", "skillevaluator", "OpenH
 rejected_overlaps = ["deepeval"]
 
 [layers.L9]
-name = "Multi-Model Harness, Code Graph, Skills & Upstream MCPs"
-winners = ["orca", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
+name = "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs"
+winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
 rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"]
 
 [layers.L10]

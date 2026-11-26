@@ -94,6 +94,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "docs/adr/ADR-0001.md",
         "docs/adr/ADR-0012.md",
         "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
+        "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
         "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
         "docs/POST_RESTART_RESUME_PLAYBOOK.md",
@@ -128,9 +129,11 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "tests/test_architecture_manifest.py",
         "tests/test_grand_reset_kit.py",
         "tests/test_formal_and_evals.py",
+        "scripts/run_compounding_reflection.py",
     ],
     "L8": [
         "evals/__init__.py",
+        "evals/dspy_self_reflect.py",
         "evals/tier0_inspect_eval.py",
         "pyproject.toml",
         "upstream-map.toml",
@@ -208,6 +211,9 @@ ENTRYPOINT_CANDIDATES: dict[str, str] = {
     "preflight_resume_ps1": "scripts/preflight_resume.ps1",
     "preflight_resume_sh": "scripts/preflight_resume.sh",
     "post_restart_resume_playbook": "docs/POST_RESTART_RESUME_PLAYBOOK.md",
+    "compounding_reflection": "scripts/run_compounding_reflection.py",
+    "compounding_reflection_doc": "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
+    "dspy_self_reflect": "evals/dspy_self_reflect.py",
 }
 
 _UPSTREAM_QUALITY_EVAL_REPOS = frozenset(
@@ -410,7 +416,6 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "shared_manifests_root": "Z:\\sota-data\\manifests",
             "prewall_lake_root": "Z:\\sota-data\\prewall-lake",
             "workspaces_root": "Z:\\workspaces",
-            "archive_root": "Z:\\archive",
         },
     }
 
@@ -475,6 +480,7 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     codex_cfg = tomllib.loads((repo_root / ".codex" / "config.toml").read_text(encoding="utf-8"))
     phil_doc = json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
     claude_md_text = (repo_root / "CLAUDE.md").read_text(encoding="utf-8").strip()
+    upstream_cfg = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
     orca_cfg = _parse_orca_yaml(repo_root)
     zero_hooks = _check_zero_hooks(repo_root)
 
@@ -646,6 +652,7 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "Orca",
         ],
         "source_of_truth_hierarchy": phil_doc["source_of_truth_hierarchy"],
+        "meta_convergence_practice": upstream_cfg.get("meta_convergence_practice", {}),
         "zero_self_invented_hooks": zero_hooks,
         "orca_practice": {
             "config_file": "orca.yaml",

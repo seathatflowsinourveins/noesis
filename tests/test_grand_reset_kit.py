@@ -434,3 +434,33 @@ def test_orca_account_failover_and_ci_auth_policy() -> None:
     assert "anthropic-banked-sota" in ci_mm
     assert "OMNIROUTE_API_KEY" in ci_mm
     assert "OPENAI_API_KEY" in ci_mm
+
+
+def test_compounding_reflection_script_cli_and_docs(tmp_path: Path) -> None:
+    import sys
+
+    just_text = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    assert "reflect *args:" in just_text
+    assert "scripts/run_compounding_reflection.py" in just_text
+    assert (REPO_ROOT / "docs" / "COMPOUNDING_SELF_REFLECTION_LOOP.md").is_file()
+
+    arch = json.loads((REPO_ROOT / "ARCHITECTURE_MANIFEST.json").read_text(encoding="utf-8"))
+    entrypoints = arch.get("entrypoints", {})
+    assert entrypoints.get("compounding_reflection") == "scripts/run_compounding_reflection.py"
+    assert entrypoints.get("dspy_self_reflect") == "evals/dspy_self_reflect.py"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "run_compounding_reflection.py"),
+            "--offline",
+            "--manifest-dir",
+            str(tmp_path),
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"Reflection CLI failed:\n{proc.stderr}\n{proc.stdout}"
+    assert (tmp_path / "compounding_self_reflection_manifest.json").is_file()

@@ -13,7 +13,6 @@ gitleaks = "8.30"
 trivy = "0.76"
 zizmor = "1.32"
 syft = "1.55"
-osv-scanner = "2.7"
 prek = "0.5"
 ast-grep = "0.51"
 

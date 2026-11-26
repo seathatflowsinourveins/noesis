@@ -131,5 +131,9 @@ account-status:
 account-switch:
     {{uv_run}} python scripts/orca_account_failover.py --apply
 
+# Run Dual-Flywheel compounding self-reflection & strategy Optuna/Inspect/DSPy/MLflow loop
+reflect *args:
+    {{uv_run}} python scripts/run_compounding_reflection.py {{args}}
+
 # Run complete local SOTA verification suite
 check: fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke test gitleaks

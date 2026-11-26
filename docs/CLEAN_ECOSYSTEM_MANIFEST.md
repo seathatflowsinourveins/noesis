@@ -4,7 +4,7 @@
 - **Target Standalone Repository:** `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`, branch `main`, Python 3.13 via `uv` + `mise` + `just`)
 - **Immutable Risk Kernel SHA-256 (`src/tier0_sota/risk.py`):** `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`
 - **Live Execution Guard:** `live_execution_enabled = False`, `paper_only = True`, zero live broker ports (`:4001`, `:7496`, `:8798`, `:8796`)
-- **Zero Self-Invention Policy:** Enforced strictly through official upstream gates (`ast-grep`, `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `zizmor`, `trivy`, `syft`, `osv-scanner`, `z3-solver`, immutable `risk.py` SHA-256, and `live_execution_enabled = False`) with zero arbitrary LOC caps.
+- **Zero Self-Invention Policy:** Enforced strictly through official upstream gates (`ast-grep`, `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `zizmor`, `trivy`, `syft`, GitHub `CodeQL`/`Dependabot`, `z3-solver`, immutable `risk.py` SHA-256, and `live_execution_enabled = False`) with zero arbitrary LOC caps.
 
 ---
 
@@ -12,11 +12,11 @@
 
 | Script / Config | Role | Notes |
 |---|---|---|
-| `justfile` | Cross-platform declarative task runner | Official upstream `just` wrapping `uv`, `ruff`, `ty`, `deptry`, `ast-grep`, `sync_manifest.py`, `pytest`, `zensical`, `prek`, `gitleaks`, `zizmor`, `trivy`, and `docker compose` |
-| `mise.toml` | Declarative upstream CLI registry | Pins 11 official upstream CLIs (`python`, `uv`, `just`, `ruff`, `gitleaks`, `trivy`, `zizmor`, `syft`, `osv-scanner`, `prek`, `ast-grep`) |
-| `scripts/sync_manifest.py` | Programmatic SSOT manifest sync | Derives `ARCHITECTURE_MANIFEST.json` deterministically from `upstream-map.toml`, git metadata, real repo files, and `risk.py` SHA-256 (`--write` / `--check`) |
+| `justfile` | Cross-platform declarative task runner | Official upstream `just` wrapping `uv`, `ruff`, `ty`, `deptry`, `ast-grep`, `sync_manifest.py`, `pytest`, `zensical`, `prek`, `gitleaks`, `zizmor`, `trivy`, `preflight`, `resume`, `reflect`, `account-status`, and `docker compose` |
+| `mise.toml` | Declarative upstream CLI registry | Pins 10 official upstream CLIs (`python`, `uv`, `just`, `ruff`, `gitleaks`, `trivy`, `zizmor`, `syft`, `prek`, `ast-grep`) |
+| `scripts/sync_manifest.py` | Programmatic SSOT manifest sync | Derives `ARCHITECTURE_MANIFEST.json` & `LLM_HARNESS_MANIFEST.json` deterministically from `upstream-map.toml`, git metadata, real repo files, and `risk.py` SHA-256 (`--write` / `--check`) |
 | `.pre-commit-config.yaml` | Upstream pre-commit hooks (`prek`) | Installed locally via `prek install` (`check-merge-conflict`, `check-toml`, `check-json`, `ruff-check`, `ruff-format`, `gitleaks`, `shellcheck`, `zizmor`, `ty`, `ast-grep`) |
-| `.github/workflows/{ci,security,docs,release}.yml` | Hardened upstream GitHub Actions suite | Full 40-char commit SHA pins, least-privilege `permissions`, `persist-credentials: false`, `zizmor --offline` (`0` findings), `actionlint` (`0` errors), CycloneDX SBOM via `syft`, `osv-scanner`, `trivy`, and `zensical build --clean --strict` |
+| `.github/workflows/{ci,security,docs,release,multi-model-sota}.yml` | Hardened upstream GitHub Actions suite | Full 40-char commit SHA pins, least-privilege `permissions`, `persist-credentials: false`, `zizmor --offline --persona=pedantic` (`0` findings), CycloneDX SBOM via `syft` on release, `trivy`, `gitleaks`, native `CodeQL`/`Dependabot`, and OmniRoute/Anthropic/OpenAI workflow |
 | `.github/{dependabot.yml,CODEOWNERS,pull_request_template.md}` | Repo governance & dependency updates | Weekly `uv`, `github-actions`, and `docker` updates with 7-day cooldown; `@seathatflowsinourveins` code ownership on critical safety files |
 | `scripts/setup_clean_ecosystem.ps1` | Idempotent setup & health check | Verifies `.venv`, `risk.py` SHA-256, 4-runtime MCP parity, `13/13` hosted portals, Paper Farm readiness, and `0` live broker ports |
 | `scripts/check.ps1` | One-command Windows CI gate | Runs `risk.py` SHA-256, PS1 AST parse, `UV_LOCK_YFINANCE_MATCHES=0`, `LEGACY_MATCHES=0`, `ruff`, `ty`, `deptry`, `ast-grep`, `formal_risk_z3.py`, `nautilus_mcp_server.py --smoke`, `pytest -q`, and `gitleaks` |
@@ -76,4 +76,3 @@
 | `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT\manifests`) | Active live Paper Farm & TV manifests/DuckDB ledgers | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-data\prewall-lake` (`$env:TIER0_DATA_ROOT\prewall-lake`) | Pre-wall (`<= 2026-10-15`) immutable market data lake | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-cache` | Shared `uv` wheel & Python cache | **PRESERVED SHARED CACHE** (never delete) |
-| `Z:\archive` | Non-destructive archival store | **PRESERVED ARCHIVE ROOT** |

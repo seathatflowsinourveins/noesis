@@ -430,3 +430,36 @@ def test_sync_manifest_check_zero_drift() -> None:
     )
     assert proc.returncode == 0, f"sync_manifest.py --check failed:\n{proc.stderr}\n{proc.stdout}"
     assert "SYNC_MANIFEST_CHECK_OK=1" in proc.stdout
+
+
+def test_meta_convergence_and_zero_banned_caps_in_skills_and_readme() -> None:
+    llm = json.loads((REPO_ROOT / "LLM_HARNESS_MANIFEST.json").read_text(encoding="utf-8"))
+    meta = llm.get("meta_convergence_practice", {})
+    assert isinstance(meta, dict)
+    assert "MADR 4.0 (living evolvable ADRs)" in meta.get("standards", [])
+    assert {
+        "nautilus_trader",
+        "hftbacktest",
+        "optuna",
+        "mlflow",
+        "inspect-ai",
+        "dspy",
+        "dagster",
+        "xerj",
+        "orca",
+    }.issubset(set(meta.get("reflection_stack", [])))
+
+    banned_rx = re.compile(
+        r"(?:advisory\s*<=\s*\d+\s*LOC|<=\s*450\s*LOC|18-pin|bounded\s*1\.\.12|"
+        r"VectorBT|QuantStats|osv-scanner)",
+        re.IGNORECASE,
+    )
+    targets = [
+        REPO_ROOT / "README.md",
+        *(REPO_ROOT / ".claude" / "skills").glob("tier0-*/SKILL.md"),
+    ]
+    assert len(targets) == 5
+    for target in targets:
+        text = target.read_text(encoding="utf-8")
+        match = banned_rx.search(text)
+        assert match is None, f"Banned arbitrary cap or tool in {target}: {match.group(0)}"

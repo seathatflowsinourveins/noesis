@@ -118,7 +118,6 @@
         "fpgmaas/deptry",
         "aquasecurity/trivy",
         "anchore/syft",
-        "google/osv-scanner",
         "koalaman/shellcheck",
         "zizmorcore/zizmor"
       ],
@@ -148,9 +147,10 @@
       "artifacts": ["evals/tier0_inspect_eval.py", "pyproject.toml", "upstream-map.toml"]
     },
     "L9": {
-      "name": "Multi-Model Harness, Code Graph, Skills & Upstream MCPs",
+      "name": "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs",
       "winners": [
         "stablyai/orca",
+        "diegosouzapw/OmniRoute",
         "DeusData/codebase-memory-mcp",
         "xerj-org/xerj",
         "dgunning/edgartools",

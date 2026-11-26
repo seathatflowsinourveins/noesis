@@ -1,4 +1,4 @@
-"""Upstream-native Dagster Definitions & asset graph (pre-wall PIT, risk SHA-256, Paper Farm)."""
+"""Upstream-native Dagster Definitions & asset graph (PIT, risk SHA-256, Paper Farm, reflection)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 
-from dagster import Definitions, asset
+from dagster import Definitions, ScheduleDefinition, asset, define_asset_job
+from evals.dspy_self_reflect import verify_dspy_reflection_module
+from evals.tier0_inspect_eval import verify_inspect_safety_suite
 
 from tier0_sota.discovery import DISCOVERY_WALL_ISO
 from tier0_sota.risk import (
@@ -19,11 +21,15 @@ from tier0_sota.risk import (
 EXPECTED_RISK_SHA256 = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 
 
+def _resolve_data_root() -> Path:
+    default_root = r"Z:\sota-data" if os.name == "nt" else "/mnt/z/sota-data"
+    return Path(os.environ.get("TIER0_DATA_ROOT", "").strip() or default_root)
+
+
 @asset
 def prewall_pit_audit() -> dict[str, object]:
     """Expose causal pre-wall cutoff date and configured market data root."""
-    default_root = r"Z:\sota-data" if os.name == "nt" else "/mnt/z/sota-data"
-    data_root = Path(os.environ.get("TIER0_DATA_ROOT", "").strip() or default_root)
+    data_root = _resolve_data_root()
     return {
         "prewall_cutoff_iso": DISCOVERY_WALL_ISO,
         "data_root": str(data_root),
@@ -48,9 +54,7 @@ def risk_kernel_sha256_attestation() -> dict[str, object]:
 @asset
 def paper_farm_performance_snapshot() -> dict[str, object]:
     """Read fail-closed Paper Farm performance manifest without touching live brokers."""
-    default_root = r"Z:\sota-data" if os.name == "nt" else "/mnt/z/sota-data"
-    data_root = Path(os.environ.get("TIER0_DATA_ROOT", "").strip() or default_root)
-    manifest_path = data_root / "manifests" / "paper_farm_live_performance_manifest.json"
+    manifest_path = _resolve_data_root() / "manifests" / "paper_farm_live_performance_manifest.json"
     if not manifest_path.is_file():
         return {"present": False, "paper_only": True, "live_execution_enabled": False}
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -63,10 +67,69 @@ def paper_farm_performance_snapshot() -> dict[str, object]:
     }
 
 
+@asset
+def inspect_safety_and_philosophy_eval() -> dict[str, object]:
+    """Run Inspect AI 6-invariant safety & living-ADR evaluation plus DSPy reflection check."""
+    inspect_rep = verify_inspect_safety_suite()
+    dspy_rep = verify_dspy_reflection_module()
+    return {
+        "inspect_ok": bool(inspect_rep.get("ok", False)),
+        "inspect_samples": int(inspect_rep.get("samples_count", 0)),
+        "dspy_ok": bool(dspy_rep.get("ok", False)),
+        "dspy_metric_score": dspy_rep.get("metric_score"),
+    }
+
+
+@asset(
+    deps=[
+        prewall_pit_audit,
+        risk_kernel_sha256_attestation,
+        paper_farm_performance_snapshot,
+        inspect_safety_and_philosophy_eval,
+    ]
+)
+def compounding_self_reflection_snapshot() -> dict[str, object]:
+    """Expose the latest Dual-Flywheel compounding self-reflection manifest to Dagster."""
+    manifest_path = _resolve_data_root() / "manifests" / "compounding_self_reflection_manifest.json"
+    if not manifest_path.is_file():
+        return {"present": False, "path": str(manifest_path)}
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return {
+        "present": True,
+        "schema_version": payload.get("schema_version"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "best_profile": payload.get("optuna", {}).get("best_profile"),
+        "best_value": payload.get("optuna", {}).get("best_value"),
+        "inspect_accuracy": payload.get("inspect", {}).get("accuracy"),
+    }
+
+
+compounding_reflection_job = define_asset_job(
+    name="compounding_reflection_job",
+    selection=[
+        prewall_pit_audit,
+        risk_kernel_sha256_attestation,
+        paper_farm_performance_snapshot,
+        inspect_safety_and_philosophy_eval,
+        compounding_self_reflection_snapshot,
+    ],
+)
+
+daily_compounding_reflection_schedule = ScheduleDefinition(
+    name="daily_compounding_reflection_schedule",
+    job=compounding_reflection_job,
+    cron_schedule="0 18 * * 1-5",
+    execution_timezone="America/New_York",
+)
+
 defs = Definitions(
     assets=[
         prewall_pit_audit,
         risk_kernel_sha256_attestation,
         paper_farm_performance_snapshot,
-    ]
+        inspect_safety_and_philosophy_eval,
+        compounding_self_reflection_snapshot,
+    ],
+    jobs=[compounding_reflection_job],
+    schedules=[daily_compounding_reflection_schedule],
 )

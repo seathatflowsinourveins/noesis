@@ -101,7 +101,7 @@ exclude = [".claude/skills/**"]
 [tool.deptry]
 known_first_party = ["tier0_sota"]
 ignore_notebooks = true
-extend_exclude = ["\\.claude/skills", "site", "evals"]
+extend_exclude = ["\\.claude/skills", "site", "evals", "scripts/run_compounding_reflection\\.py"]
 
 [tool.deptry.package_module_name_map]
 anthropic = "anthropic"

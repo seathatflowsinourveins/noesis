@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 128,
+    "repository_files_count": 131,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -307,6 +307,7 @@
         "docs/adr/ADR-0001.md",
         "docs/adr/ADR-0012.md",
         "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
+        "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
         "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
         "docs/POST_RESTART_RESUME_PLAYBOOK.md",
@@ -331,9 +332,10 @@
         "deptry",
         "trivy",
         "syft",
-        "osv-scanner",
         "shellcheck",
-        "zizmor"
+        "zizmor",
+        "codeql",
+        "dependabot"
       ],
       "rejected_overlaps": [
         "black",
@@ -341,7 +343,8 @@
         "flake8",
         "bandit",
         "mypy",
-        "pyright"
+        "pyright",
+        "osv-scanner"
       ],
       "repo_artifacts": [
         ".github/workflows/ci.yml",
@@ -368,7 +371,8 @@
         "tests/test_mcp_server.py",
         "tests/test_architecture_manifest.py",
         "tests/test_grand_reset_kit.py",
-        "tests/test_formal_and_evals.py"
+        "tests/test_formal_and_evals.py",
+        "scripts/run_compounding_reflection.py"
       ]
     },
     "L8": {
@@ -387,6 +391,7 @@
       ],
       "repo_artifacts": [
         "evals/__init__.py",
+        "evals/dspy_self_reflect.py",
         "evals/tier0_inspect_eval.py",
         "pyproject.toml",
         "upstream-map.toml",
@@ -394,9 +399,10 @@
       ]
     },
     "L9": {
-      "name": "Multi-Model Harness, Code Graph, Skills & Upstream MCPs",
+      "name": "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs",
       "winners": [
         "orca",
+        "omniroute",
         "codebase-memory-mcp",
         "xerj",
         "mcp",
@@ -501,7 +507,10 @@
     "grand_reset_verify": "scripts/grand_reset/verify_grand_reset.ps1",
     "preflight_resume_ps1": "scripts/preflight_resume.ps1",
     "preflight_resume_sh": "scripts/preflight_resume.sh",
-    "post_restart_resume_playbook": "docs/POST_RESTART_RESUME_PLAYBOOK.md"
+    "post_restart_resume_playbook": "docs/POST_RESTART_RESUME_PLAYBOOK.md",
+    "compounding_reflection": "scripts/run_compounding_reflection.py",
+    "compounding_reflection_doc": "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
+    "dspy_self_reflect": "evals/dspy_self_reflect.py"
   },
   "repository_files": [
     ".claude/agents/code-intel-redteam.md",
@@ -560,6 +569,7 @@
     "docker/prometheus.yml",
     "docs/ARCHITECTURE_LAYER_MANIFEST.md",
     "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
+    "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
     "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
     "docs/POST_RESTART_RESUME_PLAYBOOK.md",
     "docs/TV_AUTOMATION_PLAYBOOK.md",
@@ -578,6 +588,7 @@
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
+    "evals/dspy_self_reflect.py",
     "evals/formal_risk_z3.py",
     "evals/tier0_inspect_eval.py",
     "justfile",
@@ -603,6 +614,7 @@
     "scripts/orca_account_failover.py",
     "scripts/preflight_resume.ps1",
     "scripts/preflight_resume.sh",
+    "scripts/run_compounding_reflection.py",
     "scripts/run_live_paper_farm.ps1",
     "scripts/setup_clean_ecosystem.ps1",
     "scripts/sync_manifest.py",
@@ -637,7 +649,6 @@
     "active_repo": "Z:\\tier0-sota-clean",
     "shared_manifests_root": "Z:\\sota-data\\manifests",
     "prewall_lake_root": "Z:\\sota-data\\prewall-lake",
-    "workspaces_root": "Z:\\workspaces",
-    "archive_root": "Z:\\archive"
+    "workspaces_root": "Z:\\workspaces"
   }
 }

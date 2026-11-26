@@ -38,6 +38,29 @@
       "live_execution_enabled_false_until_stage5"
     ]
   },
+  "meta_convergence_practice": {
+    "standards": [
+      "AAIF AGENTS.md",
+      "MADR 4.0 (living evolvable ADRs)",
+      "PEP 735 (uv.lock default-groups)",
+      "SPDX OSI License Firewall",
+      "Conventional Commits"
+    ],
+    "reflection_stack": [
+      "nautilus_trader",
+      "hftbacktest",
+      "optuna",
+      "mlflow",
+      "inspect-ai",
+      "dspy",
+      "dagster",
+      "skillevaluator",
+      "xerj",
+      "orca",
+      "omniroute"
+    ],
+    "convergence_principle": "SOTA upstream convergence directed by Core Trading Philosophy is the sole source of truth; self-reflection continuously evaluates strategy metrics and harness invariants inside verified upstreams."
+  },
   "zero_self_invented_hooks": true,
   "orca_practice": {
     "config_file": "orca.yaml",

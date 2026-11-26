@@ -1,59 +1,42 @@
-# `tier0-sota-clean` — Clean-Room Tier-0 SOTA Quantitative Stack
+# `tier0-sota-clean` — Clean-Room Tier-0 SOTA Quantitative Stack (`seathatflowsinourveins/noesis`)
 
-Clean-room Python 3.13 (`uv`) repository operating under [`AGENTS.md`](AGENTS.md) and [`upstream-map.toml`](upstream-map.toml). Zero Self-Invention is strictly enforced via `ast-grep` structural rules (`rules/zero_self_invention.yml`), single-winner `uv.lock` / banned-package locks, exact `risk.py` SHA-256, and `live_execution_enabled = False`; module LOC targets below are advisory telemetry.
+Clean-room Python 3.13 (`uv`) repository operating strictly under **SOTA Upstream Convergence directed by Core Trading Philosophy** ([`AGENTS.md`](AGENTS.md), [`PHILOSOPHY_COMPOUNDING_MANIFEST.json`](PHILOSOPHY_COMPOUNDING_MANIFEST.json), [`upstream-map.toml`](upstream-map.toml)). Zero Self-Invention is enforced mechanically via upstream gates (`ast-grep`, single-winner OSI `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `trivy`, `zizmor`, `Z3` SMT proofs, immutable `risk.py` SHA-256, and `live_execution_enabled = False`) with zero arbitrary LOC caps.
 
-## Architecture & Advisory Module Telemetry
+## Architecture & Upstream Modules
 
-- **`src/tier0_sota/risk.py` (exact SHA-256 `ad8071dc...`, advisory `<= 400` LOC):** Immutable exact `Decimal` Rule-612 stop quantization (`<= 2.00%`), session-latched `-1.50%` daily drawdown fuse, and `>= 10%` exit reserve.
-- **`src/tier0_sota/engine.py` (advisory `<= 650` LOC):** Declarative `NautilusTrader v2` 24/5 session protection, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse, and venue rate pacing (`IBKR_PAPER_4002` / `ALPACA_PAPER_200`, `live_execution_enabled = False`).
-- **`src/tier0_sota/discovery.py` (advisory `<= 400` LOC):** Causal PIT (`<= 2026-10-15`, `t_ns + 60s`, `XNYS`), multi-feed market regime, and `ml4t-engineer`/`river`/`ruptures`/`stumpy` signal adapters.
-- **`src/tier0_sota/research.py` (advisory `<= 350` LOC):** 6-gate statistical falsification (`hftbacktest` markout, `1x`/`2x` costs, `skfolio` CPCV `MIN_CPCV_SAMPLES = 16`, `ml4t-diagnostic` DSR/PBO, `arch` Hansen SPA, `statsmodels` HAC, `MLflow` logging).
-- **`src/tier0_sota/live/` (advisory: `scanner.py <= 320`, `paper_farm.py <= 380`, `performance.py <= 220`):** Whole-market extreme-mover scanner (`Alpaca SIP` + `FINRA TRF`), 3-lane Alpaca Paper + `IBKR :4002` Paper Farm adapter (`paper_only = True`), and live performance manifest aggregator.
+- **`src/tier0_sota/risk.py` (immutable SHA-256 `ad8071dc...`):** Exact `Decimal` Rule-612 stop quantization (`<= 2.00%`), session-latched `-1.50%` daily drawdown fuse, and `>= 10%` protective exit reserve.
+- **`src/tier0_sota/engine.py`:** Declarative `NautilusTrader v2` 24/5 session protection (`RTH` `STOP_MARKET` vs collared `outside_rth` `STOP_LIMIT`), 4-tier progressive profit-lock trailing, rapid re-entry, flatten-first auto-reverse, and venue rate pacing (`IBKR_PAPER_4002` / `ALPACA_PAPER_200`, `live_execution_enabled = False`).
+- **`src/tier0_sota/discovery.py`:** Causal PIT (`<= 2026-10-15`, `t_ns + 60s`, `XNYS`), multi-feed market regime, and `ml4t-engineer`/`river`/`ruptures`/`stumpy` signal adapters.
+- **`src/tier0_sota/research.py`:** 6-gate statistical falsification (`hftbacktest` markout, `1x`/`2x` costs, `skfolio` CPCV `MIN_CPCV_SAMPLES = 16`, `ml4t-diagnostic` DSR/PBO, `arch` Hansen SPA, `statsmodels` HAC, `MLflow` logging).
+- **`src/tier0_sota/definitions.py`:** Upstream `Dagster` asset graph (`prewall_pit_audit`, `risk_kernel_sha256_attestation`, `paper_farm_performance_snapshot`, `inspect_safety_and_philosophy_eval`, `compounding_self_reflection_snapshot`) + weekday compounding schedule.
+- **`src/tier0_sota/live/` & `src/tier0_sota/tv/`:** Whole-market extreme-mover scanner (`Alpaca SIP` + `FINRA TRF`), 3-lane Alpaca Paper + `IBKR :4002` Paper Farm (`paper_only = True`), and display-only TradingView Pine v6 + Pydantic v2 (`TvAlertV1`) half-auto bridge.
 
-## Clean Bootstrap
-
-Windows (PowerShell):
-```powershell
-pwsh -NoProfile -File scripts/bootstrap_env.ps1
-```
-
-Linux / macOS / Git Bash:
-```bash
-bash scripts/bootstrap_env.sh
-```
-
-## Verification & Ecosystem Gates
-
-One-command local CI gates ([`scripts/check.ps1`](scripts/check.ps1) on Windows, [`scripts/check.sh`](scripts/check.sh) on Linux/WSL2 `Noesis-SOTA`, mirrored in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+## Clean Bootstrap & Seamlessly Automated Tasks (`just`)
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+pwsh -NoProfile -File scripts/bootstrap_env.ps1   # Windows
+bash scripts/bootstrap_env.sh                      # Linux / WSL2 Noesis-SOTA
 ```
 
 ```bash
-ruff check .
-ruff format --check src tests scripts evals
-ty check
-deptry .
-ast-grep scan
-pytest -v
-python evals/formal_risk_z3.py
-zensical build --clean
-python scripts/nautilus_mcp_server.py --smoke
-pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/verify_grand_reset.ps1
-gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner
+just check           # ruff, ty, deptry, ast-grep, sync_manifest, Z3, MCP smoke, pytest, gitleaks
+just docs-build      # uv run --no-sync zensical build --clean --strict
+just preflight       # 13-gate workstation/portal/OmniRoute/Orca preflight -> manifest
+just resume          # Reconcile WSL2 systemd + Docker + OmniRoute + preflight post-restart
+just reflect         # Dual-Flywheel self-reflection (Nautilus+Optuna+MLflow+Inspect+DSPy+XERJ)
+just account-status  # Read-only Orca native Claude/Codex OAuth headroom check
 ```
 
-## Architecture, ADRs & Grand-Reset Documentation
+One-command CI gates ([`scripts/check.ps1`](scripts/check.ps1), [`scripts/check.sh`](scripts/check.sh)) mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-- [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](docs/ARCHITECTURE_LAYER_MANIFEST.md) — Complete `L0`–`L10` active layers + `L11`–`L15` earned triggers, SPDX OSI License Firewall, Mermaid topology diagram, repository map, `13/13` hosted portals, and standalone workstation topology.
-- [`ARCHITECTURE_MANIFEST.json`](ARCHITECTURE_MANIFEST.json) — Machine-readable SSOT (`tier0.architecture-layer-manifest.v1`) verified by [`tests/test_architecture_manifest.py`](tests/test_architecture_manifest.py).
-- [`SOTA_STARRED_AND_BEYOND_MANIFEST.json`](SOTA_STARRED_AND_BEYOND_MANIFEST.json) — Active `L0`–`L10` upstream winners, `L11`–`L15` earned-trigger frontier catalog, and SPDX OSI firewall (`zero_self_invented_hooks = true`).
-- [`docs/adr/CATALOG.md`](docs/adr/CATALOG.md) & [`zensical.toml`](zensical.toml) — Bounded evolvable MADR 4.0 ADRs (`ADR-0001`..`ADR-0012`) rendered cleanly via Zensical.
-- [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) — Step-by-step Disk-Z (`00_clean_disk_z_and_agy_reset.ps1`), WSL2, AGY, TradingView, Docker, and 4-runtime Grand-Reset runbook.
-- [`docs/CLEAN_ECOSYSTEM_MANIFEST.md`](docs/CLEAN_ECOSYSTEM_MANIFEST.md) — Paper Farm readiness, portal health, Orca terminal audit, and safe archive receipts.
-- [`docs/TV_AUTOMATION_PLAYBOOK.md`](docs/TV_AUTOMATION_PLAYBOOK.md) — TradingView Pine v6 indicators and Half-Auto ticket/bridge workflow.
+## Documentation & Living Evolvable ADRs
 
-## Zero-Hook 4-Runtime MCP, Standalone Skills & Scoped Lanes
+- [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](docs/ARCHITECTURE_LAYER_MANIFEST.md) — Active `L0`–`L10` layers + `L11`–`L15` earned-trigger frontier, SPDX OSI License Firewall, Mermaid topology, and `15/15` portals + `OmniRoute :20128`.
+- [`docs/COMPOUNDING_SELF_REFLECTION_LOOP.md`](docs/COMPOUNDING_SELF_REFLECTION_LOOP.md) — Upstream Dual-Flywheel strategy & harness self-reflection loop (`NautilusTrader v2` + `Optuna` + `MLflow 3` + `Inspect AI` + `DSPy` + `Dagster` + `XERJ`).
+- [`docs/POST_RESTART_RESUME_PLAYBOOK.md`](docs/POST_RESTART_RESUME_PLAYBOOK.md) — Logon auto-resume, OmniRoute + Orca multi-account OAuth routing, and one-command workstation recovery.
+- [`docs/adr/CATALOG.md`](docs/adr/CATALOG.md) & [`zensical.toml`](zensical.toml) — Living, evolvable MADR 4.0 ADRs (`ADR-0001+`) rendered via Zensical (`:8010`).
+- [`docs/CLEAN_ECOSYSTEM_MANIFEST.md`](docs/CLEAN_ECOSYSTEM_MANIFEST.md), [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md), & [`docs/TV_AUTOMATION_PLAYBOOK.md`](docs/TV_AUTOMATION_PLAYBOOK.md).
 
-Configured identically with native `uv run --no-sync` commands and **zero self-invented runtime hooks** across `.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, and `opencode.json` (`.opencode/commands/verify-tier0.md`) for `codebase-memory`, `xerj`, `nautilus-engine` ([`scripts/nautilus_mcp_server.py`](scripts/nautilus_mcp_server.py)), and `edgartools`, plus scoped lane MCPs in `.claude/mcp-lanes/` (`sim`, `paper`, `tv`, `gate`), `46` standalone SHA-pinned skills in `.claude/skills/` ([`UPSTREAM_SKILLS_LOCK.json`](UPSTREAM_SKILLS_LOCK.json)), and `7` few-line lanes in `.claude/agents/`.
+## Zero-Hook Multi-Runtime MCP, Curated Skills & Scoped Lanes
+
+All 5 repo configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, `opencode.json`) wire native `uv run --no-sync` stdio MCPs (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`) with **zero self-invented runtime hooks**, scoped lanes in `.claude/mcp-lanes/`, `46/46` SHA-locked skills in `.claude/skills/` curated across all 4 compounding lanes in [`LLM_HARNESS_MANIFEST.json`](LLM_HARNESS_MANIFEST.json), and Orca native orchestration in [`orca.yaml`](orca.yaml).

@@ -38,22 +38,74 @@ def test_z3_formal_risk_invariants_unsat() -> None:
     assert "Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1" in proc.stdout
 
 
-def test_inspect_ai_safety_suite_and_task() -> None:
+def test_inspect_ai_safety_suite_and_task(tmp_path: Path) -> None:
+    from inspect_ai import eval as inspect_eval
+
     t = tier0_safety_eval()
     assert t.name == "tier0_sota_safety_eval"
-    assert len(t.dataset) == 4
+    assert len(t.dataset) == 6
     sample_ids = {s.id for s in t.dataset}
     assert sample_ids == {
-        "live_execution_and_ports_refused",
-        "zero_banned_libs_in_src",
-        "zero_custom_runtime_hooks",
-        "risk_kernel_sha256_match",
+        "live_refusal",
+        "zero_banned_libs",
+        "zero_custom_hooks",
+        "risk_sha256",
+        "zero_arbitrary_loc_caps_and_living_adrs",
+        "upstream_skills_46_parity",
     }
 
     rep = verify_inspect_safety_suite()
     assert rep["ok"] is True
-    assert rep["samples_count"] == 4
+    assert rep["samples_count"] == 6
     assert all(v == "PASS" for v in rep["checks"].values())
+
+    logs = inspect_eval(t, model="mockllm/model", log_dir=tmp_path.as_posix(), display="none")
+    assert len(logs) == 1
+    assert logs[0].status == "success"
+    assert logs[0].results is not None
+    metrics = logs[0].results.scores[0].metrics
+    mean_metric = metrics.get("mean") or metrics.get("accuracy")
+    assert mean_metric is not None and mean_metric.value == 1.0
+
+
+def test_dspy_reflection_module_and_dagster_definitions() -> None:
+    from dagster import AssetsDefinition
+    from evals.dspy_self_reflect import verify_dspy_reflection_module
+
+    from tier0_sota.definitions import defs
+
+    dspy_rep = verify_dspy_reflection_module()
+    assert dspy_rep["ok"] is True
+    assert dspy_rep["metric_score"] == 1.0
+    assert dspy_rep["omniroute_api_base"] == "http://127.0.0.1:20128/v1"
+
+    asset_names = sorted(
+        a.key.to_user_string() for a in (defs.assets or []) if isinstance(a, AssetsDefinition)
+    )
+    assert asset_names == [
+        "compounding_self_reflection_snapshot",
+        "inspect_safety_and_philosophy_eval",
+        "paper_farm_performance_snapshot",
+        "prewall_pit_audit",
+        "risk_kernel_sha256_attestation",
+    ]
+    schedule_names = [s.name for s in (defs.schedules or [])]
+    assert schedule_names == ["daily_compounding_reflection_schedule"]
+
+
+def test_compounding_reflection_offline_tmp_path(tmp_path: Path) -> None:
+    from scripts.run_compounding_reflection import run_compounding_reflection
+
+    rep = run_compounding_reflection(offline=True, manifest_dir=tmp_path)
+    manifest_file = tmp_path / "compounding_self_reflection_manifest.json"
+    assert manifest_file.is_file()
+    assert rep["safety"]["risk_sha256_match"] is True
+    assert rep["safety"]["live_execution_enabled"] is False
+    assert rep["optuna"]["trials_total"] == 3
+    assert len(rep["optuna"]["profiles"]) == 3
+    assert rep["inspect"]["samples_count"] == 6
+    assert rep["inspect"]["accuracy"] == 1.0
+    assert rep["dspy"]["ok"] is True
 
 
 def test_discovery_env_parameterization() -> None:

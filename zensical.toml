@@ -1,6 +1,6 @@
 [project]
-site_name = "tier0-sota-clean — Tier-0 SOTA Architecture & Grand-Reset Portal"
-site_description = "100% standalone Python 3.13 Tier-0 SOTA quantitative architecture (L0..L10), bounded evolvable MADR 4.0 ADRs (ADR-0001..ADR-0012), Z3 formal risk & Inspect AI evals, 13-portal research stack, and Disk-Z + WSL2 Grand-Reset runbook."
+site_name = "tier0-sota-clean — Tier-0 SOTA Architecture & Compounding Portal"
+site_description = "100% standalone Python 3.13 Tier-0 SOTA quantitative architecture (L0..L10), living evolvable MADR 4.0 ADRs (ADR-0001+), Z3 formal risk & Inspect AI/DSPy evals, 15-portal research stack + OmniRoute :20128, and seamless post-restart resume."
 docs_dir = "docs"
 site_dir = "site"
 
@@ -8,10 +8,11 @@ nav = [
   { "Overview" = "index.md" },
   { "Architecture Layer Manifest (L0..L10)" = "ARCHITECTURE_LAYER_MANIFEST.md" },
   { "Clean Ecosystem Manifest" = "CLEAN_ECOSYSTEM_MANIFEST.md" },
+  { "Compounding Self-Reflection Loop" = "COMPOUNDING_SELF_REFLECTION_LOOP.md" },
   { "Grand-Reset Disk-Z & WSL2 Runbook" = "GRAND_RESET_DISK_Z_WSL_RUNBOOK.md" },
   { "Post-Restart Resume Playbook" = "POST_RESTART_RESUME_PLAYBOOK.md" },
   { "TradingView Automation Playbook" = "TV_AUTOMATION_PLAYBOOK.md" },
-  { "ADR Catalog (ADR-0001..0012)" = "adr/CATALOG.md" },
+  { "ADR Catalog (Living MADR 4.0)" = "adr/CATALOG.md" },
   { "ADR-0001: Architecture Layers & AST Zero-Self-Invention" = "adr/ADR-0001.md" },
   { "ADR-0002: Dual-Flywheel Compounding Learning Harness" = "adr/ADR-0002.md" },
   { "ADR-0003: Causal Point-in-Time Data Plane" = "adr/ADR-0003.md" },
