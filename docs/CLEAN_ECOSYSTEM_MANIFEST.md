@@ -24,9 +24,10 @@
 | [`scripts/grand_reset/03_hosted_stack_tv_paper.ps1`](../scripts/grand_reset/03_hosted_stack_tv_paper.ps1) | Grand-Reset Step 03 | Verifies `13/13` Docker portals, syncs TV Pine v6 + Paper Farm manifests (`-DryRun` supported) |
 | [`scripts/grand_reset/verify_grand_reset.ps1`](../scripts/grand_reset/verify_grand_reset.ps1) | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, `12/12` ADRs, `zensical`, `risk.py`, MCP smoke, `13/13` portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
 | [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) | Grand-Reset Operator Runbook | Step-by-step zero-hook Disk-Z + WSL2 + fresh AGY + TV + 4-Runtime + Orca reset guide |
-| **WSL2 Docker Cutover** (`Noesis-SOTA`) | Compose project `docker` runs exclusively from `/mnt/z/tier0-sota-clean/docker/compose.sota.yml` (`tier0-sota-research:latest`, `tier0-sota-xerj:latest`, ext4 `${TIER0_STATE_ROOT}` = `~/tier0-sota-state`); Dagster `:3000` serves `tier0_sota.definitions`; Zensical `:8010` serves canonical `tier0-sota-clean` docs |
+| **WSL2 Docker Cutover** (`Noesis-SOTA`) | Compose project `docker` runs exclusively from `/mnt/z/tier0-sota-clean/docker/compose.sota.yml` (`tier0-sota-research:latest`, `tier0-sota-xerj:latest`, fresh ext4 `${TIER0_STATE_ROOT}` = `~/tier0-sota-state`, `docker running(10)` + `workspace-local running(5)`); Dagster `:3000` serves `tier0_sota.definitions`; Zensical `:8010` serves canonical `tier0-sota-clean` docs |
+| **WSL2 Systemd & Windows Cutover** | Active WSL2 units (`tier0-duckdb-ui`, `tier0-openbb-backend`, `tier0-tearsheets`, `ollama`, `tier0-ollama-docker-bridge`, `tier0-openbb-docker-bridge`) run from `~/tier0-sota-clean/.venv/bin`; Windows User Env (`TIER0_REPO_ROOT=Z:\tier0-sota-clean`, `TIER0_DATA_ROOT=Z:\sota-data`), `ensure-noesis-orca-6770.pyw`, and 5 global runtime configs updated (`0` previous-era refs; legacy convergence scheduled task disabled) |
 | `trivy` & `zizmor` Security | `trivy fs --scanners misconfig,secret` (`0` findings across `Dockerfile.{research,sandbox,xerj}` & `uv.lock`); `zizmor --offline .github/workflows/ci.yml` (`0` findings) |
-| **MCP Code-Graph Index** | `codebase-memory` project `Z-tier0-sota-clean` indexed cleanly (`0` skipped files, `1,045` nodes, `2,564` edges); `xerj_status` cluster `green` with `.xerj-memory-tier0-compounding-lessons` preserved |
+| **Clean-Slate MCP, MLflow & XERJ** | `codebase-memory` holds `1/1` project (`Z-tier0-sota-clean`); fresh MLflow 3 (`:5000`) holds `1` non-default experiment (`tier0-sota-clean-baseline`, run `73a47de22306461997fe535224974f7f`, `FINISHED`); fresh XERJ (`:9200`) cluster `green` with `.xerj-memory-tier0-compounding-lessons` (`4` clean doctrine docs) |
 
 ### 4-Runtime MCP Parity & Zero Self-Invented Hooks
 
@@ -63,17 +64,18 @@ All 5 configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gem
 
 *Companion SQL UI verified:* DuckDB SQL UI (`http://127.0.0.1:4213/`) -> `HTTP 200`.
 
-### 4-Account Paper Farm (`Z:\sota-data\manifests`)
+### 4-Account Clean-Slate Practice Plane (`Z:\sota-data\manifests`)
 
-- `ALPACA_PA1` (`L1_ORB_BURST`): Active heartbeat (`paper_only = true`, `live_execution_enabled = false`, `https://paper-api.alpaca.markets`, isolated DuckDB ledger `paper_lane_pa1.duckdb` / `alpaca_pa1*.duckdb`).
-- `ALPACA_PA2` (`L2_STRUCTURAL_TREND`): Active heartbeat (`paper_only = true`, `live_execution_enabled = false`, `https://paper-api.alpaca.markets`, isolated DuckDB ledger `paper_lane_pa2.duckdb` / `alpaca_pa2*.duckdb`).
-- `ALPACA_PA3` (`L3_AVWAP_TIGHT_LOCK`): Active heartbeat (`paper_only = true`, `live_execution_enabled = false`, `https://paper-api.alpaca.markets`, isolated DuckDB ledger `paper_lane_pa3.duckdb` / `alpaca_pa3*.duckdb`).
-- `IBKR_DU_4002` (Paper Gateway `:4002`): Adapter configured (`paper_only = True`, `live_execution_enabled = False`); gateway socket `:4002` offline unless IB Gateway Paper is started.
+Regenerated cleanly from `Z:\tier0-sota-clean` (`scripts/run_live_paper_farm.ps1` + `scripts/tv_console.ps1`, `15` clean artifacts total):
+- `ALPACA_PA1` (`L1_ORB_BURST`), `ALPACA_PA2` (`L2_STRUCTURAL_TREND`), `ALPACA_PA3` (`L3_AVWAP_TIGHT_LOCK`): Clean lane statuses (`alpaca_pa{1,2,3}_live_automation_status.json`, `paper_only = true`, `live_execution_enabled = false`, `https://paper-api.alpaca.markets`, `$100,000` each) and isolated schema-initialized DuckDB ledgers `paper_lane_pa{1,2,3}.duckdb` attached by `tier0-duckdb-ui` (`http://127.0.0.1:4213/` -> `HTTP 200`).
+- `IBKR_DU_4002` (Paper Gateway `:4002`): Adapter status (`ibkr_du_4002_live_automation_status.json`, `paper_only = true`, `live_execution_enabled = false`, `$100,000`); combined equity `$400,000.00` in `paper_farm_live_performance_manifest.json` and `finos_paper_farm_performance.json`.
+- **Whole-Market Scanner & TV Half-Auto Pack (`tv_sota_pack\`):** `live_whole_market_movers_manifest.json` (`4` ranked symbols, `macro_regime = 1`), `live_half_auto_tickets.json` (`4/4` schema-validated, `qty = 1`, `semi_auto_confirmed = false`), `LIVE_HALF_AUTO_ORDER_TICKETS.md`, `tier0_sota_tv_watchlists_live.txt`, `tier0_market_regime.pine`, and `tier0_omni_sota_24x5.pine`.
 
 ---
 
 ## 3. Safe Archival & Orca Terminal Audit
 
+- **Previous-Era Cutover Archive (`Z:\archive\previous_era_2026-11-25\` & `~/archive_previous_era_2026-11-25/`):** Non-destructively moved previous-era `Z:\sota-data\manifests\*` (`34` items), previous-era compounding harness under `Z:\sota-data\research-runs\`, `Z:\sota-data\tearsheets\*` (`20` items), Windows runtime config backups (`windows_configs\`), unheld Disk-Z root directories (`disk_z_root\`, with active OS-locked folders gracefully skipped pending restart), and WSL2 pre-cutover configs/systemd/ext4 state (`0` deletions; `Z:\sota-data\prewall-lake` and `Z:\sota-data\finos-workspace` untouched).
 - **Superseded Scratch Archive (`Z:\archive\superseded_2026-11-25`):** Non-destructively moved stray root diffs (`tmp_pine.diff`, `tmp_rev.diff`), `*.bak-*` script backups, and superseded harness directories out of root `Z:\` with zero deletions.
 - **Pre-Grand-Reset Archive (`Z:\archive\pre_grand_reset_2026-11-25`):** Managed safely by `scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1` (`-DryRun` default; pass `-Execute -ArchiveLegacyDirs <paths>` when ready).
 - **Orca Terminal Audit:** Preserved all `15` active non-orphaned `orphaned = false` workspace tabs untouched; `5` `orphaned = true` legacy PTY tabs returned `terminal_handle_stale` on `orca terminal close --tab` and remain untouched without force-killing processes (dismiss manually in Orca UI if desired).
