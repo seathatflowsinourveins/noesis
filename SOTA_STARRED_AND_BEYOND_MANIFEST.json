@@ -33,8 +33,8 @@
   "active_winners_by_layer": {
     "L0": {
       "name": "Runtime, Lockfile & Provenance",
-      "winners": ["astral-sh/uv"],
-      "artifacts": ["pyproject.toml", "uv.lock", ".python-version"]
+      "winners": ["astral-sh/uv", "jdx/mise", "casey/just"],
+      "artifacts": ["pyproject.toml", "uv.lock", ".python-version", "mise.toml", "justfile"]
     },
     "L1": {
       "name": "Data, Schema Validation, Calendars & Causal PIT",
@@ -42,12 +42,13 @@
         "pola-rs/polars",
         "duckdb/duckdb",
         "unionai-oss/pandera",
+        "pydantic/pydantic",
         "stefanhoelzl/exchange_calendars",
         "dgunning/edgartools",
         "mortada/fredapi",
         "treeverse/dvc"
       ],
-      "artifacts": ["src/tier0_sota/discovery.py", "src/tier0_sota/live/paper_farm.py"]
+      "artifacts": ["src/tier0_sota/discovery.py", "src/tier0_sota/live/paper_farm.py", "src/tier0_sota/tv/bridge.py"]
     },
     "L2": {
       "name": "Features, Streaming Drift, Regime Change, Explainability & ML",
@@ -91,15 +92,22 @@
         "grafana/grafana",
         "prometheus/prometheus",
         "open-telemetry/opentelemetry-python",
+        "open-telemetry/opentelemetry-collector-contrib",
+        "caddyserver/caddy",
         "zensical/zensical"
       ],
-      "artifacts": ["docker/compose.sota.yml", "zensical.toml", "docs/adr/CATALOG.md"]
+      "artifacts": [
+        "docker/compose.sota.yml",
+        "docker/otel-collector-config.yaml",
+        "zensical.toml",
+        "docs/adr/CATALOG.md"
+      ]
     },
     "L7": {
       "name": "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security",
       "winners": [
-        "pre-commit/pre-commit",
         "j178/prek",
+        "pre-commit/pre-commit",
         "astral-sh/ruff",
         "astral-sh/ty",
         "ast-grep/ast-grep",
@@ -115,10 +123,13 @@
         "zizmorcore/zizmor"
       ],
       "artifacts": [
+        ".github/workflows/",
+        "justfile",
         ".pre-commit-config.yaml",
         "sgconfig.yml",
         "rules/zero_self_invention.yml",
         ".gitleaks.toml",
+        "scripts/sync_manifest.py",
         "evals/formal_risk_z3.py",
         "tests/"
       ]
@@ -146,6 +157,8 @@
         "modelcontextprotocol/python-sdk"
       ],
       "artifacts": [
+        "AGENTS.md",
+        "CLAUDE.md",
         "orca.yaml",
         ".mcp.json",
         ".claude/mcp-lanes/",
@@ -228,7 +241,6 @@
         {"slug": "grafana/tempo", "trigger": "distributed OTel trace storage"},
         {"slug": "grafana/pyroscope", "trigger": "continuous Rust/Python profiling"},
         {"slug": "prometheus/alertmanager", "trigger": "24/5 alert routing"},
-        {"slug": "open-telemetry/opentelemetry-collector", "alias": "OTel Collector", "trigger": "unified telemetry fan-out"},
         {"slug": "langfuse/langfuse", "trigger": "LLM trace scaling beyond MLflow"}
       ]
     },

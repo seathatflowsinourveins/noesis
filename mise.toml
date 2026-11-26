@@ -1,0 +1,21 @@
+# Tier-0 SOTA Clean — Declarative Upstream CLI Toolchain Manifest
+# Managed via official mise registry backends (core/aqua) with minor-version pins
+# compatible across Windows 11, WSL2 Noesis-SOTA, and Ubuntu GitHub Actions runners.
+# Python virtual environments remain managed natively by `uv` (.venv on Windows,
+# $HOME/tier0-sota-clean/.venv on WSL2) to preserve cross-OS parity.
+
+[tools]
+python = "3.13"
+uv = "0.13"
+just = "1.59"
+ruff = "0.17"
+gitleaks = "8.30"
+trivy = "0.76"
+zizmor = "1.32"
+syft = "1.55"
+osv-scanner = "2.7"
+prek = "0.5"
+ast-grep = "0.51"
+
+[env]
+PYTHONDONTWRITEBYTECODE = "1"

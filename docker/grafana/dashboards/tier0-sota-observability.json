@@ -12,7 +12,7 @@
       "title": "Observability Exporter Health",
       "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [{"expr": "tier0_observability_up", "refId": "A"}]
+      "targets": [{"expr": "up{job=\"tier0_sota_telemetry\"}", "refId": "A"}]
     },
     {
       "id": 2,

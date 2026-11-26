@@ -1,0 +1,7 @@
+# Tier-0 SOTA Clean Protected Paths & Risk Boundaries
+/src/tier0_sota/risk.py @seathatflowsinourveins
+/upstream-map.toml @seathatflowsinourveins
+/.github/ @seathatflowsinourveins
+/rules/ @seathatflowsinourveins
+/mise.toml @seathatflowsinourveins
+/evals/formal_risk_z3.py @seathatflowsinourveins

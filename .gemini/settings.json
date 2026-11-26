@@ -1,4 +1,10 @@
 {
+  "context": {
+    "fileName": [
+      "AGENTS.md",
+      "GEMINI.md"
+    ]
+  },
   "mcpServers": {
     "codebase-memory": {
       "command": "codebase-memory-mcp",

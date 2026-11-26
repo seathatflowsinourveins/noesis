@@ -56,34 +56,22 @@ spdx_license_firewall = [
   { repo = "Arize-ai/phoenix", license = "ELv2", reason = "Non-OSI Elastic License 2.0" },
   { repo = "NX-AI/tirex", license = "custom", reason = "Non-OSI custom research license" },
 ]
-loc_enforcement = "advisory"
-advisory_production_loc = 1800
-advisory_risk_loc = 400
-default_advisory_module_loc = 400
-
-# Advisory telemetry LOC targets (never used as brittle build-failing gates or to force code-golfing;
-# Zero Self-Invention is strictly enforced via ast-grep rules, banned-package locks, exact risk.py SHA-256,
-# Z3 SMT proofs, and live_execution_enabled = False).
-[rules.advisory_module_loc]
-"src/tier0_sota/risk.py" = 400
-"src/tier0_sota/engine.py" = 650
-"src/tier0_sota/discovery.py" = 400
-"src/tier0_sota/research.py" = 350
-"src/tier0_sota/definitions.py" = 120
-"src/tier0_sota/live/scanner.py" = 320
-"src/tier0_sota/live/paper_farm.py" = 380
-"src/tier0_sota/live/performance.py" = 220
-"src/tier0_sota/tv/bridge.py" = 260
-"src/tier0_sota/tv/tickets.py" = 260
+forbidden_live_ports = [4001, 7496, 8798, 8796]
+forbidden_live_hosts = ["api.alpaca.markets"]
+allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_200"]
+# Zero Self-Invention is strictly enforced via real upstream gates only:
+# ast-grep rules, uv.lock single-winner + banned-package & SPDX OSI firewalls,
+# deptry, ruff, ty, prek, zizmor, trivy, gitleaks, Z3 SMT proofs, exact risk.py SHA-256,
+# and live_execution_enabled = False (zero arbitrary LOC caps).
 
 [layers.L0]
 name = "Runtime, Lockfile & Provenance"
-winners = ["uv"]
+winners = ["uv", "mise", "just"]
 rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools"]
 
 [layers.L1]
 name = "Data, Schema Validation, Calendars & Causal PIT"
-winners = ["polars", "duckdb", "pandera", "exchange_calendars", "edgartools", "fredapi", "treeverse/dvc"]
+winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "edgartools", "fredapi", "treeverse/dvc"]
 rejected_overlaps = ["pandas-datareader", "yfinance", "clickhouse-local-server"]
 
 [layers.L2]
@@ -108,12 +96,12 @@ rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "m
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk", "grafana"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk", "otel-collector-contrib", "grafana", "caddy"]
 rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
 
 [layers.L7]
 name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "osv-scanner", "shellcheck", "zizmor"]
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "osv-scanner", "shellcheck", "zizmor"]
 rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright"]
 
 [layers.L8]

@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
+
 from tier0_sota import engine as _eng
 from tier0_sota import risk as _risk
-from tier0_sota.tv.bridge import DEFAULT_MANIFEST_DIR, _alert_validator, refuse_live_endpoints
+from tier0_sota.tv.bridge import DEFAULT_MANIFEST_DIR, TvAlertV1, refuse_live_endpoints
 
 NY_TZ = ZoneInfo("America/New_York")
 LOW_EXTREME_HOLD_REASONS = frozenset({"LOW_MOVE_NOT_EXTREME", "LOW_RVOL_NOT_EXTREME"})
@@ -53,33 +55,24 @@ DEFAULT_EXCHANGES: dict[str, str] = {
 
 
 def current_et_session(now_et: datetime) -> str:
-    """Classify ET wall-clock datetime into 24/5 session label."""
-    mins = now_et.hour * 60 + now_et.minute
-    if 570 <= mins < 960:
-        return "RTH"
-    if 240 <= mins < 570:
-        return "PRE_MARKET"
-    if 960 <= mins < 1200:
-        return "AFTER_HOURS"
-    return "OVERNIGHT"
+    """Classify ET wall-clock datetime into 24/5 session label via engine SSOT."""
+    return _eng.classify_et_hm(now_et.hour * 60 + now_et.minute)
 
 
 def filter_extreme_movers(
     entries: Sequence[Mapping[str, Any]], *, regime_int: int
 ) -> list[dict[str, Any]]:
     """Filter strictly to extreme movers (plus inverse crash hedges when regime == -1)."""
-    selected: list[dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for raw in entries:
-        sym = str(raw.get("symbol") or "").strip().upper()
-        px_val = raw.get("last_price")
-        if not sym or px_val is None or float(px_val) <= 0.0:
+        sym, px = str(raw.get("symbol") or "").strip().upper(), raw.get("last_price")
+        if not sym or px is None or float(px) <= 0.0:
             continue
         hold = str(raw.get("extreme_mover_hold_reason") or "").strip()
-        is_crash_hedge = regime_int == -1 and sym in ("SOXS", "SQQQ")
-        if hold in LOW_EXTREME_HOLD_REASONS and not is_crash_hedge:
+        if hold in LOW_EXTREME_HOLD_REASONS and not (regime_int == -1 and sym in ("SOXS", "SQQQ")):
             continue
-        selected.append(dict(raw))
-    return selected
+        out.append(dict(raw))
+    return out
 
 
 def _resolve_direction(
@@ -88,13 +81,29 @@ def _resolve_direction(
     sym = str(entry.get("symbol") or "").strip().upper()
     if sym in INVERSE_HEDGE_SYMBOLS and regime_int == -1:
         return "BUY", "LONG", "CRASH_ALIGNMENT"
-    if regime_int == -1 and sess_chg < 0.0:
-        return "SELL", "SHORT", "CRASH_ALIGNMENT"
-    if sess_chg >= 2.0 and rvol >= 3.0:
-        return "BUY", "LONG", "EARLY_EP_MOMENTUM_BURST"
     if regime_int == -1:
         return "SELL", "SHORT", "CRASH_ALIGNMENT"
-    return "BUY", "LONG", "EXTREME_REVERSAL"
+    return (
+        "BUY",
+        "LONG",
+        "EARLY_EP_MOMENTUM_BURST" if sess_chg >= 2.0 and rvol >= 3.0 else "EXTREME_REVERSAL",
+    )
+
+
+def _action_gate(
+    sym: str, side: str, regime_int: int, etb_ok: bool, b_row: Mapping[str, Any]
+) -> str:
+    if sym in INVERSE_HEDGE_SYMBOLS and regime_int == -1:
+        return "READY_HALF_AUTO_HEDGE"
+    if side == "SELL" and not etb_ok:
+        return "USE_INVERSE_ETF_OR_VERIFY_BORROW"
+    if b_row.get("entry_eligible") is True:
+        return "READY_HALF_AUTO"
+    return (
+        f"HOLD ({b_row['entry_hold_reason']})"
+        if b_row.get("entry_hold_reason")
+        else "MONITOR_CONFIRM_BAR"
+    )
 
 
 def build_half_auto_tickets(
@@ -108,9 +117,7 @@ def build_half_auto_tickets(
     """Build schema-validated Half-Auto extreme-mover tickets with Rule-612 lock rungs."""
     ts_utc = now_utc or datetime.now(UTC)
     now_et = ts_utc.astimezone(NY_TZ)
-    active_sess = current_et_session(now_et)
-    ts_ms = int(ts_utc.timestamp() * 1000)
-
+    active_sess, ts_ms = current_et_session(now_et), int(ts_utc.timestamp() * 1000)
     macro = dict(movers.get("macro_regime") or {})
     regime_int = int(macro.get("regime", 0))
     b_map = {
@@ -118,7 +125,6 @@ def build_half_auto_tickets(
         for x in (bundle or {}).get("top_potential_symbols", [])
         if isinstance(x, Mapping) and x.get("symbol")
     }
-
     extreme = filter_extreme_movers(movers.get("entries", []), regime_int=regime_int)
     tickets: list[dict[str, Any]] = []
     schema_ok = 0
@@ -133,9 +139,10 @@ def build_half_auto_tickets(
         sched_name, sess_map = _eng.select_pooled_trailing_schedule(natr)
         prof_now = _eng.get_session_protection_profile(active_sess, sess_map)
         prof_rth = _eng.get_session_protection_profile("RTH", sess_map)
-
-        sess_chg = float(e.get("session_move_pct") or 0.0)
-        rvol = float(e.get("rvol_normalized") or 1.0)
+        sess_chg, rvol = (
+            float(e.get("session_move_pct") or 0.0),
+            float(e.get("rvol_normalized") or 1.0),
+        )
         side, r_side, arch = _resolve_direction(
             e, regime_int=regime_int, sess_chg=sess_chg, rvol=rvol
         )
@@ -146,64 +153,47 @@ def build_half_auto_tickets(
         stop_rth = _risk.compute_capped_stop_price(
             px, r_side, max_loss_pct=prof_rth.initial_max_loss_pct
         )
-        dist_now = float(abs(px - stop_now) / px)
-        be_raw = px * (Decimal("1.0010") if side == "BUY" else Decimal("0.9990"))
-        be_floor = _risk.quantize_rule_612(be_raw, side=r_side, is_stop=True)
-        risk_r = abs(px - stop_now)
+        dist_now, risk_r = float(abs(px - stop_now) / px), abs(px - stop_now)
         sign = Decimal("1") if side == "BUY" else Decimal("-1")
-        t1r = _risk.quantize_rule_612(px + sign * risk_r, side=r_side, is_stop=False)
-        t2r = _risk.quantize_rule_612(px + sign * Decimal("2") * risk_r, side=r_side, is_stop=False)
-        t3r = _risk.quantize_rule_612(px + sign * Decimal("3") * risk_r, side=r_side, is_stop=False)
-        lock_at_1r = _risk.quantize_rule_612(
-            px + sign * Decimal("0.45") * risk_r, side=r_side, is_stop=True
+
+        def _quant(
+            price: Decimal, *, is_stop: bool = True, route_side: _risk.Side = r_side
+        ) -> Decimal:
+            return _risk.quantize_rule_612(price, side=route_side, is_stop=is_stop)
+
+        be_floor = _quant(px * (Decimal("1.0010") if side == "BUY" else Decimal("0.9990")))
+        t1r, t2r, t3r = (
+            _quant(px + sign * Decimal(k) * risk_r, is_stop=False) for k in ("1", "2", "3")
         )
-        lock_at_2r = _risk.quantize_rule_612(
-            px + sign * Decimal("1.35") * risk_r, side=r_side, is_stop=True
-        )
-        fast_sell_rev = _risk.quantize_rule_612(
-            px * (Decimal("0.9960") if side == "BUY" else Decimal("1.0040")),
-            side=r_side,
-            is_stop=True,
-        )
+        lock_at_1r = _quant(px + sign * Decimal("0.45") * risk_r)
+        lock_at_2r = _quant(px + sign * Decimal("1.35") * risk_r)
+        fast_sell_rev = _quant(px * (Decimal("0.9960") if side == "BUY" else Decimal("1.0040")))
 
         risk_pct = Decimal("0.0025") if regime_int == -1 else Decimal("0.0050")
-        sh_25k = _risk.size_position_by_risk(
-            equity=Decimal("25000"),
-            entry_price=px,
-            stop_price=stop_now,
-            risk_per_trade_pct=risk_pct,
-            max_notional_pct=Decimal("0.15"),
+        sh_25k, sh_100k = (
+            _risk.size_position_by_risk(
+                equity=Decimal(eq),
+                entry_price=px,
+                stop_price=stop_now,
+                risk_per_trade_pct=risk_pct,
+                max_notional_pct=Decimal("0.15"),
+            )
+            for eq in ("25000", "100000")
         )
-        sh_100k = _risk.size_position_by_risk(
-            equity=Decimal("100000"),
-            entry_price=px,
-            stop_price=stop_now,
-            risk_per_trade_pct=risk_pct,
-            max_notional_pct=Decimal("0.15"),
-        )
-
         b_row = b_map.get(sym, {})
         shortable = bool(
-            e.get("shortable") if e.get("shortable") is not None else b_row.get("shortable", False)
+            e["shortable"] if e.get("shortable") is not None else b_row.get("shortable", False)
         )
         etb = bool(
-            e.get("easy_to_borrow")
+            e["easy_to_borrow"]
             if e.get("easy_to_borrow") is not None
             else b_row.get("easy_to_borrow", False)
         )
-        rev_short_mode = "DIRECT_SHORT_ETB" if (shortable and etb) else "INVERSE_HEDGE_SOXS_SQQQ"
-        if sym in INVERSE_HEDGE_SYMBOLS and regime_int == -1:
-            gate = "READY_HALF_AUTO_HEDGE"
-        elif side == "SELL" and not (shortable and etb):
-            gate = "USE_INVERSE_ETF_OR_VERIFY_BORROW"
-        elif b_row.get("entry_eligible") is True:
-            gate = "READY_HALF_AUTO"
-        elif b_row.get("entry_hold_reason"):
-            gate = f"HOLD ({b_row['entry_hold_reason']})"
-        else:
-            gate = "MONITOR_CONFIRM_BAR"
-
+        etb_ok = shortable and etb
+        rev_short_mode = "DIRECT_SHORT_ETB" if etb_ok else "INVERSE_HEDGE_SOXS_SQQQ"
+        gate = _action_gate(sym, side, regime_int, etb_ok, b_row)
         collar_bps = float(prof_now.limit_collar_pct * Decimal("10000"))
+
         alert_in: dict[str, Any] = {
             "schema_version": "tier0.tv-alert.v1",
             "symbol": sym,
@@ -232,11 +222,12 @@ def build_half_auto_tickets(
             "data_source": "alpaca_screener",
         }
         if side == "SELL":
-            alert_in["shortable"] = shortable
-            alert_in["easy_to_borrow"] = etb
+            alert_in |= {"shortable": shortable, "easy_to_borrow": etb}
         refuse_live_endpoints(alert_in)
-        for error in _alert_validator().iter_errors(alert_in):
-            raise ValueError(f"Invalid ticket preset schema: {error.message}")
+        try:
+            TvAlertV1.model_validate(alert_in)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid ticket preset schema: {exc}") from exc
         schema_ok += 1
 
         tickets.append(
@@ -297,31 +288,32 @@ def build_half_auto_tickets(
 
 def render_tickets_markdown(doc: Mapping[str, Any]) -> str:
     """Render concise operator Markdown order ticket table."""
-    macro = doc.get("macro_regime") or {}
-    sess = doc.get("active_session", "RTH")
+    macro, sess = doc.get("macro_regime") or {}, doc.get("active_session", "RTH")
     rows = [
-        f"| {t['rank']} | `{t['symbol']}` | `{t['side']}` | **{t['action_gate']}** "
-        f"| `{t['live_price']:.2f}` ({t['session_move_pct']:+.2f}%) | `{t['rvol']:.1f}x` "
-        f"| `{t['stop_now']:.2f}` ({t['stop_now_pct']:.2f}%) | `{t['be_plus_fee_floor']:.2f}` "
-        f"| `{t['lock_at_1r']:.2f}` / `{t['lock_at_2r']:.2f}` "
-        f"| `{t['fast_sell_rev_trigger']:.2f}` ({t['reverse_short_mode']}) "
-        f"| `{t['shares_25k_defensive']}` / `{t['shares_100k_defensive']}` "
-        f"| `{t['order_type_now']}` ({t['collar_now_bps']}bp) |"
+        (
+            f"| {t['rank']} | `{t['symbol']}` | `{t['side']}` | **{t['action_gate']}** "
+            f"| `{t['live_price']:.2f}` ({t['session_move_pct']:+.2f}%) | `{t['rvol']:.1f}x` "
+            f"| `{t['stop_now']:.2f}` ({t['stop_now_pct']:.2f}%) | `{t['be_plus_fee_floor']:.2f}` "
+            f"| `{t['lock_at_1r']:.2f}` / `{t['lock_at_2r']:.2f}` "
+            f"| `{t['fast_sell_rev_trigger']:.2f}` ({t['reverse_short_mode']}) "
+            f"| `{t['shares_25k_defensive']}` / `{t['shares_100k_defensive']}` "
+            f"| `{t['order_type_now']}` ({t['collar_now_bps']}bp) |"
+        )
         for t in doc.get("tickets", [])
     ]
     body = "\n".join(rows) or "| — | — | — | No extreme movers | — | — | — | — | — | — | — | — |"
-    schema_cnt = doc.get("schema_validated_count")
-    ticket_cnt = len(doc.get("tickets", []))
+    regime_label = macro.get("regime_label", "NEUTRAL")
+    regime_val = macro.get("regime", 0)
+    n_tickets = len(doc.get("tickets", []))
     return (
-        f"# Tier-0 LIVE Half-Automation Order Ticket Console\n\n"
+        "# Tier-0 LIVE Half-Automation Order Ticket Console\n\n"
         f"- **Generated (ET):** `{doc.get('generated_at_et')}` | **Session:** `{sess}` "
-        f"| **Regime:** `{macro.get('regime_label', 'NEUTRAL')} ({macro.get('regime', 0)})`\n"
-        f"- **Schema Validated:** `{schema_cnt}/{ticket_cnt}` "
-        f"| `semi_auto_confirmed=false` | `live_execution_enabled=false`\n\n"
+        f"| **Regime:** `{regime_label} ({regime_val})`\n"
+        f"- **Schema Validated:** `{doc.get('schema_validated_count')}/{n_tickets}` "
+        "| `semi_auto_confirmed=false` | `live_execution_enabled=false`\n\n"
         f"| # | Sym | Side | Action Gate | Live Px (Sess) | RVOL | Stop ({sess}) "
-        f"| BE+10bp | Lock +1R / +2R | Fast-Sell Rev | Sh ($25k/$100k) | Order |\n"
-        f"|---:|---|---|---|---:|---:|---:|---:|---:|---|---:|---|\n"
-        f"{body}\n"
+        "| BE+10bp | Lock +1R / +2R | Fast-Sell Rev | Sh ($25k/$100k) | Order |\n"
+        f"|---:|---|---|---|---:|---:|---:|---:|---:|---|---:|---|\n{body}\n"
     )
 
 
@@ -330,36 +322,40 @@ def render_tv_watchlist(
 ) -> str:
     """Render grouped TradingView watchlist text for extreme movers + regime/hedges."""
     exch = {**DEFAULT_EXCHANGES, **{k.upper(): v.upper() for k, v in (exchange_map or {}).items()}}
-    movers: list[str] = []
-    seen: set[str] = set()
-    for t in tickets:
-        sym = str(t.get("symbol", "")).strip().upper()
-        if sym and sym not in seen:
-            seen.add(sym)
-            movers.append(f"{exch[sym]}:{sym}" if sym in exch else sym)
-    lines = [
-        "###01_MACRO_REGIME_BREADTH",
-        "AMEX:SPY",
-        "NASDAQ:QQQ",
-        "AMEX:IWM",
-        "AMEX:RSP",
-        "NASDAQ:SOXX",
-        "CBOE:VIX",
-        "NASDAQ:TLT",
-        "###02_CRASH_DEFENSIVE_HEDGES",
-        "AMEX:SOXS",
-        "NASDAQ:SQQQ",
-        "AMEX:SPXS",
-        "AMEX:SDOW",
-        "###03_LIVE_MOVERS_TOP15",
-        *movers,
-        "###04_BIDIRECTIONAL_PAIRS",
-        "AMEX:SOXL",
-        "AMEX:SOXS",
-        "NASDAQ:TQQQ",
-        "NASDAQ:SQQQ",
-    ]
-    return "\n".join(lines) + "\n"
+    movers = list(
+        dict.fromkeys(
+            f"{exch[s]}:{s}" if s in exch else s
+            for t in tickets
+            if (s := str(t.get("symbol", "")).strip().upper())
+        )
+    )
+    return (
+        "\n".join(
+            [
+                "###01_MACRO_REGIME_BREADTH",
+                "AMEX:SPY",
+                "NASDAQ:QQQ",
+                "AMEX:IWM",
+                "AMEX:RSP",
+                "NASDAQ:SOXX",
+                "CBOE:VIX",
+                "NASDAQ:TLT",
+                "###02_CRASH_DEFENSIVE_HEDGES",
+                "AMEX:SOXS",
+                "NASDAQ:SQQQ",
+                "AMEX:SPXS",
+                "AMEX:SDOW",
+                "###03_LIVE_MOVERS_TOP15",
+                *movers,
+                "###04_BIDIRECTIONAL_PAIRS",
+                "AMEX:SOXL",
+                "AMEX:SOXS",
+                "NASDAQ:TQQQ",
+                "NASDAQ:SQQQ",
+            ]
+        )
+        + "\n"
+    )
 
 
 def _atomic_write_text(path: Path, text: str) -> Path:
@@ -371,11 +367,7 @@ def _atomic_write_text(path: Path, text: str) -> Path:
 
 
 def refresh_tickets_from_paths(
-    *,
-    movers_path: Path,
-    out_dir: Path,
-    bundle_path: Path | None = None,
-    venue: str = "IBKR",
+    *, movers_path: Path, out_dir: Path, bundle_path: Path | None = None, venue: str = "IBKR"
 ) -> dict[str, Any]:
     """Load local mover/bundle manifests and atomically write JSON, Markdown, and watchlist."""
     movers = json.loads(movers_path.read_text(encoding="utf-8"))
@@ -395,16 +387,16 @@ def refresh_tickets_from_paths(
 
 def main() -> None:
     """CLI entrypoint for Half-Auto order ticket & TradingView watchlist generation."""
-    parser = argparse.ArgumentParser(description="Tier-0 TV Half-Auto ticket generator")
-    parser.add_argument("--manifest-dir", type=Path, default=DEFAULT_MANIFEST_DIR)
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_MANIFEST_DIR / "tv_sota_pack")
-    parser.add_argument("--venue", default="IBKR")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Tier-0 TV Half-Auto ticket generator")
+    p.add_argument("--manifest-dir", type=Path, default=DEFAULT_MANIFEST_DIR)
+    p.add_argument("--out-dir", type=Path, default=DEFAULT_MANIFEST_DIR / "tv_sota_pack")
+    p.add_argument("--venue", default="IBKR")
+    a = p.parse_args()
     doc = refresh_tickets_from_paths(
-        movers_path=args.manifest_dir / "live_whole_market_movers_manifest.json",
-        bundle_path=args.manifest_dir / "live_lane_order_preset_bundle.json",
-        out_dir=args.out_dir,
-        venue=args.venue,
+        movers_path=a.manifest_dir / "live_whole_market_movers_manifest.json",
+        bundle_path=a.manifest_dir / "live_lane_order_preset_bundle.json",
+        out_dir=a.out_dir,
+        venue=a.venue,
     )
     print(
         f"HALF_AUTO_REFRESH_OK=1 SESSION={doc['active_session']} "

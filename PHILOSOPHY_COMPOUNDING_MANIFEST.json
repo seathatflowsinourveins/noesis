@@ -1,0 +1,283 @@
+{
+  "schema_version": "tier0.philosophy-compounding-manifest.v1",
+  "repo_name": "tier0-sota-clean",
+  "future_flagship_name": "noesis",
+  "core_trading_philosophy": {
+    "extreme_movers_early": {
+      "objective": "Focus capital and broker API rate budgets strictly on the highest-potential extreme movers early while filtering out flat, low-RVOL mega-caps.",
+      "default_pins": ["SOXL", "SOXS"],
+      "excluded_hold_reasons": ["LOW_MOVE_NOT_EXTREME", "LOW_RVOL_NOT_EXTREME"],
+      "realization_modules": [
+        "src/tier0_sota/live/scanner.py",
+        "src/tier0_sota/tv/tickets.py",
+        "src/tier0_sota/discovery.py"
+      ]
+    },
+    "causal_market_regime_alignment": {
+      "objective": "Align long/short direction with causal multi-feed market regime (SPY, QQQ, SOXX, RSP, VIX); short market crashes (regime == -1) and short peaks only after E2E-verified causal reversal confirmation.",
+      "short_routing": {
+        "easy_to_borrow": "DIRECT_SHORT_ETB",
+        "hard_to_borrow_or_unverified": "INVERSE_HEDGE_SOXS_SQQQ",
+        "inverse_hedges": ["SOXS", "SQQQ", "SPXS", "SDOW"]
+      },
+      "prewall_pit_cutoff": "2026-10-15",
+      "causal_bar_lag_secs": 60,
+      "calendar": "XNYS"
+    },
+    "session_24x5_protection_and_velocity": {
+      "sessions": {
+        "PRE_MARKET": {
+          "order_mode": "STOP_LIMIT",
+          "outside_rth": true,
+          "limit_collar_bps": 35
+        },
+        "RTH": {
+          "order_mode": "STOP_MARKET",
+          "outside_rth": false,
+          "limit_collar_bps": 0
+        },
+        "AFTER_HOURS": {
+          "order_mode": "STOP_LIMIT",
+          "outside_rth": true,
+          "limit_collar_bps": 35
+        },
+        "OVERNIGHT": {
+          "order_mode": "STOP_LIMIT",
+          "outside_rth": true,
+          "limit_collar_bps": 50
+        }
+      },
+      "trailing_schedules": [
+        "tight_near_lossless",
+        "baseline",
+        "wide_natr_adaptive"
+      ],
+      "progressive_profit_lock_tiers": [
+        {"tier": 1, "name": "BE_PLUS_FEE", "trigger": "initial_favorable_excursion", "floor": "breakeven_plus_fee"},
+        {"tier": 2, "name": "LOCK_AT_1R", "trigger": "+1.0R", "floor": "+0.45R"},
+        {"tier": 3, "name": "LOCK_AT_2R", "trigger": "+2.0R", "floor": "+1.35R"},
+        {"tier": 4, "name": "LOCK_AT_3R_OR_CLIMAX", "trigger": "+3.0R_or_parabolic_climax", "floor": "+2.35R"}
+      ],
+      "auto_reverse": "flatten_first_climax_reverse",
+      "reentry_cooldown_secs": 60
+    },
+    "immutable_risk_kernel": {
+      "path": "src/tier0_sota/risk.py",
+      "sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+      "arithmetic": "exact_decimal_and_integer_ticks",
+      "rule_612_max_stop_loss_pct": "0.0200",
+      "daily_drawdown_fuse_pct": "-0.0150",
+      "protective_exit_rate_reserve_pct": "0.10",
+      "formal_verification": "evals/formal_risk_z3.py"
+    }
+  },
+  "upstream_strategy_realization_map": {
+    "execution_and_parity": {
+      "primary": "nautilus_trader==2.0.0rc9",
+      "queue_markout": "hftbacktest>=2.4.0",
+      "modules": ["src/tier0_sota/engine.py", "src/tier0_sota/research.py"]
+    },
+    "causal_pit_and_features": {
+      "primary": ["polars", "duckdb", "pandera", "exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy"],
+      "fundamentals_and_macro": ["edgartools", "fredapi", "dvc"],
+      "ml_and_explainability": ["lightgbm", "catboost", "shap", "optuna"],
+      "modules": ["src/tier0_sota/discovery.py", "src/tier0_sota/definitions.py"]
+    },
+    "statistical_falsification": {
+      "primary": ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"],
+      "min_cpcv_samples": 16,
+      "gates": [
+        "1_hftbacktest_l1_markout",
+        "2_cost_1x_2x_survival",
+        "3_cpcv_oos_positive",
+        "4_dsr_pbo_credible",
+        "5_hansen_spa_significant",
+        "6_hac_t_stat_significant"
+      ],
+      "independent_legs": ["LONG", "SHORT"],
+      "modules": ["src/tier0_sota/research.py"]
+    },
+    "paper_broker_and_tv_contracts": {
+      "broker_sdk": "alpaca-py==0.45.0",
+      "schema_validation": "pydantic>=2.10.0",
+      "tv_alert_model": "TvAlertV1",
+      "modules": [
+        "src/tier0_sota/live/scanner.py",
+        "src/tier0_sota/live/paper_farm.py",
+        "src/tier0_sota/live/performance.py",
+        "src/tier0_sota/tv/bridge.py",
+        "src/tier0_sota/tv/tickets.py"
+      ]
+    },
+    "immutable_risk_kernel": {
+      "path": "src/tier0_sota/risk.py",
+      "sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+      "smt_verifier": "z3-solver"
+    }
+  },
+  "compounding_harness_lanes": {
+    "sim-backtest": {
+      "command": ".claude/commands/lane-sim.md",
+      "mcp_lane": ".claude/mcp-lanes/sim.mcp.json",
+      "status": "ungated_continuous_compounding",
+      "upstream_stack": [
+        "nautilus_trader",
+        "hftbacktest",
+        "polars",
+        "duckdb",
+        "pandera",
+        "exchange_calendars",
+        "ml4t-engineer",
+        "river",
+        "ruptures",
+        "stumpy",
+        "lightgbm",
+        "catboost",
+        "shap",
+        "optuna",
+        "skfolio",
+        "ml4t-diagnostic",
+        "arch",
+        "statsmodels",
+        "mlflow"
+      ],
+      "compounding_outputs": [
+        "MLflow pre-wall experiment runs (http://127.0.0.1:5000/)",
+        "Optuna study trials (http://127.0.0.1:8080/)",
+        "Caddy tearsheets (http://127.0.0.1:8793/)",
+        "XERJ verified lessons (http://127.0.0.1:9200/)"
+      ],
+      "e2e_verification_gates": [
+        "just test tests/test_core_engine.py",
+        "just z3",
+        "just mcp-smoke"
+      ]
+    },
+    "paper": {
+      "command": ".claude/commands/lane-paper.md",
+      "mcp_lane": ".claude/mcp-lanes/paper.mcp.json",
+      "status": "ungated_continuous_compounding",
+      "accounts": ["ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3", "IBKR_DU_4002"],
+      "upstream_stack": [
+        "nautilus_trader",
+        "alpaca-py",
+        "duckdb",
+        "polars",
+        "mlflow",
+        "dagster",
+        "otel-collector-contrib",
+        "prometheus",
+        "grafana",
+        "finos-workspace",
+        "OpenBB"
+      ],
+      "compounding_outputs": [
+        "Z:\\sota-data\\manifests\\paper_lane_{pa1,pa2,pa3}.duckdb",
+        "Z:\\sota-data\\manifests\\paper_farm_live_performance_manifest.json",
+        "Z:\\sota-data\\manifests\\finos_paper_farm_performance.json",
+        "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json"
+      ],
+      "e2e_verification_gates": [
+        "just test tests/test_live_automation.py",
+        "pwsh -NoProfile -File scripts/run_live_paper_farm.ps1 -Mode preflight",
+        "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1"
+      ]
+    },
+    "half-auto-tv": {
+      "command": ".claude/commands/lane-tv.md",
+      "mcp_lane": ".claude/mcp-lanes/tv.mcp.json",
+      "status": "ungated_continuous_compounding",
+      "upstream_stack": [
+        "tradingview_pine_v6",
+        "pydantic",
+        "nautilus_trader",
+        "alpaca-py"
+      ],
+      "compounding_outputs": [
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\staged_tv_presets.json"
+      ],
+      "e2e_verification_gates": [
+        "just test tests/test_tv_automation.py",
+        "just mcp-smoke",
+        "just ast"
+      ]
+    },
+    "live": {
+      "command": ".claude/commands/lane-live.md",
+      "mcp_lane": ".claude/mcp-lanes/gate.mcp.json",
+      "status": "stage5_promotion_readiness_gated",
+      "live_execution_enabled": false,
+      "paper_only": true,
+      "forbidden_live_ports": [4001, 7496, 8798, 8796],
+      "upstream_stack": [
+        "nautilus_trader",
+        "z3-solver",
+        "inspect-ai",
+        "skfolio",
+        "ml4t-diagnostic",
+        "arch",
+        "statsmodels",
+        "mlflow"
+      ],
+      "compounding_outputs": [
+        "Cross-leg 6-gate MLflow promotion dossiers",
+        "Z3 UNSAT formal risk attestations (evals/formal_risk_z3.py)",
+        "Inspect AI safety receipts (evals/tier0_inspect_eval.py)",
+        "Programmatic ARCHITECTURE_MANIFEST.json & LLM_HARNESS_MANIFEST.json"
+      ],
+      "e2e_verification_gates": [
+        "just check",
+        "just docs-build",
+        "prek run --all-files",
+        "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1"
+      ]
+    }
+  },
+  "cross_cutting_compounding_layer": {
+    "experiment_ledger": {"tool": "mlflow", "url": "http://127.0.0.1:5000/"},
+    "execution_ledgers": {"tool": "duckdb", "root": "Z:\\sota-data\\manifests", "sql_ui": "http://127.0.0.1:4213/"},
+    "memory_and_lessons": {"tool": "xerj", "url": "http://127.0.0.1:9200/"},
+    "safety_and_prompt_evals": {"tools": ["inspect-ai", "dspy"], "suite": "evals/tier0_inspect_eval.py", "view_url": "http://127.0.0.1:7575/"},
+    "ssot_manifest_sync": {"tool": "scripts/sync_manifest.py", "outputs": ["ARCHITECTURE_MANIFEST.json", "LLM_HARNESS_MANIFEST.json"]},
+    "observability_and_docs": {
+      "otel_collector": "http://127.0.0.1:9464/metrics",
+      "caddy_tearsheets": "http://127.0.0.1:8793/",
+      "zensical_adrs": "http://127.0.0.1:8010/"
+    }
+  },
+  "self_invention_lessons_prevented": [
+    {
+      "anti_pattern": "arbitrary_loc_caps_and_code_golfing",
+      "purged": true,
+      "mechanical_upstream_gate": "tests/test_architecture_manifest.py + ast-grep + ruff + ty"
+    },
+    {
+      "anti_pattern": "inline_python_docker_telemetry_and_http_server_shims",
+      "purged": true,
+      "mechanical_upstream_gate": "otel/opentelemetry-collector-contrib (:9464) + caddy (:8793) + rules/zero_self_invention.yml"
+    },
+    {
+      "anti_pattern": "custom_runtime_agent_hooks_and_shell_wrappers",
+      "purged": true,
+      "mechanical_upstream_gate": "prek (.pre-commit-config.yaml) + native uv MCP parity + tests/test_architecture_manifest.py"
+    },
+    {
+      "anti_pattern": "hand_patched_transitive_jsonschema_dep003",
+      "purged": true,
+      "mechanical_upstream_gate": "pydantic>=2.10.0 (TvAlertV1) + deptry . (0 issues, 0 DEP003)"
+    },
+    {
+      "anti_pattern": "hand_edited_drifting_manifests",
+      "purged": true,
+      "mechanical_upstream_gate": "scripts/sync_manifest.py --check + .github/workflows/ci.yml"
+    },
+    {
+      "anti_pattern": "ungrouped_shelfware_and_banned_transitive_packages",
+      "purged": true,
+      "mechanical_upstream_gate": "PEP 735 [dependency-groups] + uv.lock (0 yfinance, 0 quantstats) + SPDX OSI firewall"
+    }
+  ]
+}

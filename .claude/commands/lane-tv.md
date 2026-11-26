@@ -1,7 +1,9 @@
 ---
-description: TradingView Half-Auto Pine v6 & Draft 2020-12 bridge status report using tv.mcp.json. Read-only.
-argument-hint: "[optional symbol]"
+description: Active half-auto-tv compounding lane (Pine v6, Pydantic v2 TvAlertV1, staged tickets) via tv.mcp.json.
+argument-hint: "[symbol or preset pack]"
 ---
-Run read-only TV cockpit check for `$ARGUMENTS` (zero CDP `:9223`, zero `.env*`):
-1. Confirm `pine/tier0_omni_sota_24x5.pine` & `tier0_market_regime.pine` enforce `barstate.isconfirmed`, `lookahead_off`, `semi_auto_confirmed = false`, and `qty = 1`.
-2. Confirm `src/tier0_sota/tv/{bridge,tickets}.py` enforce `schema_v1.json`, Rule-612 lock rungs, and `DIRECT_SHORT_ETB` vs `INVERSE_HEDGE_SOXS_SQQQ`.
+Execute compounding `half-auto-tv` iteration for `$ARGUMENTS` (zero CDP `:9223`, zero `.env*`):
+1. Compound non-repainting TradingView Pine v6 extreme-mover & causal regime scripts (`pine/tier0_omni_sota_24x5.pine`, `pine/tier0_market_regime.pine`) enforcing `barstate.isconfirmed`, `lookahead_off`, `semi_auto_confirmed = false`, and `qty = 1`.
+2. Validate and evolve `src/tier0_sota/tv/{bridge,tickets}.py` strictly via upstream `Pydantic v2` (`TvAlertV1`), Rule-612 near-lossless lock rungs, and `DIRECT_SHORT_ETB` vs `INVERSE_HEDGE_SOXS_SQQQ` routing.
+3. Refresh staged semi-auto order tickets & watchlists in `Z:\sota-data\manifests\tv_sota_pack\` and feed closed-loop telemetry back into Sim/Paper compounding manifests (`MLflow`/`XERJ`).
+4. Verify Pine v6 balance, `TvAlertV1` schema parity, and E2E tests via `just check`.

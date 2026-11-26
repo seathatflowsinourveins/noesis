@@ -51,6 +51,7 @@ __all__ = [
     "build_sandbox_live_node",
     "build_venue_live_node_config",
     "build_venue_risk_engine_config",
+    "classify_et_hm",
     "classify_us_equity_session_et",
     "compute_collared_limit_price",
     "compute_dynamic_trailing_stop",
@@ -373,6 +374,17 @@ def _xnys_info(ny_day: date) -> tuple[bool, int] | None:
         return None
 
 
+def classify_et_hm(hm: int, rth_close_hm: int = 960) -> MarketSession24x5:
+    """Classify ET minute-of-day into a US equity 24/5 session label."""
+    if 240 <= hm < 570:
+        return "PRE_MARKET"
+    if 570 <= hm < rth_close_hm:
+        return "RTH"
+    if rth_close_hm <= hm < 1200:
+        return "AFTER_HOURS"
+    return "OVERNIGHT"
+
+
 def classify_us_equity_session_et(ts_utc_ns: int) -> SessionOrClosed:
     """Classify UTC ns timestamp into US 24/5 ET session or CLOSED via XNYS calendar."""
     dt_et = _et_dt(ts_utc_ns)
@@ -382,10 +394,8 @@ def classify_us_equity_session_et(ts_utc_ns: int) -> SessionOrClosed:
         return "OVERNIGHT" if is_open(ny_day + timedelta(days=1)) else "CLOSED"
     if not is_open(ny_day):
         return "CLOSED"
-    if hm < 570:
-        return "OVERNIGHT" if hm < 240 else "PRE_MARKET"
     inf = _xnys_info(ny_day)
-    return "RTH" if hm < (inf[1] if inf else 960) else "AFTER_HOURS"
+    return classify_et_hm(hm, inf[1] if inf else 960)
 
 
 def compute_collared_limit_price(

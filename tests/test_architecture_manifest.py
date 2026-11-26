@@ -4,6 +4,8 @@ import hashlib
 import json
 import pathlib
 import re
+import subprocess
+import sys
 import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -35,7 +37,9 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     assert safety["paper_only"] is True
     assert safety["zero_self_invented_hooks"] is True
     assert safety["zero_yfinance_in_uv_lock"] is True
-    assert safety["loc_enforcement"] == "advisory"
+    assert safety["zero_arbitrary_loc_caps"] is True
+    assert "loc_enforcement" not in safety
+    assert "advisory_loc_telemetry" not in manifest
     assert safety["forbidden_live_ports"] == [4001, 7496, 8798, 8796]
 
     repo_files = manifest["repository_files"]
@@ -45,7 +49,7 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     assert missing == [], f"Missing declared repository files: {missing}"
 
 
-def test_risk_kernel_sha256_and_loc_exact() -> None:
+def test_risk_kernel_sha256_exact() -> None:
     manifest = _load_manifest()
     risk_meta = manifest["risk_kernel"]
     assert isinstance(risk_meta, dict)
@@ -54,7 +58,7 @@ def test_risk_kernel_sha256_and_loc_exact() -> None:
     digest = hashlib.sha256(risk_path.read_bytes()).hexdigest()
     assert digest == EXPECTED_RISK_SHA256
     assert risk_meta["sha256"] == EXPECTED_RISK_SHA256
-    assert len(risk_path.read_text(encoding="utf-8").splitlines()) == 361
+    assert "loc" not in risk_meta
 
 
 def test_layers_l0_to_l10_and_spdx_firewall() -> None:
@@ -81,6 +85,19 @@ def test_layers_l0_to_l10_and_spdx_firewall() -> None:
     man_fw = {entry["repo"] for entry in man_fw_raw}
     assert up_fw == NON_OSI_REPOS
     assert man_fw == NON_OSI_REPOS
+
+    for banned_loc_key in (
+        "loc_enforcement",
+        "advisory_production_loc",
+        "advisory_risk_loc",
+        "default_advisory_module_loc",
+        "advisory_module_loc",
+    ):
+        assert banned_loc_key not in upstream["rules"]
+
+    ast_rules_text = (REPO_ROOT / "rules" / "zero_self_invention.yml").read_text(encoding="utf-8")
+    rule_ids = re.findall(r"(?m)^id:\s*(\S+)", ast_rules_text)
+    assert len(rule_ids) == 21 and len(set(rule_ids)) == 21
 
 
 def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
@@ -130,16 +147,19 @@ def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
             assert section["edgartools"]["args"] == ["run", "--no-sync", "edgartools-mcp"]
 
 
-def test_few_line_harness_and_scoped_mcp_lanes() -> None:
+def test_harness_ssot_and_scoped_mcp_lanes() -> None:
+    assert (REPO_ROOT / "AGENTS.md").is_file()
+    assert (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8").strip() == "@AGENTS.md"
+
     agent_files = sorted((REPO_ROOT / ".claude/agents").glob("*.md"))
     command_files = sorted((REPO_ROOT / ".claude/commands").glob("*.md"))
     assert len(agent_files) == 7
     assert len(command_files) == 5
 
     for agent_file in agent_files:
-        assert len(agent_file.read_text(encoding="utf-8").splitlines()) <= 16, agent_file.name
+        assert agent_file.read_text(encoding="utf-8").strip(), agent_file.name
     for cmd_file in command_files:
-        assert len(cmd_file.read_text(encoding="utf-8").splitlines()) <= 10, cmd_file.name
+        assert cmd_file.read_text(encoding="utf-8").strip(), cmd_file.name
 
     gatekeeper = (REPO_ROOT / ".claude/agents/paper-gatekeeper.md").read_text(encoding="utf-8")
     assert "permissionMode: plan" in gatekeeper
@@ -220,8 +240,11 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     assert "tier0_sota" in pyproject["tool"]["deptry"]["known_first_party"]
 
     scan_targets = [
+        REPO_ROOT / "AGENTS.md",
         REPO_ROOT / "pyproject.toml",
         REPO_ROOT / "ARCHITECTURE_MANIFEST.json",
+        REPO_ROOT / "LLM_HARNESS_MANIFEST.json",
+        REPO_ROOT / "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
         REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
         *sorted((REPO_ROOT / "src").rglob("*.py")),
         *sorted((REPO_ROOT / "docs").rglob("*.md")),
@@ -232,3 +255,64 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
         if LEGACY_PATTERN.search(p.read_text(encoding="utf-8"))
     ]
     assert hits == [], f"Stale legacy references found in: {hits}"
+
+
+def test_philosophy_and_llm_harness_manifests() -> None:
+    agents_md = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "PHILOSOPHY_COMPOUNDING_MANIFEST.json" in agents_md
+    assert "LLM_HARNESS_MANIFEST.json" in agents_md
+
+    phil = json.loads(
+        (REPO_ROOT / "PHILOSOPHY_COMPOUNDING_MANIFEST.json").read_text(encoding="utf-8")
+    )
+    assert phil["schema_version"] == "tier0.philosophy-compounding-manifest.v1"
+    assert set(phil["compounding_harness_lanes"].keys()) == {
+        "sim-backtest",
+        "paper",
+        "half-auto-tv",
+        "live",
+    }
+    assert phil["compounding_harness_lanes"]["live"]["live_execution_enabled"] is False
+    assert phil["compounding_harness_lanes"]["live"]["paper_only"] is True
+    assert (
+        phil["core_trading_philosophy"]["immutable_risk_kernel"]["sha256"] == EXPECTED_RISK_SHA256
+    )
+    assert (
+        phil["upstream_strategy_realization_map"]["immutable_risk_kernel"]["sha256"]
+        == EXPECTED_RISK_SHA256
+    )
+    assert len(phil["self_invention_lessons_prevented"]) >= 5
+    assert all(entry["purged"] is True for entry in phil["self_invention_lessons_prevented"])
+
+    llm = json.loads((REPO_ROOT / "LLM_HARNESS_MANIFEST.json").read_text(encoding="utf-8"))
+    assert llm["schema_version"] == "tier0.llm-harness-manifest.v1"
+    assert llm["zero_self_invented_hooks"] is True
+    assert llm["ssot_entrypoints"]["canonical_agents_md"] == "AGENTS.md"
+    assert llm["ssot_entrypoints"]["claude_md_pointer"] == "@AGENTS.md"
+    assert llm["ssot_entrypoints"]["gemini_context_file_names"] == ["AGENTS.md", "GEMINI.md"]
+    assert llm["ssot_entrypoints"]["opencode_instructions"] == ["AGENTS.md"]
+    assert set(llm["compounding_lanes"].keys()) == {
+        "sim-backtest",
+        "paper",
+        "half-auto-tv",
+        "live",
+    }
+    assert llm["mcp_servers"]["parity_count"] == "5/5"
+    assert llm["skills_summary"]["skills_count"] == 46
+    assert llm["live_hosted_portals_count"] == 15
+    assert len(llm["live_hosted_portals"]) == 15
+    for lane in llm["compounding_lanes"].values():
+        assert (REPO_ROOT / lane["command"]).is_file()
+        assert (REPO_ROOT / lane["mcp_lane"]).is_file()
+
+
+def test_sync_manifest_check_zero_drift() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "sync_manifest.py"), "--check"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"sync_manifest.py --check failed:\n{proc.stderr}\n{proc.stdout}"
+    assert "SYNC_MANIFEST_CHECK_OK=1" in proc.stdout

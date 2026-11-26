@@ -206,26 +206,18 @@ services:
     restart: unless-stopped
 
   telemetry-exporter:
-    image: tier0-sota-research:latest
+    image: otel/opentelemetry-collector-contrib:0.123.0
     cpus: "1.0"
     mem_limit: 512m
-    pull_policy: never
-    user: "1000:1000"
-    working_dir: /workspace
     command:
-      - python
-      - -c
-      - "import threading; from prometheus_client import Gauge, start_http_server; g = Gauge('tier0_observability_up', 'Telemetry up'); g.set(1); start_http_server(9464, addr='0.0.0.0'); threading.Event().wait()"
+      - --config=/etc/otelcol-contrib/config.yaml
     ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
       - "127.0.0.1:9464:9464"
+      - "127.0.0.1:13133:13133"
     volumes:
-      - ${TIER0_REPO_ROOT:-..}:/workspace
-    environment:
-      - HOME=/tmp
-      - USER=sota
-      - LOGNAME=sota
-    depends_on:
-      - mlflow
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     restart: unless-stopped
 
   prometheus:
@@ -287,25 +279,31 @@ services:
     restart: unless-stopped
 
   tearsheets:
-    image: tier0-sota-research:latest
-    profiles:
-      - portals
-    cpus: "1.0"
-    mem_limit: 512m
-    pull_policy: never
+    image: caddy:2.9.1-alpine
+    cpus: "0.5"
+    mem_limit: 256m
     user: "1000:1000"
-    working_dir: /mnt/z/sota-data/manifests
     command:
-      - python
-      - -m
-      - http.server
-      - "8793"
-      - --bind
-      - 0.0.0.0
+      - caddy
+      - file-server
+      - --listen
+      - :8793
+      - --root
+      - /mnt/z/sota-data/manifests
+      - --browse
     ports:
       - "127.0.0.1:8793:8793"
     volumes:
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
+    environment:
+      - HOME=/tmp
+      - XDG_CONFIG_HOME=/tmp/caddy/config
+      - XDG_DATA_HOME=/tmp/caddy/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8793/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   finos-workspace:

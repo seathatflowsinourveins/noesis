@@ -20,8 +20,11 @@ env:
 
 jobs:
   sota-quality-and-safety-gate:
+    name: Quality, AST, Formal Risk & Manifest Gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,17 +33,26 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
 
       - name: Sync locked environment
         run: uv sync --frozen --no-progress
 
-      - name: Run SOTA static, formal, and unit gates
+      - name: Lint and format check (ruff)
         run: |
           uv run --no-sync ruff check .
           uv run --no-sync ruff format --check src tests scripts evals
+
+      - name: Type, dependency, and AST checks (ty, deptry, ast-grep)
+        run: |
           uv run --no-sync ty check
-          uv run --no-sync ast-grep scan
           uv run --no-sync deptry .
+          uv run --no-sync ast-grep scan --config sgconfig.yml
+
+      - name: Unit tests, Z3 formal risk proofs, manifest parity & MCP smoke
+        run: |
           uv run --no-sync pytest -q
           uv run --no-sync python evals/formal_risk_z3.py
+          uv run --no-sync python scripts/sync_manifest.py --check
           uv run --no-sync python scripts/nautilus_mcp_server.py --smoke

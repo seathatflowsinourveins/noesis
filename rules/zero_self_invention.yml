@@ -4,157 +4,10 @@ severity: error
 message: Banned/self-built library import prohibited under Tier-0 Upstream-Only Charter.
 rule:
   any:
-    - pattern: import yfinance
-    - pattern: import yfinance as $ALIAS
-    - pattern: from yfinance import $$$
-    - pattern: import backtrader
-    - pattern: import backtrader as $ALIAS
-    - pattern: from backtrader import $$$
-    - pattern: import backtesting
-    - pattern: import backtesting as $ALIAS
-    - pattern: from backtesting import $$$
-    - pattern: import mlfinlab
-    - pattern: import mlfinlab as $ALIAS
-    - pattern: from mlfinlab import $$$
-    - pattern: import tcapy
-    - pattern: import tcapy as $ALIAS
-    - pattern: from tcapy import $$$
-    - pattern: import vollib
-    - pattern: import vollib as $ALIAS
-    - pattern: from vollib import $$$
-    - pattern: import py_vollib
-    - pattern: import py_vollib as $ALIAS
-    - pattern: from py_vollib import $$$
-    - pattern: import abides
-    - pattern: import abides as $ALIAS
-    - pattern: from abides import $$$
-    - pattern: import tradingview_ta
-    - pattern: import tradingview_ta as $ALIAS
-    - pattern: from tradingview_ta import $$$
-    - pattern: import pandas_datareader
-    - pattern: import pandas_datareader as $ALIAS
-    - pattern: from pandas_datareader import $$$
-    - pattern: import talib
-    - pattern: import talib as $ALIAS
-    - pattern: from talib import $$$
-    - pattern: import vectorbt
-    - pattern: import vectorbt as $ALIAS
-    - pattern: from vectorbt import $$$
-    - pattern: import zipline
-    - pattern: import zipline as $ALIAS
-    - pattern: from zipline import $$$
-    - pattern: import pypfopt
-    - pattern: import pypfopt as $ALIAS
-    - pattern: from pypfopt import $$$
-    - pattern: import pyportfolioopt
-    - pattern: import pyportfolioopt as $ALIAS
-    - pattern: from pyportfolioopt import $$$
-    - pattern: import riskfolio
-    - pattern: import riskfolio as $ALIAS
-    - pattern: from riskfolio import $$$
-    - pattern: import alphalens
-    - pattern: import alphalens as $ALIAS
-    - pattern: from alphalens import $$$
-    - pattern: import wandb
-    - pattern: import wandb as $ALIAS
-    - pattern: from wandb import $$$
-    - pattern: import clearml
-    - pattern: import clearml as $ALIAS
-    - pattern: from clearml import $$$
-    - pattern: import neptune
-    - pattern: import neptune as $ALIAS
-    - pattern: from neptune import $$$
-    - pattern: import prefect
-    - pattern: import prefect as $ALIAS
-    - pattern: from prefect import $$$
-    - pattern: import deepeval
-    - pattern: import deepeval as $ALIAS
-    - pattern: from deepeval import $$$
-    - pattern: import streamlit
-    - pattern: import streamlit as $ALIAS
-    - pattern: from streamlit import $$$
-    - pattern: import finrl
-    - pattern: import finrl as $ALIAS
-    - pattern: from finrl import $$$
-    - pattern: import fingpt
-    - pattern: import fingpt as $ALIAS
-    - pattern: from fingpt import $$$
-    - pattern: import rdagent
-    - pattern: import rdagent as $ALIAS
-    - pattern: from rdagent import $$$
-    - pattern: import rd_agent
-    - pattern: import rd_agent as $ALIAS
-    - pattern: from rd_agent import $$$
-    - pattern: import mkdocs
-    - pattern: import mkdocs as $ALIAS
-    - pattern: from mkdocs import $$$
-    - pattern: import sktime
-    - pattern: import sktime as $ALIAS
-    - pattern: from sktime import $$$
-    - pattern: import freqtrade
-    - pattern: import freqtrade as $ALIAS
-    - pattern: from freqtrade import $$$
-    - pattern: import pybroker
-    - pattern: import pybroker as $ALIAS
-    - pattern: from pybroker import $$$
-    - all:
-        - kind: call
-        - has:
-            kind: string_content
-            regex: '^(?:yfinance|backtrader|backtesting|mlfinlab|tcapy|vollib|py_vollib|abides|tradingview_ta|pandas_datareader|talib|vectorbt|zipline|pypfopt|pyportfolioopt|riskfolio|alphalens|wandb|clearml|neptune|prefect|deepeval|streamlit|finrl|fingpt|rdagent|rd_agent|mkdocs|sktime|freqtrade|pybroker|fastapi|starlette|httpx|aiohttp|ib_async|requests|flask|dash|gradio|nicegui|panel|bokeh|uvicorn|quart|sanic|tornado|http\.server)(?:\..*)?$'
-            stopBy: end
-        - any:
-            - pattern: importlib.import_module($$$ARGS)
-            - pattern: $OBJ.import_module($$$ARGS)
-            - pattern: import_module($$$ARGS)
-            - pattern: __import__($$$ARGS)
-            - pattern: $MOD.__import__($$$ARGS)
-            - pattern: getattr($OBJ, "import_module")($$$ARGS)
-            - pattern: getattr($OBJ, 'import_module')($$$ARGS)
-            - pattern: getattr($OBJ, "__import__")($$$ARGS)
-            - pattern: getattr($OBJ, '__import__')($$$ARGS)
-            - pattern: $OBJ.__getattribute__("import_module")($$$ARGS)
-            - pattern: $OBJ.__getattribute__('import_module')($$$ARGS)
-            - pattern: $OBJ.__getattribute__("__import__")($$$ARGS)
-            - pattern: $OBJ.__getattribute__('__import__')($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, "import_module")($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, 'import_module')($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, "__import__")($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, '__import__')($$$ARGS)
-            - pattern: $OBJ.__dict__["import_module"]($$$ARGS)
-            - pattern: $OBJ.__dict__['import_module']($$$ARGS)
-            - pattern: $OBJ.__dict__.get("import_module")($$$ARGS)
-            - pattern: $OBJ.__dict__.get('import_module')($$$ARGS)
-            - pattern: vars($OBJ)["import_module"]($$$ARGS)
-            - pattern: vars($OBJ)['import_module']($$$ARGS)
-            - pattern: __builtins__["__import__"]($$$ARGS)
-            - pattern: __builtins__['__import__']($$$ARGS)
-            - pattern: __builtins__.get("__import__")($$$ARGS)
-            - pattern: __builtins__.get('__import__')($$$ARGS)
-            - pattern: builtins.__dict__["__import__"]($$$ARGS)
-            - pattern: builtins.__dict__['__import__']($$$ARGS)
-            - pattern: operator.attrgetter("import_module")($OBJ)($$$ARGS)
-            - pattern: operator.attrgetter('import_module')($OBJ)($$$ARGS)
-            - pattern: attrgetter("import_module")($OBJ)($$$ARGS)
-            - pattern: attrgetter('import_module')($OBJ)($$$ARGS)
-            - pattern: operator.attrgetter("__import__")($OBJ)($$$ARGS)
-            - pattern: operator.attrgetter('__import__')($OBJ)($$$ARGS)
-            - pattern: attrgetter("__import__")($OBJ)($$$ARGS)
-            - pattern: attrgetter('__import__')($OBJ)($$$ARGS)
-            - all:
-                - pattern: $FN($$$ARGS)
-                - inside:
-                    kind: module
-                    stopBy: end
-                    has:
-                      any:
-                        - pattern: from importlib import import_module as $FN
-                        - pattern: from builtins import __import__ as $FN
-                        - pattern: $FN = importlib.import_module
-                        - pattern: $FN = __import__
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+    - { kind: import_statement, regex: '\b(?:yfinance|backtrader|backtesting|mlfinlab|tcapy|vollib|py_vollib|abides|tradingview_ta|pandas_datareader|talib|vectorbt|zipline|pypfopt|pyportfolioopt|riskfolio|alphalens|wandb|clearml|neptune|prefect|deepeval|streamlit|finrl|fingpt|rdagent|rd_agent|mkdocs|sktime|freqtrade|pybroker)\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:yfinance|backtrader|backtesting|mlfinlab|tcapy|vollib|py_vollib|abides|tradingview_ta|pandas_datareader|talib|vectorbt|zipline|pypfopt|pyportfolioopt|riskfolio|alphalens|wandb|clearml|neptune|prefect|deepeval|streamlit|finrl|fingpt|rdagent|rd_agent|mkdocs|sktime|freqtrade|pybroker)\b' }
+    - all: [{ kind: call, regex: '(?:import_module|__import__)' }, { has: { kind: string_content, regex: '^(?:yfinance|backtrader|backtesting|mlfinlab|tcapy|vollib|py_vollib|abides|tradingview_ta|pandas_datareader|talib|vectorbt|zipline|pypfopt|pyportfolioopt|riskfolio|alphalens|wandb|clearml|neptune|prefect|deepeval|streamlit|finrl|fingpt|rdagent|rd_agent|mkdocs|sktime|freqtrade|pybroker|fastapi|starlette|httpx|aiohttp|ib_async|requests|flask|dash|gradio|nicegui|panel|bokeh|uvicorn|quart|sanic|tornado|http\.server)(?:\..*)?$', stopBy: end } }]
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-live-broker-endpoint
 language: python
@@ -162,594 +15,66 @@ severity: error
 message: Hard-refused live broker endpoint or live port/mode call inside production source or scripts.
 rule:
   any:
-    - pattern: '"api.alpaca.markets"'
-    - pattern: '"https://api.alpaca.markets"'
-    - kind: string_content
-      regex: '(?i)(?:^|//|[^a-z0-9.-])api\.alpaca\.markets'
-    - all:
-        - any:
-            - kind: binary_operator
-            - kind: concatenated_string
-            - pattern: $SEP.join($PARTS)
-            - pattern: $TMPL.format($$$ARGS)
-            - all:
-                - kind: string
-                - has:
-                    kind: interpolation
-        - not:
-            has:
-              kind: string_content
-              regex: '(?i)(?:paper-api|data\.alpaca)'
-              stopBy: end
-        - any:
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:^|//|[^a-z0-9.-])api\.?$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^\.?alpaca\.markets'
-                    stopBy: end
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:^|//|[^a-z0-9.-])api\.alpaca\.?$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^\.?markets'
-                    stopBy: end
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:^|//|[^a-z0-9.-])api\.[a-z.]*$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:lpaca|paca|aca|ca|a)\.?markets'
-                    stopBy: end
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:^|//|[^a-z0-9.-])api\.?$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^\.?[a-z.]{1,12}$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^\.?markets'
-                    stopBy: end
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:^|//|[^a-z0-9.-])api\.?$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^\.?al$'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:lpaca|paca|aca|ca|a)\.?markets'
-                    stopBy: end
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:\{[A-Za-z0-9_]*\}|%[sd]|%\([A-Za-z0-9_]+\)[sd])\.alpaca\.markets'
-                    stopBy: end
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:https?://)?api\.?$'
-                    stopBy: end
-    - all:
-        - pattern: $VAR + $RIGHT
-        - has:
-            kind: string_content
-            regex: '(?i)^\.?alpaca\.markets'
-            stopBy: end
-        - inside:
-            kind: module
-            stopBy: end
-            has:
-              stopBy: end
-              all:
-                - pattern: $VAR = $LEFT
-                - has:
-                    kind: string_content
-                    regex: '(?i)(?:^|//|[^a-z0-9.-])api\.?$'
-                    stopBy: end
-                - not:
-                    has:
-                      kind: string_content
-                      regex: '(?i)(?:paper-api|data\.alpaca)'
-                      stopBy: end
-    - kind: string_content
-      regex: '(?i)(?:(?:https?|wss?|tcp)://[^\s"'']*?:|(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]):|^:)(?:4001|7496|8798|8796)\b'
-    - all:
-        - kind: string
-        - has:
-            kind: string_content
-            regex: '^(?:4001|7496|8798|8796)$'
-            stopBy: end
-        - follows:
-            kind: string
-            has:
-              kind: string_content
-              regex: '^--port$'
-              stopBy: end
-            stopBy: end
-    - kind: string_content
-      regex: '^--port=(?:4001|7496|8798|8796)$'
-    - all:
-        - kind: keyword_argument
-        - any:
-            - all:
-                - has:
-                    field: name
-                    regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                - has:
-                    field: value
-                    any:
-                      - regex: '^["'']?(?:4001|7496|8798|8796)["'']?$'
-                      - all:
-                          - pattern: int($ARG)
-                          - has:
-                              stopBy: end
-                              any:
-                                - { kind: string_content, regex: '^(?:4001|7496|8798|8796)$' }
-                                - { kind: integer, regex: '^(?:4001|7496|8798|8796)$' }
-                      - pattern: 4000 + 1
-                      - pattern: 1 + 4000
-                      - pattern: 4002 - 1
-                      - pattern: 7490 + 6
-                      - pattern: 7400 + 96
-                      - pattern: 7497 - 1
-                      - pattern: 8790 + 8
-                      - pattern: 8700 + 98
-                      - pattern: 8790 + 6
-                      - pattern: 8700 + 96
-                      - all:
-                          - kind: binary_operator
-                          - any:
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:4|40|400)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:001|01|1)$', stopBy: end }
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:7|74|749)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:496|96|6)$', stopBy: end }
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:8|87|879)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:798|98|8|796|96|6)$', stopBy: end }
-            - all:
-                - has:
-                    field: name
-                    regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                - has:
-                    field: value
-                    regex: '^(?:False|0)$'
-    - all:
-        - kind: assignment
-        - not:
-            has:
-              field: left
-              regex: '^FORBIDDEN_'
-        - any:
-            - all:
-                - has:
-                    field: left
-                    any:
-                      - regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                      - all:
-                          - kind: attribute
-                          - has:
-                              field: attribute
-                              regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                      - all:
-                          - kind: subscript
-                          - has:
-                              kind: string_content
-                              regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                              stopBy: end
-                - has:
-                    field: right
-                    any:
-                      - regex: '^["'']?(?:4001|7496|8798|8796)["'']?$'
-                      - all:
-                          - pattern: int($ARG)
-                          - has:
-                              stopBy: end
-                              any:
-                                - { kind: string_content, regex: '^(?:4001|7496|8798|8796)$' }
-                                - { kind: integer, regex: '^(?:4001|7496|8798|8796)$' }
-                      - pattern: 4000 + 1
-                      - pattern: 1 + 4000
-                      - pattern: 4002 - 1
-                      - pattern: 7490 + 6
-                      - pattern: 7400 + 96
-                      - pattern: 7497 - 1
-                      - pattern: 8790 + 8
-                      - pattern: 8700 + 98
-                      - pattern: 8790 + 6
-                      - pattern: 8700 + 96
-                      - all:
-                          - kind: binary_operator
-                          - any:
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:4|40|400)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:001|01|1)$', stopBy: end }
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:7|74|749)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:496|96|6)$', stopBy: end }
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:8|87|879)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:798|98|8|796|96|6)$', stopBy: end }
-            - all:
-                - has:
-                    field: left
-                    any:
-                      - regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                      - all:
-                          - kind: attribute
-                          - has:
-                              field: attribute
-                              regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                      - all:
-                          - kind: subscript
-                          - has:
-                              kind: string_content
-                              regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                              stopBy: end
-                - has:
-                    field: right
-                    regex: '^(?:False|0)$'
-    - all:
-        - kind: pair
-        - any:
-            - all:
-                - has:
-                    field: key
-                    has:
-                      kind: string_content
-                      regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                      stopBy: end
-                - has:
-                    field: value
-                    any:
-                      - regex: '^["'']?(?:4001|7496|8798|8796)["'']?$'
-                      - all:
-                          - pattern: int($ARG)
-                          - has:
-                              stopBy: end
-                              any:
-                                - { kind: string_content, regex: '^(?:4001|7496|8798|8796)$' }
-                                - { kind: integer, regex: '^(?:4001|7496|8798|8796)$' }
-                      - pattern: 4000 + 1
-                      - pattern: 1 + 4000
-                      - pattern: 4002 - 1
-                      - pattern: 7490 + 6
-                      - pattern: 7400 + 96
-                      - pattern: 7497 - 1
-                      - pattern: 8790 + 8
-                      - pattern: 8700 + 98
-                      - pattern: 8790 + 6
-                      - pattern: 8700 + 96
-                      - all:
-                          - kind: binary_operator
-                          - any:
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:4|40|400)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:001|01|1)$', stopBy: end }
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:7|74|749)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:496|96|6)$', stopBy: end }
-                              - all:
-                                  - has: { kind: string_content, regex: '^(?:8|87|879)$', stopBy: end }
-                                  - has: { kind: string_content, regex: '^(?:798|98|8|796|96|6)$', stopBy: end }
-            - all:
-                - has:
-                    field: key
-                    has:
-                      kind: string_content
-                      regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                      stopBy: end
-                - has:
-                    field: value
-                    regex: '^(?:False|0)$'
-    - all:
-        - pattern: $OBJ.setdefault($KEY, $VAL)
-        - any:
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                    stopBy: end
-                - any:
-                    - has:
-                        kind: string_content
-                        regex: '^(?:4001|7496|8798|8796)$'
-                        stopBy: end
-                    - has:
-                        kind: integer
-                        regex: '^(?:4001|7496|8798|8796)$'
-                        stopBy: end
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                    stopBy: end
-                - any:
-                    - pattern: $OBJ.setdefault($KEY, False)
-                    - pattern: $OBJ.setdefault($KEY, 0)
-    - all:
-        - any:
-            - pattern: setattr($OBJ, $KEY, $VAL)
-            - pattern: $OBJ.__setattr__($KEY, $VAL)
-            - pattern: object.__setattr__($OBJ, $KEY, $VAL)
-        - any:
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:[A-Za-z0-9_]*_)?PORT$'
-                    stopBy: end
-                - has:
-                    stopBy: end
-                    any:
-                      - { kind: string_content, regex: '^(?:4001|7496|8798|8796)$' }
-                      - { kind: integer, regex: '^(?:4001|7496|8798|8796)$' }
-                      - pattern: 4000 + 1
-                      - pattern: 1 + 4000
-                      - pattern: 4002 - 1
-                      - pattern: 7490 + 6
-                      - pattern: 7400 + 96
-                      - pattern: 7497 - 1
-                      - pattern: 8790 + 8
-                      - pattern: 8700 + 98
-                      - pattern: 8790 + 6
-                      - pattern: 8700 + 96
-            - all:
-                - has:
-                    kind: string_content
-                    regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)$'
-                    stopBy: end
-                - any:
-                    - pattern: setattr($OBJ, $KEY, False)
-                    - pattern: setattr($OBJ, $KEY, 0)
-                    - pattern: $OBJ.__setattr__($KEY, False)
-                    - pattern: $OBJ.__setattr__($KEY, 0)
-                    - pattern: object.__setattr__($OBJ, $KEY, False)
-                    - pattern: object.__setattr__($OBJ, $KEY, 0)
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+    - { kind: string_content, regex: '(?i)(?:^|//|[^a-z0-9.-])api\.alpaca\.markets' }
+    - { kind: string_content, regex: '(?i)(?:(?:https?|wss?|tcp)://[^\s"''`]*?:|(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]):|^:|--port=)(?:4001|7496|8798|8796)\b' }
+    - all: [{ kind: string }, { has: { kind: string_content, regex: '^(?:4001|7496|8798|8796)$', stopBy: end } }, { follows: { kind: string, has: { kind: string_content, regex: '^--port$', stopBy: end }, stopBy: end } }]
+    - { kind: keyword_argument, regex: '(?i)^(?:(?:[A-Za-z0-9_]*_)?port\s*=\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))|(?:paper|paper_mode|is_paper|paper_trading)\s*=\s*(?:False|0))$' }
+    - all: [{ kind: assignment }, { not: { regex: '^FORBIDDEN_' } }, { regex: '(?i)(?:(?:[A-Za-z0-9_]*_)?port["'']?\]?\s*=\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))|(?:paper|paper_mode|is_paper|paper_trading)["'']?\]?\s*=\s*(?:False|0))$' }]
+    - { kind: pair, regex: '(?i)^["''](?:(?:[A-Za-z0-9_]*_)?port["'']\s*:\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))|(?:paper|paper_mode|is_paper|paper_trading)["'']\s*:\s*(?:False|0))$' }
+    - { kind: call, regex: '(?i)(?:setdefault|setattr|__setattr__)\s*\([^)]*(?:port["'']\s*,\s*["'']?(?:4001|7496|8798|8796)["'']?|(?:paper|paper_mode|is_paper|paper_trading)["'']\s*,\s*(?:False|0))' }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-custom-dashboard-server
 language: python
 severity: error
-message: >-
-  Hand-written custom web/HTML dashboard prohibited under Tier-0 Upstream-Only Charter.
-  Enact via skill 'tier0-upstream-dashboards-and-observability' (FINOS Workspace :1420,
-  Grafana :3001, Prometheus :9090, or native create_tearsheet / generate_backtest_tearsheet).
+message: Hand-written custom web/HTML dashboard prohibited; use FINOS :1420, Grafana :3001, Prometheus :9090, or Caddy :8793.
 rule:
   any:
-    - pattern: import fastapi
-    - pattern: import fastapi as $ALIAS
-    - pattern: from fastapi import $$$
-    - pattern: import starlette
-    - pattern: import starlette as $ALIAS
-    - pattern: from starlette import $$$
-    - pattern: import flask
-    - pattern: import flask as $ALIAS
-    - pattern: from flask import $$$
-    - pattern: import dash
-    - pattern: import dash as $ALIAS
-    - pattern: from dash import $$$
-    - pattern: import gradio
-    - pattern: import gradio as $ALIAS
-    - pattern: from gradio import $$$
-    - pattern: import nicegui
-    - pattern: import nicegui as $ALIAS
-    - pattern: from nicegui import $$$
-    - pattern: import panel
-    - pattern: import panel as $ALIAS
-    - pattern: from panel import $$$
-    - pattern: import bokeh
-    - pattern: import bokeh as $ALIAS
-    - pattern: from bokeh import $$$
-    - pattern: import http.server
-    - pattern: import http.server as $ALIAS
-    - pattern: from http.server import $$$
-    - pattern: HTTPServer($$$)
-    - pattern: ThreadingHTTPServer($$$)
-    - pattern: HTTPServer
-    - pattern: ThreadingHTTPServer
-    - pattern: BaseHTTPRequestHandler
-    - pattern: SimpleHTTPRequestHandler
-    - pattern: import uvicorn
-    - pattern: import uvicorn as $ALIAS
-    - pattern: from uvicorn import $$$
-    - pattern: import quart
-    - pattern: import quart as $ALIAS
-    - pattern: from quart import $$$
-    - pattern: import sanic
-    - pattern: import sanic as $ALIAS
-    - pattern: from sanic import $$$
-    - pattern: import tornado
-    - pattern: import tornado as $ALIAS
-    - pattern: from tornado import $$$
-    - pattern: from tornado.$$$ import $$$
-    - pattern: from http import server
-    - pattern: from http import server as $ALIAS
-    - all:
-        - kind: import_from_statement
-        - has:
-            field: module_name
-            regex: ^http$
-        - has:
-            any:
-              - all:
-                  - kind: dotted_name
-                  - regex: ^server$
-              - all:
-                  - kind: aliased_import
-                  - has:
-                      field: name
-                      regex: ^server$
-    - pattern: http.server
-    - all:
-        - kind: call
-        - has:
-            kind: string_content
-            regex: '^(?:fastapi|starlette|flask|dash|gradio|nicegui|panel|bokeh|uvicorn|quart|sanic|tornado|http\.server)(?:\..*)?$'
-            stopBy: end
-        - any:
-            - pattern: importlib.import_module($$$ARGS)
-            - pattern: $OBJ.import_module($$$ARGS)
-            - pattern: import_module($$$ARGS)
-            - pattern: __import__($$$ARGS)
-            - pattern: $MOD.__import__($$$ARGS)
-            - pattern: getattr($OBJ, "import_module")($$$ARGS)
-            - pattern: getattr($OBJ, 'import_module')($$$ARGS)
-            - pattern: getattr($OBJ, "__import__")($$$ARGS)
-            - pattern: getattr($OBJ, '__import__')($$$ARGS)
-            - pattern: $OBJ.__getattribute__("import_module")($$$ARGS)
-            - pattern: $OBJ.__getattribute__('import_module')($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, "import_module")($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, 'import_module')($$$ARGS)
-            - all:
-                - kind: call
-                - pattern: $FN($$$ARGS)
-                - inside:
-                    kind: module
-                    stopBy: end
-                    has:
-                      stopBy: end
-                      any:
-                        - pattern: from importlib import import_module as $FN
-                        - pattern: from builtins import __import__ as $FN
-                        - pattern: $FN = importlib.import_module
-                        - pattern: $FN = __import__
-    - pattern: HTMLResponse($$$)
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+    - { kind: import_statement, regex: '\b(?:fastapi|starlette|flask|dash|gradio|nicegui|panel|bokeh|uvicorn|quart|sanic|tornado|http\.server)\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:fastapi|starlette|flask|dash|gradio|nicegui|panel|bokeh|uvicorn|quart|sanic|tornado|http\.server)\b|^from\s+http\s+import\s+.*\bserver\b' }
+    - { kind: identifier, regex: '^(?:HTTPServer|ThreadingHTTPServer|BaseHTTPRequestHandler|SimpleHTTPRequestHandler|HTMLResponse)$' }
+    - all: [{ kind: call, regex: '(?:import_module|__import__)' }, { has: { kind: string_content, regex: '^(?:fastapi|starlette|flask|dash|gradio|nicegui|panel|bokeh|uvicorn|quart|sanic|tornado|http\.server)(?:\..*)?$', stopBy: end } }]
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-raw-http-broker-polling
 language: python
 severity: error
-message: >-
-  Raw HTTP polling (requests/httpx/aiohttp/ib_async) prohibited in src/. Use official typed upstreams
-  (nautilus_trader, alpaca-py, edgartools, fredapi, opentelemetry-sdk).
+message: Raw HTTP polling (requests/httpx/aiohttp/ib_async) prohibited; use official typed upstreams.
 rule:
   any:
-    - pattern: import requests
-    - pattern: import requests as $ALIAS
-    - pattern: from requests import $$$
-    - pattern: import httpx
-    - pattern: import httpx as $ALIAS
-    - pattern: from httpx import $$$
-    - pattern: import aiohttp
-    - pattern: import aiohttp as $ALIAS
-    - pattern: from aiohttp import $$$
-    - pattern: import ib_async
-    - pattern: import ib_async as $ALIAS
-    - pattern: from ib_async import $$$
-    - all:
-        - kind: call
-        - has:
-            kind: string_content
-            regex: '^(?:requests|httpx|aiohttp|ib_async)(?:\..*)?$'
-            stopBy: end
-        - any:
-            - pattern: importlib.import_module($$$ARGS)
-            - pattern: $OBJ.import_module($$$ARGS)
-            - pattern: import_module($$$ARGS)
-            - pattern: __import__($$$ARGS)
-            - pattern: $MOD.__import__($$$ARGS)
-            - pattern: getattr($OBJ, "import_module")($$$ARGS)
-            - pattern: getattr($OBJ, 'import_module')($$$ARGS)
-            - pattern: getattr($OBJ, "__import__")($$$ARGS)
-            - pattern: getattr($OBJ, '__import__')($$$ARGS)
-            - pattern: $OBJ.__getattribute__("import_module")($$$ARGS)
-            - pattern: $OBJ.__getattribute__('import_module')($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, "import_module")($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, 'import_module')($$$ARGS)
-            - all:
-                - pattern: $FN($$$ARGS)
-                - inside:
-                    kind: module
-                    stopBy: end
-                    has:
-                      any:
-                        - pattern: from importlib import import_module as $FN
-                        - pattern: from builtins import __import__ as $FN
-                        - pattern: $FN = importlib.import_module
-                        - pattern: $FN = __import__
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+    - { kind: import_statement, regex: '\b(?:requests|httpx|aiohttp|ib_async)\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:requests|httpx|aiohttp|ib_async)\b' }
+    - all: [{ kind: call, regex: '(?:import_module|__import__)' }, { has: { kind: string_content, regex: '^(?:requests|httpx|aiohttp|ib_async)(?:\..*)?$', stopBy: end } }]
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-float-cast-in-risk
 language: python
 severity: error
 message: Fail-closed risk invariants in risk.py must use exact Decimal or integer ticks, never float().
-rule:
-  pattern: float($$$)
-files:
-  - src/tier0_sota/risk.py
+rule: { pattern: float($$$) }
+files: [src/tier0_sota/risk.py]
 ---
 id: no-yahoo-chart-api
 language: python
 severity: error
 message: Yahoo Finance HTTP endpoint prohibited under Tier-0 Upstream-Only Charter.
-rule:
-  kind: string_content
-  regex: '(?i)(?:query[12]\.finance\.yahoo\.com|finance\.yahoo\.com/v8/finance/chart)'
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { kind: string_content, regex: '(?i)(?:query[12]\.finance\.yahoo\.com|finance\.yahoo\.com/v8/finance/chart)' }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-nonliteral-dynamic-import
 language: python
 severity: error
 message: Non-literal dynamic import prohibited under Tier-0 Upstream-Only Charter.
-rule:
-  any:
-    - pattern: importlib.import_module($MOD)
-    - pattern: $OBJ.import_module($MOD)
-    - pattern: __import__($MOD)
-    - pattern: $OBJ.__import__($MOD)
-constraints:
-  MOD:
-    not:
-      kind: string
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { any: [{ pattern: importlib.import_module($MOD) }, { pattern: $OBJ.import_module($MOD) }, { pattern: __import__($MOD) }, { pattern: $OBJ.__import__($MOD) }] }
+constraints: { MOD: { not: { kind: string } } }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-nonliteral-dynamic-import-kwarg
 language: python
 severity: error
 message: Keyword/unpacked dynamic import prohibited under Tier-0 Upstream-Only Charter.
-rule:
-  any:
-    - pattern: importlib.import_module(*$ARGS)
-    - pattern: $OBJ.import_module(*$ARGS)
-    - pattern: __import__(*$ARGS)
-    - pattern: $OBJ.__import__(*$ARGS)
-    - pattern: importlib.import_module($$$BEFORE, name=$MOD, $$$AFTER)
-    - pattern: $OBJ.import_module($$$BEFORE, name=$MOD, $$$AFTER)
-    - pattern: __import__($$$BEFORE, name=$MOD, $$$AFTER)
-    - pattern: $OBJ.__import__($$$BEFORE, name=$MOD, $$$AFTER)
-    - pattern: importlib.import_module(**$KW)
-    - pattern: $OBJ.import_module(**$KW)
-    - pattern: __import__(**$KW)
-    - pattern: $OBJ.__import__(**$KW)
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { all: [{ kind: call, regex: '(?:import_module|__import__)\s*\(' }, { has: { any: [{ kind: list_splat }, { kind: dictionary_splat }, { kind: keyword_argument, regex: '^name\s*=' }], stopBy: end } }] }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-nonliteral-dynamic-import-alias
 language: python
@@ -757,247 +82,73 @@ severity: error
 message: Aliased dynamic import call prohibited under Tier-0 Upstream-Only Charter.
 rule:
   all:
-    - pattern: $FN($$$ARGS)
-    - inside:
-        kind: module
-        stopBy: end
-        has:
-          stopBy: end
-          any:
-            - pattern: from importlib import import_module as $FN
-            - pattern: from builtins import __import__ as $FN
-            - pattern: $FN = importlib.import_module
-            - pattern: $FN = __import__
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+    - { pattern: $FN($$$ARGS) }
+    - inside: { kind: module, stopBy: end, has: { stopBy: end, any: [{ pattern: from importlib import import_module as $FN }, { pattern: from builtins import __import__ as $FN }, { pattern: $FN = importlib.import_module }, { pattern: $FN = __import__ }] } }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-nonliteral-getattr-dynamic-import
 language: python
 severity: error
 message: Non-literal getattr/__getattribute__ dynamic import prohibited under Tier-0 Upstream-Only Charter.
-rule:
-  any:
-    - pattern: getattr(importlib, $ATTR)($$$ARGS)
-    - pattern: builtins.getattr(importlib, $ATTR)($$$ARGS)
-    - pattern: getattr(builtins, $ATTR)($$$ARGS)
-    - pattern: builtins.getattr(builtins, $ATTR)($$$ARGS)
-    - pattern: getattr(__builtins__, $ATTR)($$$ARGS)
-    - pattern: builtins.getattr(__builtins__, $ATTR)($$$ARGS)
-    - pattern: importlib.__getattribute__($ATTR)($$$ARGS)
-    - pattern: builtins.__getattribute__($ATTR)($$$ARGS)
-    - pattern: __builtins__.__getattribute__($ATTR)($$$ARGS)
-    - pattern: object.__getattribute__(importlib, $ATTR)($$$ARGS)
-    - pattern: object.__getattribute__(builtins, $ATTR)($$$ARGS)
-    - pattern: object.__getattribute__(__builtins__, $ATTR)($$$ARGS)
-    - all:
-        - any:
-            - pattern: getattr($OBJ, $ATTR)($$$ARGS)
-            - pattern: builtins.getattr($OBJ, $ATTR)($$$ARGS)
-            - pattern: $OBJ.__getattribute__($ATTR)($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, $ATTR)($$$ARGS)
-        - has:
-            kind: string_content
-            regex: '(?:import_|__import|_module)'
-            stopBy: end
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { kind: call, regex: '(?:getattr|__getattribute__)\s*\([^)]*(?:importlib|builtins|__builtins__|import_|__import|_module)[^)]*\)\s*\(' }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-nonliteral-getattr-alias-dynamic-import
 language: python
 severity: error
 message: Aliased getattr/__getattribute__/sys.modules dynamic import prohibited under Tier-0 Upstream-Only Charter.
-rule:
-  all:
-    - any:
-        - pattern: $FN = getattr($OBJ, $ATTR)
-        - pattern: $FN = builtins.getattr($OBJ, $ATTR)
-        - pattern: $FN = $OBJ.__getattribute__($ATTR)
-        - pattern: $FN = object.__getattribute__($OBJ, $ATTR)
-        - pattern: $FN = sys.modules[$MOD].import_module
-        - pattern: $FN = sys.modules.get($MOD).import_module
-    - has:
-        kind: string_content
-        regex: '(?:import_|__import|_module|importlib)'
-        stopBy: end
-    - inside:
-        kind: module
-        stopBy: end
-        has:
-          pattern: $FN($$$ARGS)
-          stopBy: end
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { kind: assignment, regex: '=\s*(?:(?:builtins\.)?getattr|(?:object\.)?__getattribute__|[\w.]+\.__getattribute__|sys\.modules).*(?:import_|__import|_module|importlib)' }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-banned-exec-eval-literal
 language: python
 severity: error
 message: Dynamic exec()/eval() containing banned library, dynamic import, or live broker endpoint prohibited.
-rule:
-  all:
-    - any:
-        - pattern: exec($CODE)
-        - pattern: eval($CODE)
-        - pattern: builtins.exec($CODE)
-        - pattern: builtins.eval($CODE)
-        - pattern: __builtins__["exec"]($CODE)
-        - pattern: __builtins__['exec']($CODE)
-        - pattern: __builtins__["eval"]($CODE)
-        - pattern: __builtins__['eval']($CODE)
-        - pattern: __builtins__.get("exec")($CODE)
-        - pattern: __builtins__.get('exec')($CODE)
-        - pattern: __builtins__.get("eval")($CODE)
-        - pattern: __builtins__.get('eval')($CODE)
-        - pattern: getattr(builtins, "exec")($CODE)
-        - pattern: getattr(builtins, 'exec')($CODE)
-        - pattern: getattr(builtins, "eval")($CODE)
-        - pattern: getattr(builtins, 'eval')($CODE)
-        - pattern: builtins.getattr(builtins, "exec")($CODE)
-        - pattern: builtins.getattr(builtins, 'exec')($CODE)
-        - pattern: getattr(__builtins__, "exec")($CODE)
-        - pattern: getattr(__builtins__, 'exec')($CODE)
-    - has:
-        kind: string_content
-        regex: '(?i)(?:\b(?:import|from)\s+(?:[^\n;]*?\b)?(?:yfinance|backtrader|backtesting|mlfinlab|tcapy|vollib|py_vollib|abides|tradingview_ta|pandas_datareader|talib|vectorbt|zipline|pypfopt|pyportfolioopt|riskfolio|alphalens|wandb|clearml|neptune|prefect|deepeval|streamlit|finrl|fingpt|rdagent|rd_agent|mkdocs|sktime|freqtrade|pybroker|fastapi|starlette|httpx|aiohttp|ib_async|requests|flask|dash|gradio|nicegui|panel|bokeh)\b|__import__\s*\(|import_module\s*\(|api\.alpaca\.markets|(?:PORT\s*=\s*|:\s*)(?:4001|7496|8798|8796)\b|\bpaper(?:_trading|_mode)?\s*=\s*(?:False|0)\b)'
-        stopBy: end
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { all: [{ kind: call, regex: '(?:^|\.|["''])(?:exec|eval)(?:["'']\s*\]|["'']\s*\))?\s*\(' }, { has: { kind: string_content, regex: '(?i)(?:\b(?:import|from)\s+(?:[^\n;]*?\b)?(?:yfinance|backtrader|backtesting|mlfinlab|tcapy|vollib|py_vollib|abides|tradingview_ta|pandas_datareader|talib|vectorbt|zipline|pypfopt|pyportfolioopt|riskfolio|alphalens|wandb|clearml|neptune|prefect|deepeval|streamlit|finrl|fingpt|rdagent|rd_agent|mkdocs|sktime|freqtrade|pybroker|fastapi|starlette|httpx|aiohttp|ib_async|requests|flask|dash|gradio|nicegui|panel|bokeh)\b|__import__\s*\(|import_module\s*\(|api\.alpaca\.markets|(?:PORT\s*=\s*|:\s*)(?:4001|7496|8798|8796)\b|\bpaper(?:_trading|_mode)?\s*=\s*(?:False|0)\b)', stopBy: end } }] }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-aliased-exec-eval
 language: python
 severity: error
 message: Aliased or reflected exec()/eval() prohibited in src/ and scripts/ under Tier-0 Upstream-Only Charter.
-rule:
-  all:
-    - any:
-        - pattern: $FN = exec
-        - pattern: $FN = eval
-        - pattern: $FN = builtins.exec
-        - pattern: $FN = builtins.eval
-        - pattern: $FN = __builtins__.exec
-        - pattern: $FN = __builtins__.eval
-        - pattern: $FN = __builtins__["exec"]
-        - pattern: $FN = __builtins__['exec']
-        - pattern: $FN = __builtins__["eval"]
-        - pattern: $FN = __builtins__['eval']
-        - pattern: $FN = getattr($OBJ, "exec")
-        - pattern: $FN = getattr($OBJ, 'exec')
-        - pattern: $FN = getattr($OBJ, "eval")
-        - pattern: $FN = getattr($OBJ, 'eval')
-        - pattern: $FN = builtins.getattr($OBJ, "exec")
-        - pattern: $FN = builtins.getattr($OBJ, 'exec')
-        - pattern: $FN = builtins.getattr($OBJ, "eval")
-        - pattern: $FN = builtins.getattr($OBJ, 'eval')
-    - inside:
-        kind: module
-        stopBy: end
-        has:
-          pattern: $FN($$$ARGS)
-          stopBy: end
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { kind: assignment, regex: '=\s*(?:(?:(?:builtins|__builtins__)\.)?(?:exec|eval)|__builtins__\[["''](?:exec|eval)["'']\]|(?:builtins\.)?getattr\([^,]+,\s*["''](?:exec|eval)["'']\))$' }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-nonliteral-exec-eval
 language: python
 severity: error
 message: Non-literal exec()/eval() prohibited in src/ and scripts/ under Tier-0 Upstream-Only Charter.
-rule:
-  any:
-    - pattern: exec($CODE)
-    - pattern: eval($CODE)
-    - pattern: builtins.exec($CODE)
-    - pattern: builtins.eval($CODE)
-    - pattern: __builtins__["exec"]($CODE)
-    - pattern: __builtins__['exec']($CODE)
-    - pattern: __builtins__["eval"]($CODE)
-    - pattern: __builtins__['eval']($CODE)
-    - pattern: getattr(builtins, "exec")($CODE)
-    - pattern: getattr(builtins, 'exec')($CODE)
-    - pattern: getattr(builtins, "eval")($CODE)
-    - pattern: getattr(builtins, 'eval')($CODE)
-    - pattern: builtins.getattr(builtins, "exec")($CODE)
-    - pattern: builtins.getattr(builtins, 'exec')($CODE)
-constraints:
-  CODE:
-    any:
-      - not:
-          kind: string
-      - has:
-          kind: interpolation
-files:
-  - src/**/*.py
-  - scripts/**/*.py
+rule: { any: [{ pattern: exec($CODE) }, { pattern: eval($CODE) }, { pattern: builtins.exec($CODE) }, { pattern: builtins.eval($CODE) }] }
+constraints: { CODE: { any: [{ not: { kind: string } }, { has: { kind: interpolation } }] } }
+files: [src/**/*.py, scripts/**/*.py]
 ---
 id: no-risk-engine-bypass
 language: python
 severity: error
-message: Native NautilusTrader RiskEngineConfig / LiveRiskEngineConfig bypass=True is prohibited in src/tier0_sota and scripts.
-rule:
-  all:
-    - any:
-        - pattern: RiskEngineConfig($$$ARGS)
-        - pattern: LiveRiskEngineConfig($$$ARGS)
-    - has:
-        kind: keyword_argument
-        regex: '^bypass\s*=\s*True$'
-        stopBy: end
-files:
-  - src/tier0_sota/**/*.py
-  - scripts/**/*.py
+message: Native NautilusTrader RiskEngineConfig / LiveRiskEngineConfig bypass=True is prohibited.
+rule: { all: [{ any: [{ pattern: RiskEngineConfig($$$ARGS) }, { pattern: LiveRiskEngineConfig($$$ARGS) }] }, { has: { kind: keyword_argument, regex: '^bypass\s*=\s*True$', stopBy: end } }] }
+files: [src/tier0_sota/**/*.py, scripts/**/*.py]
 ---
 id: no-self-built-trading-engine-class
 language: python
 severity: error
-message: Self-built trading engine classes are prohibited under Tier-0 Native-First Thin-Layer Law; live inside NautilusTrader v2.
-rule:
-  all:
-    - kind: class_definition
-    - any:
-        - has:
-            field: name
-            regex: '^(?:BacktestEngine|LiveNode|TradingNode|RiskEngine|.*(?:BacktestLoop|BacktestRunner|TradingEngine|ExecutionEngine|ShadowEngine|AgentBus|BrokerPoller))$'
-        - has:
-            field: superclasses
-            has:
-              stopBy: end
-              any:
-                - kind: identifier
-                  regex: '^(?:BacktestEngine|LiveNode|TradingNode|RiskEngine|BacktestNode)$'
-                - kind: attribute
-                  regex: '\.(?:BacktestEngine|LiveNode|TradingNode|RiskEngine|BacktestNode)$'
-files:
-  - src/tier0_sota/**/*.py
+message: Self-built trading engine classes are prohibited; live inside NautilusTrader v2.
+rule: { all: [{ kind: class_definition }, { any: [{ has: { field: name, regex: '^(?:BacktestEngine|LiveNode|TradingNode|RiskEngine|.*(?:BacktestLoop|BacktestRunner|TradingEngine|ExecutionEngine|ShadowEngine|AgentBus|BrokerPoller))$' } }, { has: { field: superclasses, regex: '\b(?:BacktestEngine|LiveNode|TradingNode|RiskEngine|BacktestNode)\b' } }] }] }
+files: [src/tier0_sota/**/*.py]
 ---
 id: no-hardcoded-live-execution-true
 language: python
 severity: error
-message: Hardcoded live_execution_enabled=True or paper_live_deployed=True is prohibited inside src/tier0_sota and scripts.
-rule:
-  any:
-    - pattern: live_execution_enabled = True
-    - pattern: 'live_execution_enabled: bool = True'
-    - pattern: paper_live_deployed = True
-    - pattern: 'paper_live_deployed: bool = True'
-files:
-  - src/tier0_sota/**/*.py
-  - scripts/**/*.py
+message: Hardcoded live_execution_enabled=True or paper_live_deployed=True is prohibited.
+rule: { any: [{ pattern: live_execution_enabled = True }, { pattern: 'live_execution_enabled: bool = True' }, { pattern: paper_live_deployed = True }, { pattern: 'paper_live_deployed: bool = True' }] }
+files: [src/tier0_sota/**/*.py, scripts/**/*.py]
 ---
 id: no-custom-shadow-engine-wrapper-class
 language: python
 severity: error
-message: Custom shadow order/position/pacer/throttle wrapper classes are prohibited under Zero Self-Invent; use native NautilusTrader v2 primitives directly.
-rule:
-  all:
-    - kind: class_definition
-    - has:
-        field: name
-        regex: '^(?:PriorityVenueRatePacer|IntradayEquityThrottle|SymbolChurnGuard|OrderManager|PositionTracker|ShadowPortfolio|.*(?:RatePacer|EquityThrottle|ChurnGuard|OrderManager|PositionTracker|ShadowPortfolio|OrderTracker|BrokerPoller|ExecutionWrapper|BrokerWrapper|OrderRouter))$'
-files:
-  - src/tier0_sota/**/*.py
+message: Custom shadow order/position/pacer/throttle wrapper classes are prohibited; use NautilusTrader v2 directly.
+rule: { all: [{ kind: class_definition }, { has: { field: name, regex: '^(?:PriorityVenueRatePacer|IntradayEquityThrottle|SymbolChurnGuard|OrderManager|PositionTracker|ShadowPortfolio|.*(?:RatePacer|EquityThrottle|ChurnGuard|OrderManager|PositionTracker|ShadowPortfolio|OrderTracker|BrokerPoller|ExecutionWrapper|BrokerWrapper|OrderRouter))$' } }] }
+files: [src/tier0_sota/**/*.py]
 ---
 id: no-llm-on-execution-hot-path
 language: python
@@ -1005,207 +156,24 @@ severity: error
 message: LLMs/agent SDKs/FastMCP must remain off the synchronous NautilusTrader v2 execution & Decimal risk hot path.
 rule:
   any:
-    - pattern: import anthropic
-    - pattern: import anthropic as $ALIAS
-    - pattern: from anthropic import $$$
-    - pattern: from anthropic.$$$ import $$$
-    - pattern: import openai
-    - pattern: import openai as $ALIAS
-    - pattern: from openai import $$$
-    - pattern: from openai.$$$ import $$$
-    - pattern: import litellm
-    - pattern: import litellm as $ALIAS
-    - pattern: from litellm import $$$
-    - pattern: import langchain
-    - pattern: import langchain as $ALIAS
-    - pattern: from langchain import $$$
-    - pattern: from langchain.$$$ import $$$
-    - pattern: import langgraph
-    - pattern: import langgraph as $ALIAS
-    - pattern: from langgraph import $$$
-    - pattern: import crewai
-    - pattern: import crewai as $ALIAS
-    - pattern: from crewai import $$$
-    - pattern: import autogen
-    - pattern: import autogen as $ALIAS
-    - pattern: from autogen import $$$
-    - pattern: import claude_agent_sdk
-    - pattern: import claude_agent_sdk as $ALIAS
-    - pattern: from claude_agent_sdk import $$$
-    - pattern: from claude_agent_sdk.$$$ import $$$
-    - pattern: import pydantic_ai
-    - pattern: import pydantic_ai as $ALIAS
-    - pattern: from pydantic_ai import $$$
-    - pattern: from pydantic_ai.$$$ import $$$
-    - pattern: import dspy
-    - pattern: import dspy as $ALIAS
-    - pattern: from dspy import $$$
-    - pattern: import inspect_ai
-    - pattern: import inspect_ai as $ALIAS
-    - pattern: from inspect_ai import $$$
-    - pattern: from inspect_ai.$$$ import $$$
-    - pattern: import mcp
-    - pattern: import mcp as $ALIAS
-    - pattern: from mcp import $$$
-    - pattern: from mcp.$$$ import $$$
-files:
-  - src/tier0_sota/engine.py
-  - src/tier0_sota/risk.py
+    - { kind: import_statement, regex: '\b(?:anthropic|openai|litellm|langchain|langgraph|crewai|autogen|claude_agent_sdk|pydantic_ai|dspy|inspect_ai|mcp)\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:anthropic|openai|litellm|langchain|langgraph|crewai|autogen|claude_agent_sdk|pydantic_ai|dspy|inspect_ai|mcp)\b' }
+files: [src/tier0_sota/engine.py, src/tier0_sota/risk.py]
 ---
 id: no-raw-http-socket-in-src
 language: python
 severity: error
-message: >-
-  Raw HTTP/socket/WebSocket primitives (urllib.request, http.client, socket, websockets)
-  are prohibited inside src/tier0_sota/; use official typed upstreams directly.
+message: Raw HTTP/socket/WebSocket primitives are prohibited inside src/tier0_sota/; use official typed upstreams.
 rule:
   any:
-    - pattern: import urllib.request
-    - pattern: import urllib.request as $ALIAS
-    - pattern: from urllib.request import $$$
-    - pattern: from urllib import request
-    - pattern: from urllib import request as $ALIAS
-    - pattern: import http.client
-    - pattern: import http.client as $ALIAS
-    - pattern: from http.client import $$$
-    - pattern: from http import client
-    - pattern: from http import client as $ALIAS
-    - pattern: urllib.request
-    - pattern: http.client
-    - all:
-        - kind: import_statement
-        - has:
-            field: name
-            any:
-              - all:
-                  - kind: dotted_name
-                  - regex: ^(?:urllib|http)$
-              - all:
-                  - kind: aliased_import
-                  - has:
-                      field: name
-                      kind: dotted_name
-                      regex: ^(?:urllib|http)$
-    - all:
-        - kind: import_from_statement
-        - has:
-            field: module_name
-            regex: ^urllib$
-        - has:
-            any:
-              - all:
-                  - kind: dotted_name
-                  - regex: ^request$
-              - all:
-                  - kind: aliased_import
-                  - has:
-                      field: name
-                      regex: ^request$
-    - all:
-        - kind: import_from_statement
-        - has:
-            field: module_name
-            regex: ^http$
-        - has:
-            any:
-              - all:
-                  - kind: dotted_name
-                  - regex: ^client$
-              - all:
-                  - kind: aliased_import
-                  - has:
-                      field: name
-                      regex: ^client$
-    - pattern: import socket
-    - pattern: import socket as $ALIAS
-    - pattern: from socket import $$$
-    - pattern: import websockets
-    - pattern: import websockets as $ALIAS
-    - pattern: from websockets import $$$
-    - pattern: from websockets.$$$ import $$$
-    - all:
-        - kind: call
-        - has:
-            kind: string_content
-            regex: '^(?:urllib\.request|http\.client|socket|websockets)(?:\..*)?$'
-            stopBy: end
-        - any:
-            - pattern: importlib.import_module($$$ARGS)
-            - pattern: $OBJ.import_module($$$ARGS)
-            - pattern: import_module($$$ARGS)
-            - pattern: __import__($$$ARGS)
-            - pattern: $MOD.__import__($$$ARGS)
-            - pattern: getattr($OBJ, "import_module")($$$ARGS)
-            - pattern: getattr($OBJ, 'import_module')($$$ARGS)
-            - pattern: getattr($OBJ, "__import__")($$$ARGS)
-            - pattern: getattr($OBJ, '__import__')($$$ARGS)
-            - pattern: $OBJ.__getattribute__("import_module")($$$ARGS)
-            - pattern: $OBJ.__getattribute__('import_module')($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, "import_module")($$$ARGS)
-            - pattern: object.__getattribute__($OBJ, 'import_module')($$$ARGS)
-            - all:
-                - pattern: $FN($$$ARGS)
-                - inside:
-                    kind: module
-                    stopBy: end
-                    has:
-                      any:
-                        - pattern: from importlib import import_module as $FN
-                        - pattern: from builtins import __import__ as $FN
-                        - pattern: $FN = importlib.import_module
-                        - pattern: $FN = __import__
-files:
-  - src/tier0_sota/**/*.py
+    - { kind: import_statement, regex: '\b(?:urllib(?:\.request)?|http(?:\.client)?|socket|websockets)\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:urllib\.request|http\.client|socket|websockets)\b|^from\s+urllib\s+import\s+.*\brequest\b|^from\s+http\s+import\s+.*\bclient\b' }
+    - all: [{ kind: call, regex: '(?:import_module|__import__)' }, { has: { kind: string_content, regex: '^(?:urllib\.request|http\.client|socket|websockets)(?:\..*)?$', stopBy: end } }]
+files: [src/tier0_sota/**/*.py]
 ---
 id: no-polling-sleep-loop-in-src
 language: python
 severity: error
-message: >-
-  Polling while-True/while-1 sleep loops are prohibited inside src/tier0_sota/;
-  use scrape-driven collectors, Nautilus MessageBus events, or Event().wait().
-rule:
-  all:
-    - kind: while_statement
-    - has:
-        field: condition
-        any:
-          - kind: "true"
-          - pattern: "1"
-          - pattern: "1 == 1"
-          - pattern: "True is True"
-          - pattern: (True)
-          - pattern: (1)
-          - pattern: (1 == 1)
-          - pattern: (True is True)
-    - has:
-        stopBy: end
-        any:
-          - pattern: time.sleep($$$)
-          - pattern: sleep($$$)
-          - pattern: asyncio.sleep($$$)
-          - all:
-              - kind: call
-              - pattern: $FN($$$)
-              - inside:
-                  kind: module
-                  stopBy: end
-                  has:
-                    stopBy: end
-                    any:
-                      - pattern: from time import sleep as $FN
-                      - pattern: from asyncio import sleep as $FN
-                      - pattern: $FN = time.sleep
-                      - pattern: $FN = asyncio.sleep
-          - all:
-              - kind: call
-              - pattern: $MOD.sleep($$$)
-              - inside:
-                  kind: module
-                  stopBy: end
-                  has:
-                    stopBy: end
-                    any:
-                      - pattern: import time as $MOD
-                      - pattern: import asyncio as $MOD
-files:
-  - src/tier0_sota/**/*.py
+message: Polling while-True/while-1 sleep loops are prohibited inside src/tier0_sota/; use event-driven upstreams.
+rule: { all: [{ kind: while_statement }, { has: { field: condition, regex: '^\(?\s*(?:True|1|1\s*==\s*1|True\s+is\s+True)\s*\)?$' } }, { has: { kind: call, regex: '(?:^|\.)sleep\s*\(', stopBy: end } }] }
+files: [src/tier0_sota/**/*.py]

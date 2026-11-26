@@ -1,7 +1,9 @@
 ---
-description: Sim lane (24/7 SANDBOX) status report using .claude/mcp-lanes/sim.mcp.json. Read-only.
-argument-hint: "[optional symbol or MLflow run]"
+description: Active sim-backtest compounding lane (NautilusTrader v2 SANDBOX + hftbacktest + MLflow) via sim.mcp.json.
+argument-hint: "[hypothesis, symbol, or MLflow experiment]"
 ---
-Run read-only Sim check for `$ARGUMENTS`:
-1. Inspect `nautilus-engine` (`get_engine_backbone_status`, `run_prewall_native_backbone_parity`) and `edgartools` PIT (`<= 2026-10-15`, `t_ns + 60s`, `XNYS`).
-2. Check `get_live_watchlist_manifest` & `get_live_performance_manifest` plus 6-gate standing (long & short legs) in `MLflow` (`:5000`).
+Execute compounding `sim-backtest` iteration for `$ARGUMENTS` (strictly upstream-only, zero self-hallucination):
+1. Enforce causal PIT (`<= 2026-10-15`, `t_ns + 60s`, `XNYS`) via `edgartools` + `Polars`/`DuckDB`/`Pandera`, targeting early extreme movers and causal regime/crash-reversal alignment.
+2. Run `NautilusTrader v2` (`BacktestEngine`/`Environment.SANDBOX`) + Rust `hftbacktest` queue markout + `Optuna` discovery with 24/5 near-lossless breakeven+fee trailing, auto-reverse, and rapid re-entry.
+3. Clear 6-gate falsification (`1x`/`2x` costs, markout, `skfolio` CPCV `>= 16`, `ml4t-diagnostic` DSR/PBO, `arch` SPA, `statsmodels` HAC) across both legs, logging compounding manifests to `MLflow` (`:5000`) & `XERJ` (`:9200`).
+4. Verify E2E via `just check` and `uv run --no-sync python scripts/nautilus_mcp_server.py --smoke`.

@@ -13,7 +13,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 
 COPY pyproject.toml uv.lock ./
 COPY src ./src
-RUN uv sync --frozen --no-dev \
+RUN uv sync --frozen --no-group dev \
     && groupadd --gid 1000 sota \
     && useradd --create-home --uid 1000 --gid 1000 sota \
     && chown -R 1000:1000 /opt/venv /workspace

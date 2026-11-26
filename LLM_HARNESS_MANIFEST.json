@@ -1,0 +1,275 @@
+{
+  "schema_version": "tier0.llm-harness-manifest.v1",
+  "repo_name": "tier0-sota-clean",
+  "future_flagship_name": "noesis",
+  "branch": "main",
+  "ssot_entrypoints": {
+    "canonical_agents_md": "AGENTS.md",
+    "claude_md_pointer": "@AGENTS.md",
+    "gemini_context_file_names": [
+      "AGENTS.md",
+      "GEMINI.md"
+    ],
+    "opencode_instructions": [
+      "AGENTS.md"
+    ],
+    "orca_config": "orca.yaml",
+    "philosophy_manifest": "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
+    "architecture_manifest": "ARCHITECTURE_MANIFEST.json",
+    "sota_starred_manifest": "SOTA_STARRED_AND_BEYOND_MANIFEST.json"
+  },
+  "supported_runtimes": [
+    "Codex",
+    "Claude Code",
+    "Gemini CLI",
+    "OpenCode",
+    "Antigravity",
+    "Orca"
+  ],
+  "zero_self_invented_hooks": true,
+  "agent_roles": [
+    "code-intel-redteam",
+    "memory-rag-evolution",
+    "observability-operator",
+    "paper-gatekeeper",
+    "pit-data-engineer",
+    "quant-falsifier",
+    "tier0-grand-central"
+  ],
+  "compounding_lanes": {
+    "sim-backtest": {
+      "command": ".claude/commands/lane-sim.md",
+      "mcp_lane": ".claude/mcp-lanes/sim.mcp.json",
+      "agent_roles": [
+        "tier0-grand-central",
+        "pit-data-engineer",
+        "quant-falsifier"
+      ],
+      "primary_scripts": [
+        "scripts/launch_clean_lanes.ps1",
+        "scripts/nautilus_mcp_server.py",
+        "evals/formal_risk_z3.py"
+      ],
+      "manifest_artifacts": [
+        "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
+        "ARCHITECTURE_MANIFEST.json",
+        "Z:\\sota-data\\manifests"
+      ]
+    },
+    "paper": {
+      "command": ".claude/commands/lane-paper.md",
+      "mcp_lane": ".claude/mcp-lanes/paper.mcp.json",
+      "agent_roles": [
+        "tier0-grand-central",
+        "observability-operator",
+        "memory-rag-evolution"
+      ],
+      "primary_scripts": [
+        "scripts/run_live_paper_farm.ps1",
+        "scripts/launch_clean_lanes.ps1",
+        "scripts/setup_clean_ecosystem.ps1"
+      ],
+      "manifest_artifacts": [
+        "Z:\\sota-data\\manifests\\paper_farm_live_performance_manifest.json",
+        "Z:\\sota-data\\manifests\\finos_paper_farm_performance.json",
+        "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json",
+        "Z:\\sota-data\\manifests\\paper_lane_{pa1,pa2,pa3}.duckdb"
+      ]
+    },
+    "half-auto-tv": {
+      "command": ".claude/commands/lane-tv.md",
+      "mcp_lane": ".claude/mcp-lanes/tv.mcp.json",
+      "agent_roles": [
+        "tier0-grand-central",
+        "observability-operator"
+      ],
+      "primary_scripts": [
+        "scripts/tv_console.ps1",
+        "scripts/nautilus_mcp_server.py"
+      ],
+      "manifest_artifacts": [
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\staged_tv_presets.json"
+      ]
+    },
+    "live": {
+      "command": ".claude/commands/lane-live.md",
+      "mcp_lane": ".claude/mcp-lanes/gate.mcp.json",
+      "agent_roles": [
+        "paper-gatekeeper",
+        "code-intel-redteam",
+        "quant-falsifier"
+      ],
+      "primary_scripts": [
+        "evals/formal_risk_z3.py",
+        "evals/tier0_inspect_eval.py",
+        "scripts/sync_manifest.py",
+        "scripts/grand_reset/verify_grand_reset.ps1"
+      ],
+      "manifest_artifacts": [
+        "ARCHITECTURE_MANIFEST.json",
+        "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
+        "LLM_HARNESS_MANIFEST.json",
+        "SOTA_STARRED_AND_BEYOND_MANIFEST.json"
+      ]
+    }
+  },
+  "mcp_servers": {
+    "transport": "native-uv-stdio",
+    "canonical_servers": {
+      "codebase-memory": {
+        "type": "stdio",
+        "command": "codebase-memory-mcp",
+        "args": []
+      },
+      "xerj": {
+        "type": "stdio",
+        "command": "xerj",
+        "args": [
+          "mcp"
+        ],
+        "env": {
+          "XERJ_URL": "http://127.0.0.1:9200",
+          "XERJ_DISABLE_FEEDBACK": "true"
+        }
+      },
+      "nautilus-engine": {
+        "type": "stdio",
+        "command": "uv",
+        "args": [
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/nautilus_mcp_server.py"
+        ]
+      },
+      "edgartools": {
+        "type": "stdio",
+        "command": "uv",
+        "args": [
+          "run",
+          "--no-sync",
+          "edgartools-mcp"
+        ]
+      }
+    },
+    "parity_configs": {
+      ".mcp.json": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
+      ],
+      ".claude/settings.json": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
+      ],
+      ".codex/config.toml": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
+      ],
+      ".gemini/settings.json": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
+      ],
+      "opencode.json": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
+      ]
+    },
+    "parity_count": "5/5"
+  },
+  "skills_summary": {
+    "lock_file": "UPSTREAM_SKILLS_LOCK.json",
+    "skills_dir": ".claude/skills",
+    "skills_count": 46,
+    "by_upstream_source": {
+      "vendored": 46
+    }
+  },
+  "live_hosted_portals": [
+    {
+      "name": "xerj",
+      "url": "http://127.0.0.1:9200/"
+    },
+    {
+      "name": "zensical",
+      "url": "http://127.0.0.1:8010/"
+    },
+    {
+      "name": "mlflow",
+      "url": "http://127.0.0.1:5000/"
+    },
+    {
+      "name": "dagster",
+      "url": "http://127.0.0.1:3000/"
+    },
+    {
+      "name": "optuna-dashboard",
+      "url": "http://127.0.0.1:8080/"
+    },
+    {
+      "name": "inspect-view",
+      "url": "http://127.0.0.1:7575/"
+    },
+    {
+      "name": "prometheus",
+      "url": "http://127.0.0.1:9090/"
+    },
+    {
+      "name": "grafana",
+      "url": "http://127.0.0.1:3001/"
+    },
+    {
+      "name": "otel-telemetry",
+      "url": "http://127.0.0.1:9464/metrics"
+    },
+    {
+      "name": "tearsheets",
+      "url": "http://127.0.0.1:8793/"
+    },
+    {
+      "name": "finos-workspace",
+      "url": "http://127.0.0.1:1420/"
+    },
+    {
+      "name": "finos-api",
+      "url": "http://127.0.0.1:8000/health"
+    },
+    {
+      "name": "openbb-backend",
+      "url": "http://127.0.0.1:6900/"
+    },
+    {
+      "name": "duckdb-ui",
+      "url": "http://127.0.0.1:4213/"
+    },
+    {
+      "name": "otel-health",
+      "url": "http://127.0.0.1:13133/"
+    }
+  ],
+  "live_hosted_portals_count": 15,
+  "upstream_verification_commands": {
+    "full_local_check": "just check",
+    "strict_docs_build": "just docs-build",
+    "pre_commit_hooks": "prek run --all-files",
+    "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
+    "workflow_audit": "zizmor --offline .github/workflows",
+    "supply_chain_scan": "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 .",
+    "secret_scan": "gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner",
+    "windows_ci_gate": "pwsh -NoProfile -File scripts/check.ps1",
+    "wsl2_ci_gate": "bash scripts/check.sh",
+    "grand_reset_verify": "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1"
+  }
+}
