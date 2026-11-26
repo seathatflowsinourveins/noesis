@@ -91,8 +91,6 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "zensical.toml",
         "docs/index.md",
         "docs/adr/CATALOG.md",
-        "docs/adr/ADR-0001.md",
-        "docs/adr/ADR-0012.md",
         "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
         "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
@@ -318,6 +316,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     skills_lock = json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
     mcp_root = json.loads((repo_root / ".mcp.json").read_text(encoding="utf-8"))
     uv_lock_text = (repo_root / "uv.lock").read_text(encoding="utf-8")
+    phil_doc = json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     risk_path = repo_root / RISK_REL_PATH
     risk_sha = hashlib.sha256(risk_path.read_bytes()).hexdigest()
@@ -344,9 +343,15 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         if "watches" in up_layer:
             entry["watches"] = list(up_layer["watches"])
         entry["rejected_overlaps"] = list(up_layer["rejected_overlaps"])
-        entry["repo_artifacts"] = [
-            rel for rel in LAYER_ARTIFACT_CANDIDATES[key] if rel in repo_files_set
-        ]
+        artifacts = [rel for rel in LAYER_ARTIFACT_CANDIDATES[key] if rel in repo_files_set]
+        if key == "L6":
+            living_adrs = sorted(
+                rel
+                for rel in repo_files_set
+                if rel.startswith("docs/adr/ADR-") and rel.endswith(".md")
+            )
+            artifacts = list(dict.fromkeys([*artifacts, *living_adrs]))
+        entry["repo_artifacts"] = artifacts
         layers[key] = entry
 
     mcp_lanes = {
@@ -380,6 +385,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "skills_count": int(skills_lock["skills_count"]),
         },
         "sota_starred_beyond_manifest": "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+        "source_of_truth_hierarchy": phil_doc["source_of_truth_hierarchy"],
         "spdx_license_firewall": [
             {"repo": e["repo"], "license": e["license"]}
             for e in upstream["rules"]["spdx_license_firewall"]

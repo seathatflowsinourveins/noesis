@@ -95,14 +95,18 @@ if (Test-Path -LiteralPath $ArchPath) {
 }
 Record-Gate -Name "architecture_manifest" -Passed $ArchOk -Detail $ArchDetail
 
-# 4. 12 ADRs + CATALOG.md + docs/index.md + zensical.toml + zensical build --clean
+# 4. Living Evolvable ADRs (ADR-0001+) + CATALOG.md + docs/index.md + zensical.toml + zensical build --clean
 $AdrDir = Join-Path $RepoRoot "docs\adr"
-$AdrFiles = @(1..12 | ForEach-Object {
-    $prefix = ("ADR-{0:D4}*.md" -f $_)
-    @(Get-ChildItem -LiteralPath $AdrDir -Filter $prefix -File -ErrorAction SilentlyContinue)
-})
-$AdrsFound = @($AdrFiles | Where-Object { $null -ne $_ }).Count
-$CatalogOk = Test-Path -LiteralPath (Join-Path $AdrDir "CATALOG.md")
+$AdrFiles = @(Get-ChildItem -LiteralPath $AdrDir -Filter "ADR-*.md" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+$AdrsFound = $AdrFiles.Count
+$CatalogPath = Join-Path $AdrDir "CATALOG.md"
+$CatalogOk = Test-Path -LiteralPath $CatalogPath
+$AllCataloged = $false
+if ($CatalogOk -and $AdrsFound -ge 1) {
+    $CatalogText = Get-Content -LiteralPath $CatalogPath -Raw -Encoding UTF8
+    $MissingAdr = @($AdrFiles | Where-Object { $CatalogText -notmatch [regex]::Escape($_.Name) })
+    $AllCataloged = ($MissingAdr.Count -eq 0) -and ($CatalogText -match "(?i)sole source of truth")
+}
 $IndexOk = Test-Path -LiteralPath (Join-Path $RepoRoot "docs\index.md")
 $ZensicalTomlOk = Test-Path -LiteralPath (Join-Path $RepoRoot "zensical.toml")
 $ZensicalExe = Join-Path $RepoRoot ".venv\Scripts\zensical.exe"
@@ -116,8 +120,8 @@ if ($ZensicalTomlOk -and (Test-Path -LiteralPath $ZensicalExe)) {
         Pop-Location
     }
 }
-Record-Gate -Name "adrs_and_zensical" -Passed ($AdrsFound -eq 12 -and $CatalogOk -and $IndexOk -and $ZensicalTomlOk -and $ZensicalBuildOk) `
-    -Detail "adrs=$AdrsFound/12 catalog=$CatalogOk index=$IndexOk toml=$ZensicalTomlOk build=$ZensicalBuildOk"
+Record-Gate -Name "adrs_and_zensical" -Passed ($AdrsFound -ge 1 -and $AllCataloged -and $CatalogOk -and $IndexOk -and $ZensicalTomlOk -and $ZensicalBuildOk) `
+    -Detail "adrs=$AdrsFound(living) cataloged=$AllCataloged catalog=$CatalogOk index=$IndexOk toml=$ZensicalTomlOk build=$ZensicalBuildOk"
 
 # 5. 5/5 native uv MCP parity + zero bash -c wrappers + nautilus_mcp_server.py --smoke
 $McpOk = $true

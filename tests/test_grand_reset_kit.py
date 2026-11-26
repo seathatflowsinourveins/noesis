@@ -136,17 +136,18 @@ def test_madr_adrs_catalog_and_zensical_toml() -> None:
     assert z_cfg["project"]["docs_dir"] == "docs"
     assert (REPO_ROOT / "docs" / "index.md").is_file()
     catalog = (REPO_ROOT / "docs" / "adr" / "CATALOG.md").read_text(encoding="utf-8")
+    assert "sole source of truth" in catalog.lower()
+    assert "superseded by adr-" in catalog.lower()
 
-    for idx in range(1, 13):
-        adr_name = f"ADR-{idx:04d}.md"
-        adr_path = REPO_ROOT / "docs" / "adr" / adr_name
-        assert adr_path.is_file(), f"Missing {adr_path}"
-        assert adr_name in catalog, f"{adr_name} missing from CATALOG.md"
+    adr_paths = sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
+    assert len(adr_paths) >= 1
+    for adr_path in adr_paths:
+        assert adr_path.name in catalog, f"{adr_path.name} missing from CATALOG.md"
         body = adr_path.read_text(encoding="utf-8")
         for sec in MADR_SECTIONS:
-            assert sec in body, f"{adr_name} missing MADR section {sec}"
-        assert not BANNED_IMPORT_RE.search(body), f"{adr_name} endorses banned import"
-        assert not LIVE_ENABLE_RE.search(body), f"{adr_name} enables live execution"
+            assert sec in body, f"{adr_path.name} missing MADR section {sec}"
+        assert not BANNED_IMPORT_RE.search(body), f"{adr_path.name} endorses banned import"
+        assert not LIVE_ENABLE_RE.search(body), f"{adr_path.name} enables live execution"
 
 
 def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:

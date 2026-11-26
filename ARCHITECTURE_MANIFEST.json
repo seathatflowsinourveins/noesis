@@ -21,6 +21,18 @@
     "skills_count": 46
   },
   "sota_starred_beyond_manifest": "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
+  "source_of_truth_hierarchy": {
+    "sole_source_of_truth": "sota-upstream-convergence-per-core-trading-philosophy",
+    "adrs_living_and_evolvable": true,
+    "adrs_supersession_allowed": true,
+    "adrs_artificial_count_cap": false,
+    "memory_hygiene_policy": "purge-superseded-direct-keep-only-philosophy-aligned-sota-memory",
+    "non_negotiable_mechanical_guardrails": [
+      "src/tier0_sota/risk.py",
+      "live_broker_port_isolation_4001_7496_8798_8796",
+      "live_execution_enabled_false_until_stage5"
+    ]
+  },
   "spdx_license_firewall": [
     {
       "repo": "treeverse/lakeFS",
@@ -304,8 +316,6 @@
         "zensical.toml",
         "docs/index.md",
         "docs/adr/CATALOG.md",
-        "docs/adr/ADR-0001.md",
-        "docs/adr/ADR-0012.md",
         "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
         "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
@@ -314,7 +324,19 @@
         "docker/compose.sota.yml",
         "docker/otel-collector-config.yaml",
         "docker/prometheus.yml",
-        "docker/dagster.yaml"
+        "docker/dagster.yaml",
+        "docs/adr/ADR-0001.md",
+        "docs/adr/ADR-0002.md",
+        "docs/adr/ADR-0003.md",
+        "docs/adr/ADR-0004.md",
+        "docs/adr/ADR-0005.md",
+        "docs/adr/ADR-0006.md",
+        "docs/adr/ADR-0007.md",
+        "docs/adr/ADR-0008.md",
+        "docs/adr/ADR-0009.md",
+        "docs/adr/ADR-0010.md",
+        "docs/adr/ADR-0011.md",
+        "docs/adr/ADR-0012.md"
       ]
     },
     "L7": {

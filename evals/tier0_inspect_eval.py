@@ -112,9 +112,29 @@ def _check_zero_arbitrary_loc_caps_and_living_adrs() -> str:
         if m := _BANNED_TEARSHEETS_RE.search(text):
             return f"FAIL:{path.name}:{m.group(0)}"
 
-    for adr_rel in ("docs/adr/CATALOG.md", "docs/adr/ADR-0001.md"):
-        if not (REPO_ROOT / adr_rel).is_file():
-            return f"FAIL:missing_{adr_rel}"
+    phil_path = REPO_ROOT / "PHILOSOPHY_COMPOUNDING_MANIFEST.json"
+    if not phil_path.is_file():
+        return "FAIL:missing_philosophy_manifest"
+    sot = json.loads(phil_path.read_text(encoding="utf-8")).get("source_of_truth_hierarchy", {})
+    if sot.get("sole_source_of_truth") != "sota-upstream-convergence-per-core-trading-philosophy":
+        return f"FAIL:sole_source_of_truth={sot.get('sole_source_of_truth')}"
+    if not (
+        sot.get("adrs_living_and_evolvable") is True
+        and sot.get("adrs_supersession_allowed") is True
+        and sot.get("adrs_artificial_count_cap") is False
+    ):
+        return "FAIL:adr_living_policy_invalid"
+
+    catalog_path = REPO_ROOT / "docs" / "adr" / "CATALOG.md"
+    if not catalog_path.is_file():
+        return "FAIL:missing_docs/adr/CATALOG.md"
+    catalog_text = catalog_path.read_text(encoding="utf-8")
+    adr_files = sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
+    if not adr_files:
+        return "FAIL:zero_adrs"
+    for adr_file in adr_files:
+        if adr_file.name not in catalog_text:
+            return f"FAIL:uncataloged_{adr_file.name}"
     return "PASS"
 
 
