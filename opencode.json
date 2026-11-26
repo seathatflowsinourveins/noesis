@@ -1,0 +1,131 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-5-5",
+  "instructions": [
+    "AGENTS.md"
+  ],
+  "plugin": [],
+  "mcp": {
+    "codebase-memory": {
+      "type": "local",
+      "command": [
+        "codebase-memory-mcp"
+      ],
+      "enabled": true
+    },
+    "xerj": {
+      "type": "local",
+      "command": [
+        "xerj",
+        "mcp"
+      ],
+      "environment": {
+        "XERJ_URL": "http://127.0.0.1:9200",
+        "XERJ_DISABLE_FEEDBACK": "true"
+      },
+      "enabled": true
+    },
+    "nautilus-engine": {
+      "type": "local",
+      "command": [
+        "bash",
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) PY=.venv/Scripts/python.exe; [ -x \"$PY\" ] || PY=.venv-win/Scripts/python.exe; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; *) PY=.venv/bin/python; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; esac",
+        "_"
+      ],
+      "enabled": true
+    },
+    "edgartools": {
+      "type": "local",
+      "command": [
+        "bash",
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) ED=.venv/Scripts/edgartools-mcp.exe; [ -x \"$ED\" ] || ED=.venv-win/Scripts/edgartools-mcp.exe; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; *) ED=.venv/bin/edgartools-mcp; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; esac",
+        "_"
+      ],
+      "enabled": true
+    }
+  },
+  "permissions": [
+    {
+      "action": "*",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "*",
+      "resource": ".env",
+      "effect": "deny"
+    },
+    {
+      "action": "*",
+      "resource": ".env.*",
+      "effect": "deny"
+    },
+    {
+      "action": "*",
+      "resource": "**/.env",
+      "effect": "deny"
+    },
+    {
+      "action": "*",
+      "resource": "**/.env.*",
+      "effect": "deny"
+    },
+    {
+      "action": "*",
+      "resource": "**/.config/tier0/**",
+      "effect": "deny"
+    },
+    {
+      "action": "*",
+      "resource": "**/Documents/upstream/**",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*wsl --shutdown*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*wsl*--unregister*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*wsl*--terminate*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*api.alpaca.markets*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*:4001*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*:7496*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*:8798*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*:8796*",
+      "effect": "deny"
+    },
+    {
+      "action": "edit",
+      "resource": "src/tier0_sota/risk.py",
+      "effect": "deny"
+    }
+  ]
+}

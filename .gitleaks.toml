@@ -1,0 +1,53 @@
+title = "tier0-sota-clean gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "tier0-hardcoded-home-path"
+description = "Disallow hardcoded local home directory paths under Tier-0 privacy rules."
+regex = '''(?:/[Uu]sers/|/home/|/mnt/[A-Za-z]/[Uu]sers/|[A-Za-z]:[/\\][Uu]sers[/\\])([A-Za-z0-9._-]+)[/\\]'''
+secretGroup = 1
+tags = ["tier0", "privacy", "path-leak"]
+
+[[rules.allowlists]]
+paths = [
+  '''(?:^|/)\.gitleaks\.toml$''',
+]
+
+[[rules]]
+id = "tier0-broker-account-id"
+description = "Disallow broker account IDs or API key prefixes inside repository files."
+regex = '''\b(?:PA|DU)[0-9][0-9A-Z]{6,13}\b|\b(?:U|F|I)[0-9]{7,9}\b|\b(?:AK|PK)[0-9A-Z]{16,28}\b'''
+tags = ["tier0", "privacy", "broker-id"]
+
+[[rules.allowlists]]
+paths = [
+  '''(?:^|/)\.gitleaks\.toml$''',
+]
+
+[allowlist]
+description = "Exclude local virtualenvs, caches, DVC cache, and MLflow/DuckDB artifacts ignored by git."
+paths = [
+  '''(?:^|/)\.venv/''',
+  '''(?:^|/)\.venv-win/''',
+  '''(?:^|/)\.omc/''',
+  '''(?:^|/)\.venv-qlib-py312/''',
+  '''(?:^|/)\.dvc/cache/''',
+  '''(?:^|/)\.dvc/tmp/''',
+  '''(?:^|/)jobs/''',
+  '''(?:^|/)catboost_info/''',
+  '''(?:^|/)artifacts/''',
+  '''(?:^|/)site/''',
+  '''(?:^|/)optuna\.db''',
+  '''(?:^|/)dagster_home/''',
+  '''(?:^|/)mlruns/''',
+  '''(?:^|/)mlartifacts/''',
+  '''(?:^|/)mlflow\.db''',
+  '''(?:^|/)__pycache__/''',
+  '''\.pyc$''',
+  '''(?:^|/)\.pytest_cache/''',
+  '''(?:^|/)\.ruff_cache/''',
+  '''(?:^|/)\.hypothesis/''',
+  '''(?:^|/)\.cache/''',
+]

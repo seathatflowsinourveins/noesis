@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "codebase-memory": {
+      "type": "stdio",
+      "command": "codebase-memory-mcp",
+      "args": []
+    },
+    "xerj": {
+      "type": "stdio",
+      "command": "xerj",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "XERJ_URL": "http://127.0.0.1:9200",
+        "XERJ_DISABLE_FEEDBACK": "true"
+      }
+    },
+    "nautilus-engine": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) PY=.venv/Scripts/python.exe; [ -x \"$PY\" ] || PY=.venv-win/Scripts/python.exe; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; *) PY=.venv/bin/python; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; esac",
+        "_"
+      ]
+    },
+    "edgartools": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) ED=.venv/Scripts/edgartools-mcp.exe; [ -x \"$ED\" ] || ED=.venv-win/Scripts/edgartools-mcp.exe; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; *) ED=.venv/bin/edgartools-mcp; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; esac",
+        "_"
+      ]
+    }
+  }
+}

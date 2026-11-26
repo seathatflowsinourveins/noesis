@@ -1,0 +1,4 @@
+# Orca single-source workspace setup policy
+setupAgentStartupPolicy: wait-for-setup
+scripts:
+  setup: bash scripts/bootstrap_env.sh

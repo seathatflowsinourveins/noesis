@@ -1,0 +1,98 @@
+{
+  "teammateMode": "in-process",
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "0",
+    "XERJ_URL": "http://127.0.0.1:9200",
+    "XERJ_DISABLE_FEEDBACK": "true",
+    "MLFLOW_TRACKING_URI": "http://127.0.0.1:5000"
+  },
+  "mcpServers": {
+    "codebase-memory": {
+      "type": "stdio",
+      "command": "codebase-memory-mcp",
+      "args": []
+    },
+    "xerj": {
+      "type": "stdio",
+      "command": "xerj",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "XERJ_URL": "http://127.0.0.1:9200",
+        "XERJ_DISABLE_FEEDBACK": "true"
+      }
+    },
+    "nautilus-engine": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) PY=.venv/Scripts/python.exe; [ -x \"$PY\" ] || PY=.venv-win/Scripts/python.exe; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; *) PY=.venv/bin/python; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; esac",
+        "_"
+      ]
+    },
+    "edgartools": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) ED=.venv/Scripts/edgartools-mcp.exe; [ -x \"$ED\" ] || ED=.venv-win/Scripts/edgartools-mcp.exe; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; *) ED=.venv/bin/edgartools-mcp; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; esac",
+        "_"
+      ]
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Edit(~/Documents/upstream/**)",
+      "Read(~/Documents/upstream/.git/**)",
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.production)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(~/.config/tier0/**)",
+      "Edit(/src/tier0_sota/risk.py)",
+      "Edit(./src/tier0_sota/risk.py)",
+      "mcp__alpaca-live__*",
+      "mcp__*alpaca*live*__*",
+      "Bash(*api.alpaca.markets*)",
+      "Bash(*:4001*)",
+      "Bash(*:7496*)",
+      "Bash(*:8798*)",
+      "Bash(*:8796*)",
+      "Bash(*wsl --shutdown*)",
+      "Bash(*wsl*--unregister*)",
+      "Bash(*wsl*--terminate*)",
+      "Bash(*git*push*--force*)",
+      "Bash(*git*push* -f*)",
+      "Bash(*--no-verify*)",
+      "PowerShell(*api.alpaca.markets*)",
+      "PowerShell(*:4001*)",
+      "PowerShell(*:7496*)",
+      "PowerShell(*:8798*)",
+      "PowerShell(*:8796*)",
+      "PowerShell(*wsl --shutdown*)",
+      "PowerShell(*wsl*--unregister*)",
+      "PowerShell(*wsl*--terminate*)",
+      "PowerShell(*git*push*--force*)",
+      "PowerShell(*git*push* -f*)",
+      "PowerShell(*--no-verify*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) [ -d .venv/Scripts ] && PATH=\".venv/Scripts:$PATH\"; [ -d \"$HOME/.local/bin\" ] && PATH=\"$HOME/.local/bin:$PATH\";; *) [ -d .venv/bin ] && PATH=\".venv/bin:$PATH\"; [ -d \"$HOME/.local/bin\" ] && PATH=\"$HOME/.local/bin:$PATH\";; esac; if ! OUT=$(ruff check src tests scripts 2>&1 && ast-grep scan 2>&1); then printf \"%s\\n\" \"$OUT\" >&2; exit 2; fi'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

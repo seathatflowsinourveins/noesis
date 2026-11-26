@@ -1,0 +1,61 @@
+//@version=6
+indicator("Tier-0 Market Status, Breadth & Crash-Regime Gauge", shorttitle="T0_MKT_STATUS", overlay=false, max_bars_back=300)
+
+// ============================================================================
+// Tier-0 SOTA — Dedicated Pane-1 Market Status & Cross-Asset Regime Gauge
+// Non-Repainting: gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off
+// Mirrors: src/tier0_sota/engine.py CRASH_DEFENSIVE (-1) / NEUTRAL (0) / RISK_ON (+1)
+// ============================================================================
+
+i_spy  = input.symbol("AMEX:SPY",   "S&P 500 (SPY)")
+i_qqq  = input.symbol("NASDAQ:QQQ", "Nasdaq 100 (QQQ)")
+i_soxx = input.symbol("NASDAQ:SOXX","Semiconductors (SOXX)")
+i_rsp  = input.symbol("AMEX:RSP",   "Equal-Weight Breadth (RSP)")
+i_vix  = input.symbol("CBOE:VIX",   "Volatility Index (VIX)")
+i_tlt  = input.symbol("NASDAQ:TLT", "20Y Treasury Flight-to-Safety (TLT)")
+
+[spy_c, spy_sma50, spy_vwap]   = request.security(ticker.modify(i_spy,  session=session.extended), timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[qqq_c, qqq_sma50, qqq_vwap]   = request.security(ticker.modify(i_qqq,  session=session.extended), timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[sox_c, sox_sma50, sox_vwap]   = request.security(ticker.modify(i_soxx, session=session.extended), timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[rsp_c, rsp_sma20]             = request.security(i_rsp, "D", [close, ta.sma(close, 20)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[spy_d, spy_d20]               = request.security(i_spy, "D", [close, ta.sma(close, 20)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+vix_c                          = request.security(i_vix, "15", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[tlt_c, tlt_sma20]             = request.security(i_tlt, "D", [close, ta.sma(close, 20)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// 0-100 Composite Intraday + Structural Market Health Score
+s_spy  = (spy_c > spy_sma50 ? 12.5 : 0.0) + (spy_c > spy_vwap ? 12.5 : 0.0)
+s_qqq  = (qqq_c > qqq_sma50 ? 10.0 : 0.0) + (qqq_c > qqq_vwap ? 10.0 : 0.0)
+s_sox  = (sox_c > sox_sma50 ? 10.0 : 0.0) + (sox_c > sox_vwap ? 10.0 : 0.0)
+rsp_ratio = not na(rsp_c) and not na(spy_d) and spy_d > 0 ? rsp_c / spy_d : na
+rsp_ma    = ta.sma(rsp_ratio, 20)
+s_breadth = (not na(rsp_c) and not na(rsp_sma20) and rsp_c > rsp_sma20 ? 10.0 : 0.0) + (not na(rsp_ratio) and not na(rsp_ma) and rsp_ratio >= rsp_ma ? 10.0 : 0.0)
+s_vix     = na(vix_c) ? 7.5 : vix_c < 18.0 ? 15.0 : vix_c < 25.0 ? 7.5 : 0.0
+
+health_score = s_spy + s_qqq + s_sox + s_breadth + s_vix
+health_ema   = ta.ema(health_score, 5)
+
+regime_lbl = health_score >= 75 ? "RISK-ON (FULL)" : health_score >= 55 ? "SELECTIVE BULL" : health_score >= 35 ? "NEUTRAL / CAUTION" : health_score >= 20 ? "WEAKENING / DEFENSIVE" : "CRASH DEFENSIVE (SHORT / HEDGE)"
+bar_col    = health_score >= 70 ? color.rgb(16, 185, 129) : health_score >= 45 ? color.rgb(245, 158, 11) : health_score >= 25 ? color.orange : color.red
+
+plot(health_score, "Market Health (0-100)", color=bar_col, style=plot.style_histogram, linewidth=3)
+plot(health_ema,   "Health EMA(5)",         color=color.white, linewidth=2)
+hline(75, "Risk-On Band",  color=color.new(color.green, 60), linestyle=hline.style_dashed)
+hline(50, "Midline",       color=color.new(color.gray, 60),    linestyle=hline.style_dotted)
+hline(25, "Crash Band",    color=color.new(color.red, 50),     linestyle=hline.style_dashed)
+
+var table mkt = table.new(position.top_right, 2, 7, border_width=1, border_color=color.new(color.gray, 55))
+if barstate.islast
+    table.cell(mkt, 0, 0, "Regime Posture", bgcolor=color.new(color.navy, 35), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 0, regime_lbl,       bgcolor=color.new(bar_col, 45),    text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 1, "Health Score",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 1, str.tostring(health_score, "0.0") + " / 100", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 2, "SPY / QQQ",      bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 2, (spy_c > spy_vwap ? "SPY>VWAP " : "SPY<VWAP ") + "| " + (qqq_c > qqq_vwap ? "QQQ>VWAP" : "QQQ<VWAP"), bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 3, "SOXX Semis",     bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 3, sox_c > sox_vwap ? "SOXX > VWAP (SOXL OK)" : "SOXX < VWAP (SOXS HEDGE)", bgcolor=sox_c < sox_vwap ? color.new(color.red, 60) : color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 4, "VIX Regime",     bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 4, na(vix_c) ? "N/A" : str.tostring(vix_c, "0.00") + (vix_c >= 25 ? " [CRASH]" : vix_c >= 18 ? " [ELEVATED]" : " [CALM]"), bgcolor=vix_c >= 25 ? color.new(color.red, 55) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 5, "RSP/SPY Breadth",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 5, (not na(rsp_ratio) and not na(rsp_ma) and rsp_ratio >= rsp_ma) ? "BROADENING" : "NARROW / WEAK", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 6, "TLT Safety Bid", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 6, (not na(tlt_c) and not na(tlt_sma20) and tlt_c > tlt_sma20) ? "RISK-OFF BID" : "NEUTRAL", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)

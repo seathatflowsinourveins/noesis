@@ -1,0 +1,49 @@
+{
+  "mcpServers": {
+    "codebase-memory": {
+      "command": "codebase-memory-mcp",
+      "args": []
+    },
+    "xerj": {
+      "command": "xerj",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "XERJ_URL": "http://127.0.0.1:9200",
+        "XERJ_DISABLE_FEEDBACK": "true"
+      }
+    },
+    "nautilus-engine": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) PY=.venv/Scripts/python.exe; [ -x \"$PY\" ] || PY=.venv-win/Scripts/python.exe; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; *) PY=.venv/bin/python; if [ -x \"$PY\" ]; then exec \"$PY\" scripts/nautilus_mcp_server.py \"$@\"; fi; exec uv run --no-sync python scripts/nautilus_mcp_server.py \"$@\";; esac",
+        "_"
+      ]
+    },
+    "edgartools": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) ED=.venv/Scripts/edgartools-mcp.exe; [ -x \"$ED\" ] || ED=.venv-win/Scripts/edgartools-mcp.exe; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; *) ED=.venv/bin/edgartools-mcp; if [ -x \"$ED\" ]; then exec \"$ED\" \"$@\"; fi; exec uv run --no-sync edgartools-mcp \"$@\";; esac",
+        "_"
+      ]
+    }
+  },
+  "hooks": {
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace|write_to_file|edit_file",
+        "hooks": [
+          {
+            "name": "tier0-after-tool-lint-ast",
+            "type": "command",
+            "command": "bash -c 'case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) [ -d .venv/Scripts ] && PATH=\".venv/Scripts:$PATH\"; [ -d \"$HOME/.local/bin\" ] && PATH=\"$HOME/.local/bin:$PATH\";; *) [ -d .venv/bin ] && PATH=\".venv/bin:$PATH\"; [ -d \"$HOME/.local/bin\" ] && PATH=\"$HOME/.local/bin:$PATH\";; esac; if ! OUT=$(ruff check src tests scripts 2>&1 && ast-grep scan 2>&1); then printf \"%s\\n\" \"$OUT\" >&2; exit 2; else printf \"{}\\n\"; fi'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

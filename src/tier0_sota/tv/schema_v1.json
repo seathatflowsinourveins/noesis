@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tier0-sota.local/schemas/tv_alert_v1.schema.json",
+  "title": "Tier-0 TradingView Semi-Auto Alert Preset (tier0.tv-alert.v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "symbol",
+    "ts_utc_ms",
+    "bar_confirmed",
+    "side",
+    "qty",
+    "session",
+    "order_type",
+    "trigger_price",
+    "stop_price",
+    "limit_collar_bps",
+    "trailing_schedule",
+    "natr_pct",
+    "auto_reverse",
+    "auto_reentry",
+    "reentry_cooldown_secs",
+    "strategy_id"
+  ],
+  "properties": {
+    "alert_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "schema_version": { "const": "tier0.tv-alert.v1" },
+    "symbol": { "type": "string", "minLength": 1, "maxLength": 16 },
+    "ts_utc_ms": { "type": "integer", "minimum": 0 },
+    "bar_confirmed": { "const": true },
+    "side": { "type": "string", "enum": ["BUY", "SELL"] },
+    "qty": { "const": 1 },
+    "venue": { "type": "string", "enum": ["IBKR", "ALPACA"] },
+    "session": {
+      "type": "string",
+      "enum": ["PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT"]
+    },
+    "order_type": { "type": "string", "enum": ["STOP_MARKET", "STOP_LIMIT"] },
+    "trigger_price": { "type": "number", "exclusiveMinimum": 0 },
+    "stop_price": { "type": "number", "exclusiveMinimum": 0 },
+    "stop_distance_pct": { "type": "number", "minimum": 0, "maximum": 0.02 },
+    "limit_collar_bps": { "type": "number", "minimum": 0, "maximum": 100 },
+    "trailing_schedule": {
+      "type": "string",
+      "enum": ["tight_near_lossless", "baseline", "wide_natr_adaptive"]
+    },
+    "natr_pct": { "type": "number", "exclusiveMinimum": 0, "maximum": 1.0 },
+    "auto_reverse": { "type": "boolean" },
+    "auto_reentry": { "type": "boolean" },
+    "reentry_cooldown_secs": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "strategy_id": { "type": "string", "minLength": 1 },
+    "semi_auto_confirmed": { "type": "boolean", "const": false },
+    "staged_at_utc": { "type": "string", "format": "date-time" },
+    "shortable": { "type": "boolean" },
+    "easy_to_borrow": { "type": "boolean" },
+    "setup_archetype": {
+      "type": "string",
+      "enum": [
+        "EARLY_EP_MOMENTUM_BURST",
+        "VCP_BREAKOUT",
+        "VCP_COIL",
+        "PEAD_DRIFT",
+        "PARABOLIC_TOP",
+        "EXTREME_REVERSAL",
+        "EXHAUSTION_HAMMER",
+        "CRASH_ALIGNMENT",
+        "HIDDEN_VOL_ACCUM",
+        "PEAK_REVERSAL"
+      ]
+    },
+    "macro_regime": { "type": "integer", "enum": [-1, 0, 1] },
+    "rvol": { "type": "number", "minimum": 0 },
+    "hidden_volume_ratio": { "type": "number", "minimum": 0 },
+    "peak_confirmed": { "type": "boolean" },
+    "is_leveraged_or_inverse": { "type": "boolean" },
+    "pair_symbol": { "type": "string", "minLength": 1, "maxLength": 16 },
+    "data_source": {
+      "type": "string",
+      "enum": [
+        "tradingview_pine_v6",
+        "prewall_lake",
+        "alpaca_sip",
+        "alpaca_boats",
+        "alpaca_overnight",
+        "alpaca_sip_boats_overnight",
+        "alpaca_screener",
+        "finra_trf_exchange_d",
+        "ibkr_paper_4002",
+        "nautilus_trader"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "session": { "const": "RTH" } } },
+      "then": {
+        "properties": {
+          "order_type": { "enum": ["STOP_MARKET", "STOP_LIMIT"] }
+        }
+      },
+      "else": {
+        "properties": {
+          "order_type": { "const": "STOP_LIMIT" },
+          "limit_collar_bps": { "exclusiveMinimum": 0, "maximum": 100 }
+        }
+      }
+    }
+  ]
+}

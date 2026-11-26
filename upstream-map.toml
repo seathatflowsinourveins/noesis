@@ -1,0 +1,173 @@
+schema = "tier0.upstream-map.v2"
+
+[rules]
+allowed_how = ["install", "integrate", "build-on", "own-logic"]
+own_logic_allowlist = ["src/tier0_sota/risk.py"]
+banned_libraries = [
+  "yfinance",
+  "backtrader",
+  "backtesting",
+  "mlfinlab",
+  "tcapy",
+  "vollib",
+  "abides",
+  "tradingview_ta",
+  "pandas_datareader",
+  "talib",
+]
+banned_packages = [
+  "yfinance",
+  "backtrader",
+  "backtesting",
+  "zipline-reloaded",
+  "vectorbt",
+  "mlfinlab",
+  "tcapy",
+  "py-vollib",
+  "vollib",
+  "tradingview-ta",
+  "pandas-datareader",
+  "pyportfolioopt",
+  "riskfolio-lib",
+  "alphalens-reloaded",
+  "ta-lib",
+  "wandb",
+  "clearml",
+  "neptune",
+  "prefect",
+  "streamlit",
+  "dash",
+  "gradio",
+  "nicegui",
+  "deepeval",
+  "mkdocs",
+  "mkdocs-material",
+  "black",
+  "isort",
+  "flake8",
+  "bandit",
+  "mypy",
+  "pyright",
+]
+loc_enforcement = "advisory"
+advisory_production_loc = 1800
+advisory_risk_loc = 400
+default_advisory_module_loc = 400
+
+# Advisory telemetry LOC targets (never used as brittle build-failing gates or to force code-golfing;
+# Zero Self-Invention is strictly enforced via ast-grep rules, banned-package locks, exact risk.py SHA-256,
+# and live_execution_enabled = False).
+[rules.advisory_module_loc]
+"src/tier0_sota/risk.py" = 400
+"src/tier0_sota/engine.py" = 650
+"src/tier0_sota/discovery.py" = 400
+"src/tier0_sota/research.py" = 350
+"src/tier0_sota/live/scanner.py" = 320
+"src/tier0_sota/live/paper_farm.py" = 380
+"src/tier0_sota/live/performance.py" = 220
+"src/tier0_sota/tv/bridge.py" = 260
+"src/tier0_sota/tv/tickets.py" = 260
+
+[layers.L0]
+name = "Runtime, Lockfile & Provenance"
+winners = ["uv"]
+rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools"]
+
+[layers.L1]
+name = "Data, Schema Validation, Calendars & Causal PIT"
+winners = ["polars", "duckdb", "pandera", "exchange_calendars", "edgartools", "fredapi", "dvc"]
+rejected_overlaps = ["pandas-datareader", "yfinance", "clickhouse-local-server"]
+
+[layers.L2]
+name = "Features, Streaming Drift, Regime Change, Explainability & ML"
+winners = ["ml4t-engineer", "river", "ruptures", "stumpy", "lightgbm", "catboost", "shap"]
+rejected_overlaps = ["ta-lib", "sktime", "fingpt", "finrl", "rd-agent"]
+
+[layers.L3]
+name = "Single-Engine Sim == Paper == Live Execution"
+winners = ["nautilus_trader", "hftbacktest"]
+rejected_overlaps = ["backtrader", "backtesting", "zipline-reloaded", "vectorbt", "freqtrade", "lean", "pybroker"]
+
+[layers.L4]
+name = "Paper Broker Adapters & Market Data Feeds"
+winners = ["alpaca-py"]
+rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "nautilus-alpaca"]
+
+[layers.L5]
+name = "Statistical Falsification & Portfolio Construction"
+winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "quantstats"]
+rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab"]
+
+[layers.L6]
+name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk"]
+rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
+
+[layers.L7]
+name = "Static Quality, AST, Fuzzing & Supply-Chain Security"
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "pre-commit"]
+rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright"]
+
+[layers.L8]
+name = "Agent Evals & Prompt Optimization"
+winners = ["inspect-ai", "dspy"]
+rejected_overlaps = ["deepeval"]
+
+[layers.L9]
+name = "Multi-Model Harness, Code Graph & Upstream MCPs"
+winners = ["orca", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
+rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"]
+
+[files."src/tier0_sota/__init__.py"]
+how = "install"
+upstream = "nautilus_trader"
+feature = "Package entrypoint"
+why = "Expose clean-room package metadata"
+
+[files."src/tier0_sota/risk.py"]
+how = "own-logic"
+upstream = "own-logic"
+feature = "Exact Decimal Rule-612 stop <=2.00%, latched -1.50% breaker, >=10% exit reserve"
+why = "Immutable pure Decimal Rule-612 risk kernel (SHA-pinned from tier0-quant)"
+
+[files."src/tier0_sota/engine.py"]
+how = "integrate"
+upstream = "nautilus_trader"
+secondary_upstreams = ["hftbacktest", "polars", "exchange_calendars"]
+feature = "NautilusTrader v2 24/5 session protection, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse & venue rate pacing"
+why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity directly to NautilusTrader v2"
+
+[files."src/tier0_sota/discovery.py"]
+how = "integrate"
+upstream = "polars"
+secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy"]
+feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), multi-feed regime & market-aligned reversal signal adapter"
+why = "Delegates causal data transforms, calendar ops, drift, changepoint & motif signals to pinned upstreams"
+
+[files."src/tier0_sota/research.py"]
+how = "integrate"
+upstream = "skfolio"
+secondary_upstreams = ["hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"]
+feature = "6-gate statistical falsification adapter (hftbacktest markout, 1x/2x costs, CPCV >= 16, DSR/PBO, Hansen SPA, HAC, MLflow logging)"
+why = "Delegates validation gates and experiment ledger strictly to pinned upstreams"
+
+[files."src/tier0_sota/live/scanner.py"]
+how = "integrate"
+upstream = "alpaca-py"
+secondary_upstreams = ["polars"]
+feature = "Whole-market extreme-mover live scanner (Alpaca SIP + FINRA TRF) & post-selection ETB borrow lookup"
+why = "Uses official alpaca-py data/trading clients with zero banned libraries"
+
+[files."src/tier0_sota/live/paper_farm.py"]
+how = "integrate"
+upstream = "nautilus_trader"
+secondary_upstreams = ["alpaca-py", "duckdb"]
+feature = "3-lane non-overlapping Alpaca Paper + IBKR :4002 adapter with isolated per-account DuckDB & fail-closed paper-only boundary"
+why = "Delegates Paper Farm execution and isolated per-account telemetry to pinned upstreams"
+
+[files."src/tier0_sota/live/performance.py"]
+how = "integrate"
+upstream = "polars"
+secondary_upstreams = ["duckdb"]
+feature = "Paper Farm live performance manifest aggregator & FINOS/OpenBB JSON export"
+why = "Aggregates Paper Farm metrics and emits declarative JSON specs without custom UI servers"
