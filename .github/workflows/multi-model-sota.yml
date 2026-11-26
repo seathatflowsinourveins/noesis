@@ -123,9 +123,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run Gemini CLI Action
+      - name: Set up Node.js for Gemini CLI
         if: steps.auth-check.outputs.has_key == 'true'
-        uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          prompt: ${{ inputs.task }}
+          node-version: "22"
+
+      - name: Run Official @google/gemini-cli
+        if: steps.auth-check.outputs.has_key == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_PROMPT: ${{ inputs.task }}
+        run: npx --yes @google/gemini-cli -p "$GEMINI_PROMPT"
