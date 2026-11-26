@@ -1,4 +1,4 @@
-title = "tier0-sota-clean gitleaks config"
+title = "noesis gitleaks config"
 
 [extend]
 useDefault = true

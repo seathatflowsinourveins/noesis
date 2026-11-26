@@ -1,4 +1,4 @@
-# Tier-0 SOTA Architecture Layer Manifest (`Z:\tier0-sota-clean`)
+# Tier-0 SOTA Architecture Layer Manifest (`Z:\noesis`)
 
 Standalone clean-room Python 3.13 (`uv` + `mise` + `just`) architecture governed by `AGENTS.md`, `upstream-map.toml`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, and programmatically synchronized `ARCHITECTURE_MANIFEST.json` (`scripts/sync_manifest.py`).
 
@@ -34,7 +34,7 @@ flowchart TD
 
 ## 2. Active Technology Layers (`L0`–`L10`)
 
-| Layer | Domain | Pinned Upstream Winners | Rejected Overlaps | `tier0-sota-clean` Modules & Configs |
+| Layer | Domain | Pinned Upstream Winners | Rejected Overlaps | `noesis` Modules & Configs |
 |---|---|---|---|---|
 | **L0** | Runtime, Lockfile & Provenance | `uv`, `mise`, `just` | `poetry`, `pipenv`, `conda`, `pip-tools` | `pyproject.toml`, `uv.lock`, `.python-version`, `mise.toml`, `justfile`, `scripts/bootstrap_env.*`, `scripts/grand_reset/00_*`, `01_*` |
 | **L1** | Data, Schema Validation, Calendars & Causal PIT | `polars`, `duckdb`, `pandera`, `pydantic`, `exchange_calendars`, `edgartools`, `fredapi`, `treeverse/dvc` | `pandas-datareader`, `yfinance`, `clickhouse-local-server` | `src/tier0_sota/discovery.py`, `src/tier0_sota/live/paper_farm.py`, `src/tier0_sota/live/performance.py`, `src/tier0_sota/tv/bridge.py` |
@@ -84,7 +84,7 @@ flowchart TD
 
 | Root Path (`ENV` Override) | Role | Mutability & Data Policy |
 |---|---|---|
-| `Z:\tier0-sota-clean` (`TIER0_REPO_ROOT`) | Standalone active SOTA repository (`main`, Python 3.13 `uv`, `46` local skills, Docker stack) | Self-contained codebase, zero external repo coupling |
+| `Z:\noesis` (`TIER0_REPO_ROOT`) | Standalone active SOTA repository (`main`, Python 3.13 `uv`, `46` local skills, Docker stack) | Self-contained codebase, zero external repo coupling |
 | `Z:\sota-data\manifests` (`TIER0_DATA_ROOT\manifests`) | Active Paper Farm & TV status/manifest/DuckDB state plane | Shared operational state plane (never delete) |
 | `Z:\sota-data\prewall-lake` (`TIER0_DATA_ROOT\prewall-lake`) | Immutable pre-wall (`<= 2026-10-15`) market data lake | Read-only PIT dataset (never delete) |
 | `Z:\workspaces` (`ORCA_WORKSPACES_DIR`) | Active clean Orca worktree workspace root | Clean active workspace root |

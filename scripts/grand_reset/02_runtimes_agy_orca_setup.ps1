@@ -3,7 +3,7 @@
 .SYNOPSIS
     Idempotent standalone zero-hook setup & sync for Antigravity (AGY), Claude Code, Codex, OpenCode, and Orca.
 .DESCRIPTION
-    Syncs strictly from standalone Z:\tier0-sota-clean ($RepoRoot):
+    Syncs strictly from standalone Z:\noesis ($RepoRoot):
       - Zero self-invented hooks (no .codex/hooks.json, no "hooks" in Claude/Gemini/Codex configs)
       - 4-runtime native uv MCP parity (codebase-memory, xerj, nautilus-engine, edgartools)
       - Fresh AGY (~/.gemini/settings.json, ~/.gemini/config/mcp_config.json, ~/.gemini/config/skills)

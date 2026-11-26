@@ -11,14 +11,14 @@ if [[ -x ".venv/bin/python" ]]; then
 elif [[ -n "${UV_PROJECT_ENVIRONMENT:-}" && -x "$UV_PROJECT_ENVIRONMENT/bin/python" ]]; then
   PY="$UV_PROJECT_ENVIRONMENT/bin/python"
   BIN_DIR="$UV_PROJECT_ENVIRONMENT/bin"
-elif [[ -x "$HOME/tier0-sota-clean/.venv/bin/python" ]]; then
-  PY="$HOME/tier0-sota-clean/.venv/bin/python"
-  BIN_DIR="$HOME/tier0-sota-clean/.venv/bin"
+elif [[ -x "$HOME/noesis/.venv/bin/python" ]]; then
+  PY="$HOME/noesis/.venv/bin/python"
+  BIN_DIR="$HOME/noesis/.venv/bin"
 elif [[ -x ".venv/Scripts/python.exe" ]]; then
   PY=".venv/Scripts/python.exe"
   BIN_DIR="$REPO_ROOT/.venv/Scripts"
 else
-  echo "Expected .venv interpreter missing under $REPO_ROOT/.venv or $HOME/tier0-sota-clean/.venv" >&2
+  echo "Expected .venv interpreter missing under $REPO_ROOT/.venv or $HOME/noesis/.venv" >&2
   exit 1
 fi
 export PATH="$BIN_DIR:$HOME/.local/bin:$PATH"

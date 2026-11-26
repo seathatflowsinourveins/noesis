@@ -1,4 +1,4 @@
-# `tier0-sota-clean` — Clean-Room Tier-0 SOTA Quantitative Stack (`seathatflowsinourveins/noesis`)
+# `noesis` — Clean-Room Tier-0 SOTA Quantitative Stack (`seathatflowsinourveins/noesis`)
 
 Clean-room Python 3.13 (`uv`) repository operating strictly under **SOTA Upstream Convergence directed by Core Trading Philosophy** ([`AGENTS.md`](AGENTS.md), [`PHILOSOPHY_COMPOUNDING_MANIFEST.json`](PHILOSOPHY_COMPOUNDING_MANIFEST.json), [`upstream-map.toml`](upstream-map.toml)). Zero Self-Invention is enforced mechanically via upstream gates (`ast-grep`, single-winner OSI `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `trivy`, `zizmor`, `Z3` SMT proofs, immutable `risk.py` SHA-256, and `live_execution_enabled = False`) with zero arbitrary LOC caps.
 

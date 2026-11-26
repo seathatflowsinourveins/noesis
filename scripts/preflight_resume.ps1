@@ -3,13 +3,13 @@
 .SYNOPSIS
     Idempotent Tier-0 SOTA Ecosystem Preflight & Post-Restart Seamless Resume Kit (Windows).
 .DESCRIPTION
-    Verifies and optionally reconciles the standalone Z:\tier0-sota-clean workstation after any
+    Verifies and optionally reconciles the standalone Z:\noesis workstation after any
     Windows, WSL2, or Antigravity (AGY) restart:
       - Fail-closed zero live broker ports (:4001/:7496/:8798/:8796)
       - Default WSL2 distribution == Noesis-SOTA
       - Optional -Reconcile: starts inactive WSL2 systemd services (tier0-duckdb-ui,
         tier0-openbb-backend, tier0-ollama-docker-bridge, tier0-openbb-docker-bridge) and runs
-        docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d
+        docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d
       - Optional -CleanLegacyLocked: invokes Z:\workspaces\finish_post_restart_cleanup.ps1 cleanly
       - Probes all 15/15 local portals (including real otelcol_* lines on :9464/metrics and
         Server: Caddy header on :8793)
@@ -164,7 +164,7 @@ function Invoke-PortalProbes {
                 $note = "server=$serverHdr"
             } elseif ($httpOk -and $spec.Name -eq "zensical") {
                 $body = [string]$resp.Content
-                $canonical = ($body -match 'tier0-sota-clean')
+                $canonical = ($body -match 'noesis')
                 $ok = $canonical
                 $note = "canonical_title=$canonical"
             } elseif ($httpOk -and $spec.Name -eq "finos-api") {
@@ -276,7 +276,7 @@ if ($Reconcile) {
         })
 
         Write-InfoLine -Tag "RECONCILE" -Message "Running Docker Compose up -d in $ExpectedWslDistro..."
-        $composeReconcileCmd = 'TIER0_REPO_ROOT=/mnt/z/tier0-sota-clean TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT="$HOME/tier0-sota-state" docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d'
+        $composeReconcileCmd = 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT="$HOME/tier0-sota-state" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d'
         $compRecOut = (& wsl.exe -d $ExpectedWslDistro -- bash -lc $composeReconcileCmd 2>&1) -join "; "
         $compRecOk = ($LASTEXITCODE -eq 0)
         $ReconcileActions.Add([ordered]@{
@@ -319,7 +319,7 @@ $DockerRunning = 0
 $DockerTotal = 0
 $DockerDetail = "wsl_unavailable"
 if ($WslCheckOk) {
-    $dockerPsCmd = 'docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml ps --format "{{.Name}}|{{.State}}"'
+    $dockerPsCmd = 'docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml ps --format "{{.Name}}|{{.State}}"'
     $dockerLines = @(& wsl.exe -d $ExpectedWslDistro -- bash -lc $dockerPsCmd 2>&1)
     if ($LASTEXITCODE -eq 0) {
         foreach ($dl in $dockerLines) {
@@ -370,7 +370,7 @@ Record-Gate -Name "local_portals_15" `
 
 # 7. Disk Z environment variables (persisted User/Machine env + directories on disk)
 $ExpectedEnv = [ordered]@{
-    TIER0_REPO_ROOT     = "Z:\tier0-sota-clean"
+    TIER0_REPO_ROOT     = "Z:\noesis"
     TIER0_DATA_ROOT     = "Z:\sota-data"
     ORCA_WORKSPACES_DIR = "Z:\workspaces"
 }
@@ -423,7 +423,7 @@ if (Test-Path -LiteralPath $AgyMcpPath) {
         }
         $nautCmd = [string]$mcpObj.mcpServers.'nautilus-engine'.command
         $edgarCmd = [string]$mcpObj.mcpServers.edgartools.command
-        $diskZClean = (($nautCmd -match 'tier0-sota-clean') -and ($edgarCmd -match 'tier0-sota-clean'))
+        $diskZClean = (($nautCmd -match 'noesis') -and ($edgarCmd -match 'noesis'))
         $AgyMcpOk = ($namesMatch -and $noBashWrapper -and $missingBins.Count -eq 0 -and $diskZClean)
         $AgyMcpDetail = "servers=$($AgyMcpServers -join ',') native_no_bash=$noBashWrapper disk_z_clean=$diskZClean missing_bins=$($missingBins.Count)"
     } catch {

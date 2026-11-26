@@ -4,7 +4,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set windows-shell := ["pwsh", "-NoProfile", "-Command"]
 
-wsl_venv := env("HOME", "") / "tier0-sota-clean/.venv"
+wsl_venv := env("HOME", "") / "noesis/.venv"
 uv_prefix := if os_family() == "windows" {
     ""
 } else if path_exists(".venv/bin/python") == "true" {

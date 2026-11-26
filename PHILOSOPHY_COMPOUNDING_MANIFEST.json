@@ -1,6 +1,6 @@
 {
   "schema_version": "tier0.philosophy-compounding-manifest.v1",
-  "repo_name": "tier0-sota-clean",
+  "repo_name": "noesis",
   "future_flagship_name": "noesis",
   "source_of_truth_hierarchy": {
     "sole_source_of_truth": "sota-upstream-convergence-per-core-trading-philosophy",

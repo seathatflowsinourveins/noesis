@@ -1,4 +1,4 @@
-# Project-level OpenAI Codex CLI configuration (tier0-sota-clean)
+# Project-level OpenAI Codex CLI configuration (noesis)
 model = "gpt-6.2-astra"
 model_reasoning_effort = "xhigh"
 

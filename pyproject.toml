@@ -1,5 +1,5 @@
 [project]
-name = "tier0-sota-clean"
+name = "noesis"
 version = "0.1.0"
 description = "Clean-room Tier-0 SOTA-converged quantitative trading & research stack."
 requires-python = ">=3.13,<3.14"

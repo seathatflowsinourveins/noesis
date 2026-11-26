@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    One-command local SOTA CI verification gate for Z:\tier0-sota-clean.
+    One-command local SOTA CI verification gate for Z:\noesis.
 .DESCRIPTION
     Runs:
       1. risk.py immutable SHA-256 check

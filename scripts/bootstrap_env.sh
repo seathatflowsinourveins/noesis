@@ -27,7 +27,7 @@ if [[ "$IS_WIN_BASH" -eq 1 || "$PWD" == /mnt/* ]]; then
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
-  echo "uv is required on PATH to bootstrap tier0-sota-clean." >&2
+  echo "uv is required on PATH to bootstrap noesis." >&2
   exit 1
 fi
 

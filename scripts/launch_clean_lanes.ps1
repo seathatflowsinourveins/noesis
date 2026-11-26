@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Launch clean non-overlapping Tier-0 SOTA lanes targeting Z:\tier0-sota-clean.
+    Launch clean non-overlapping Tier-0 SOTA lanes targeting Z:\noesis.
 .DESCRIPTION
     Supports -DryRun and modular lane selection:
       - sim    : Pre-Wall Sim Lab (<= 2026-10-15 PIT + MLflow :5000 + 6-gate offline check)

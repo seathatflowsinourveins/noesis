@@ -1,6 +1,6 @@
 {
   "schema_version": "tier0.sota-starred-beyond-manifest.v1",
-  "repo_name": "tier0-sota-clean",
+  "repo_name": "noesis",
   "zero_self_invented_hooks": true,
   "standalone_repo": true,
   "static_security_gate_home": [".pre-commit-config.yaml", "rules/zero_self_invention.yml", "pytest", "deptry"],

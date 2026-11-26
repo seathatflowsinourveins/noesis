@@ -255,7 +255,7 @@ probe_all_portals() {
           CADDY_NOTE="$pnote"
           ;;
         zensical)
-          if ! grep -q 'tier0-sota-clean' "$body_tmp"; then
+          if ! grep -q 'noesis' "$body_tmp"; then
             pok="false"
             pnote="canonical_title=false"
           else
@@ -310,7 +310,7 @@ fi
 # 7. Disk Z environment variables (WSL2 mount paths)
 ENV_OK=true
 ENV_NOTES=()
-if [[ "${TIER0_REPO_ROOT:-}" != "/mnt/z/tier0-sota-clean" || ! -d "/mnt/z/tier0-sota-clean" ]]; then
+if [[ "${TIER0_REPO_ROOT:-}" != "/mnt/z/noesis" || ! -d "/mnt/z/noesis" ]]; then
   ENV_OK=false
   ENV_NOTES+=("TIER0_REPO_ROOT=${TIER0_REPO_ROOT:-unset}")
 fi
@@ -323,7 +323,7 @@ if [[ "${ORCA_WORKSPACES_DIR:-}" != "/mnt/z/workspaces" || ! -d "/mnt/z/workspac
   ENV_NOTES+=("ORCA_WORKSPACES_DIR=${ORCA_WORKSPACES_DIR:-unset}")
 fi
 if [[ "$ENV_OK" == "true" ]]; then
-  record_gate "disk_z_env" "true" "TIER0_REPO_ROOT=/mnt/z/tier0-sota-clean TIER0_DATA_ROOT=/mnt/z/sota-data ORCA_WORKSPACES_DIR=/mnt/z/workspaces"
+  record_gate "disk_z_env" "true" "TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data ORCA_WORKSPACES_DIR=/mnt/z/workspaces"
 else
   record_gate "disk_z_env" "false" "mismatches=${ENV_NOTES[*]}"
 fi
@@ -347,7 +347,7 @@ if [[ "$MNT_C_MOUNTED" == "true" && -n "$AGY_MCP_PATH" && -f "$AGY_MCP_PATH" ]];
   AGY_SERVERS="$(jq -r '.mcpServers | keys | sort | join(",")' "$AGY_MCP_PATH" 2>/dev/null || echo "")"
   if [[ "$AGY_SERVERS" == "codebase-memory,edgartools,nautilus-engine,xerj" ]] \
       && ! grep -q '"bash"' "$AGY_MCP_PATH" \
-      && grep -q 'tier0-sota-clean' "$AGY_MCP_PATH"; then
+      && grep -q 'noesis' "$AGY_MCP_PATH"; then
     AGY_MCP_OK=true
   fi
   AGY_MCP_DETAIL="scope=windows_agy servers=${AGY_SERVERS}"
@@ -448,8 +448,8 @@ record_gate "git_status_and_origin" "$GIT_OK" "branch=${GIT_BRANCH} head=${GIT_H
 
 # 12. Paper Farm preflight readiness
 PY_BIN=""
-if [[ -x "${HOME}/tier0-sota-clean/.venv/bin/python" ]]; then
-  PY_BIN="${HOME}/tier0-sota-clean/.venv/bin/python"
+if [[ -x "${HOME}/noesis/.venv/bin/python" ]]; then
+  PY_BIN="${HOME}/noesis/.venv/bin/python"
 elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
   PY_BIN="${REPO_ROOT}/.venv/bin/python"
 fi

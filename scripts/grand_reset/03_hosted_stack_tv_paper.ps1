@@ -91,7 +91,7 @@ if ($StartDocker) {
             throw "docker compose up -d failed with exit code $LASTEXITCODE"
         }
     } else {
-        $wslComposeCmd = 'TIER0_REPO_ROOT=/mnt/z/tier0-sota-clean TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT="$HOME/tier0-sota-state" docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d --remove-orphans'
+        $wslComposeCmd = 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT="$HOME/tier0-sota-state" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d --remove-orphans'
         & wsl.exe -d Noesis-SOTA -- bash -lc $wslComposeCmd
         if ($LASTEXITCODE -ne 0) {
             throw "WSL2 Noesis-SOTA docker compose up -d failed with exit code $LASTEXITCODE"

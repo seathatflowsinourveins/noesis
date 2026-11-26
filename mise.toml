@@ -2,7 +2,7 @@
 # Managed via official mise registry backends (core/aqua) with minor-version pins
 # compatible across Windows 11, WSL2 Noesis-SOTA, and Ubuntu GitHub Actions runners.
 # Python virtual environments remain managed natively by `uv` (.venv on Windows,
-# $HOME/tier0-sota-clean/.venv on WSL2) to preserve cross-OS parity.
+# $HOME/noesis/.venv on WSL2) to preserve cross-OS parity.
 
 [tools]
 python = "3.13"

@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Master 12-gate end-to-end verifier for the standalone Z:\tier0-sota-clean Zero-Hook Grand-Reset blueprint.
+    Master 12-gate end-to-end verifier for the standalone Z:\noesis Zero-Hook Grand-Reset blueprint.
 .DESCRIPTION
     Checks all 12 master gates:
       1. Zero live broker ports (:4001/:7496/:8798/:8796)
@@ -195,7 +195,7 @@ foreach ($u in $PortalUrls) {
             if ($u -eq "http://127.0.0.1:8010/") {
                 $body = [string]$resp.Content
                 $ZensicalCanonicalOk = (
-                    ($body -match "tier0-sota-clean") -and
+                    ($body -match "noesis") -and
                     ($body -notmatch "UNIFIED_ECOSYSTEM_INVENTORY") -and
                     ($body -notmatch "643\+48 Starred Atlas")
                 )

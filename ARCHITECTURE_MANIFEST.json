@@ -1,6 +1,6 @@
 {
   "schema_version": "tier0.architecture-layer-manifest.v1",
-  "repo_name": "tier0-sota-clean",
+  "repo_name": "noesis",
   "branch": "main",
   "python_version": "3.13",
   "standalone_repo": true,
@@ -686,7 +686,7 @@
     "zensical.toml"
   ],
   "workstation_topology": {
-    "active_repo": "Z:\\tier0-sota-clean",
+    "active_repo": "Z:\\noesis",
     "shared_manifests_root": "Z:\\sota-data\\manifests",
     "prewall_lake_root": "Z:\\sota-data\\prewall-lake",
     "workspaces_root": "Z:\\workspaces"

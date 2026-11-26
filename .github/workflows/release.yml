@@ -9,7 +9,7 @@ on:
       - "v*"
 
 concurrency:
-  group: tier0-sota-clean-release-${{ github.ref }}
+  group: noesis-release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions: {}
@@ -60,7 +60,7 @@ jobs:
         with:
           path: "."
           format: "cyclonedx-json"
-          output-file: "dist/tier0-sota-clean.sbom.cdx.json"
+          output-file: "dist/noesis.sbom.cdx.json"
           syft-version: "v1.55.0"
           upload-artifact: false
           upload-release-assets: false
@@ -68,7 +68,7 @@ jobs:
       - name: Generate SHA-256 checksums
         run: |
           cd dist
-          sha256sum -- ./*.whl ./*.tar.gz tier0-sota-clean.sbom.cdx.json > SHA256SUMS.txt
+          sha256sum -- ./*.whl ./*.tar.gz noesis.sbom.cdx.json > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
       - name: Upload release bundle artifact
@@ -110,5 +110,5 @@ jobs:
             --verify-tag \
             dist/*.whl \
             dist/*.tar.gz \
-            dist/tier0-sota-clean.sbom.cdx.json \
+            dist/noesis.sbom.cdx.json \
             dist/SHA256SUMS.txt

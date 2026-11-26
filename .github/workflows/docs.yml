@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tier0-sota-clean-docs-${{ github.ref }}-${{ github.event_name }}
+  group: noesis-docs-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:

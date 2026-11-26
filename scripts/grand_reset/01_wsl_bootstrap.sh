@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${1:-${TIER0_REPO_ROOT:-/mnt/z/tier0-sota-clean}}"
+REPO_ROOT="${1:-${TIER0_REPO_ROOT:-/mnt/z/noesis}}"
 DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"
 WSL_DISTRO="${TIER0_WSL_DISTRO:-Noesis-SOTA}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -80,7 +80,7 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-WSL_VENV="${UV_PROJECT_ENVIRONMENT:-$HOME/tier0-sota-clean/.venv}"
+WSL_VENV="${UV_PROJECT_ENVIRONMENT:-$HOME/noesis/.venv}"
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "[DRY-RUN] Would sync uv Python 3.13 venv at $WSL_VENV from $REPO_ROOT"
   exit 0
@@ -119,14 +119,14 @@ wsl_venv, repo_root, data_root, state_root = sys.argv[1], sys.argv[2], sys.argv[
 venv_bin = f"{wsl_venv.rstrip('/')}/bin"
 home = Path.home()
 
-start_marker = "# >>> tier0-sota-clean env >>>"
-end_marker = "# <<< tier0-sota-clean env <<<"
+start_marker = "# >>> noesis env >>>"
+end_marker = "# <<< noesis env <<<"
 block = (
     f"{start_marker}\n"
     f'export TIER0_REPO_ROOT="{repo_root}"\n'
     f'export TIER0_DATA_ROOT="{data_root}"\n'
     f'export TIER0_STATE_ROOT="{state_root}"\n'
-    f'export PATH="$HOME/tier0-sota-clean/.venv/bin:$PATH"\n'
+    f'export PATH="$HOME/noesis/.venv/bin:$PATH"\n'
     f"{end_marker}\n"
 )
 

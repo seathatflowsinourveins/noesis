@@ -1,4 +1,4 @@
-# Architecture Decision Record Catalog (`tier0-sota-clean`)
+# Architecture Decision Record Catalog (`noesis`)
 
 Living, evolvable MADR 4.0 Architecture Decision Record catalog (currently `ADR-0001`..`ADR-0021`, with `ADR-0011` superseded by `ADR-0017`; open-ended `ADR-0022+` as the upstream landscape evolves), hosted on `Zensical` (`http://127.0.0.1:8010`) and indexed into `XERJ` (`http://127.0.0.1:9200`).
 

@@ -1,8 +1,8 @@
 # Post-Restart Seamless Resume Playbook
 
-Single-command recovery and fresh-session grounding guide for the standalone `Z:\tier0-sota-clean` workstation after **any Windows, WSL2, or Antigravity (AGY) restart**.
+Single-command recovery and fresh-session grounding guide for the standalone `Z:\noesis` workstation after **any Windows, WSL2, or Antigravity (AGY) restart**.
 
-- **Canonical Repository:** `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`, origin `seathatflowsinourveins/noesis`, branch `main`)
+- **Canonical Repository:** `Z:\noesis` (`$env:TIER0_REPO_ROOT`, origin `seathatflowsinourveins/noesis`, branch `main`)
 - **Shared Data & Manifests:** `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT`)
 - **Orca Workspaces Root:** `Z:\workspaces` (`$env:ORCA_WORKSPACES_DIR`)
 - **Default WSL2 Distro:** `Noesis-SOTA` (WSL2, systemd enabled)
@@ -16,14 +16,14 @@ On Windows startup / logon:
 - **OmniRoute native autostart** (`OmniRoute.vbs` in Startup, registered via `omniroute autostart enable --no-tray`) launches the local `:20128` router silently (`--no-open --no-tray`) backed by your connected OAuth accounts.
 - **Scheduled Task `\Noesis Orca Mesh Keep-Up`** (logon & every 5m, zero-window `pythonw.exe` running `ensure-noesis-orca-6770.pyw`) warms `Noesis-SOTA`, brings up all 4 systemd units + Docker Compose (`11/11` + FINOS `5/5`), ensures OmniRoute (`:20128`), Orca Desktop, `:6770`, and `:8792`, refreshes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` on fresh boot via `preflight_resume.ps1 -Reconcile`, and runs rate-limit-only Orca account failover (`scripts/orca_account_failover.py --apply`).
 
-### Step 1: Open `Z:\tier0-sota-clean` in Antigravity (AGY) or Orca
+### Step 1: Open `Z:\noesis` in Antigravity (AGY) or Orca
 
-1. Launch **Antigravity (AGY)** or **Orca** and open `Z:\tier0-sota-clean` as the active workspace (never open superseded paths).
-2. Confirm a fresh terminal inherits the persisted Disk-Z environment (`TIER0_REPO_ROOT=Z:\tier0-sota-clean`, `TIER0_DATA_ROOT=Z:\sota-data`, `ORCA_WORKSPACES_DIR=Z:\workspaces`) and AGY loads native stdio MCPs from `~/.gemini/config/mcp_config.json` (`$env:USERPROFILE\.gemini\config\mcp_config.json`: `codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
+1. Launch **Antigravity (AGY)** or **Orca** and open `Z:\noesis` as the active workspace (never open superseded paths).
+2. Confirm a fresh terminal inherits the persisted Disk-Z environment (`TIER0_REPO_ROOT=Z:\noesis`, `TIER0_DATA_ROOT=Z:\sota-data`, `ORCA_WORKSPACES_DIR=Z:\workspaces`) and AGY loads native stdio MCPs from `~/.gemini/config/mcp_config.json` (`$env:USERPROFILE\.gemini\config\mcp_config.json`: `codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
 
 ### Step 2: Run `just resume` (Reconcile & Full 15/15 Portal + OmniRoute + Orca Preflight)
 
-From `Z:\tier0-sota-clean` (works identically in Windows `pwsh` and WSL2 `Noesis-SOTA` `bash`):
+From `Z:\noesis` (works identically in Windows `pwsh` and WSL2 `Noesis-SOTA` `bash`):
 
 ```powershell
 just resume
@@ -32,7 +32,7 @@ just resume
 What `just resume` executes (`scripts/preflight_resume.ps1 -Reconcile` on Windows, `scripts/preflight_resume.sh --reconcile` in WSL2):
 
 1. Verifies `0` forbidden live broker ports (`:4001`, `:7496`, `:8798`, `:8796`) and default WSL2 distro == `Noesis-SOTA`.
-2. Ensures all 4 WSL2 systemd units are active (`tier0-duckdb-ui`, `tier0-openbb-backend`, `tier0-ollama-docker-bridge`, `tier0-openbb-docker-bridge`), brings up `docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d`, and reconciles OmniRoute (`http://127.0.0.1:20128/api/health`).
+2. Ensures all 4 WSL2 systemd units are active (`tier0-duckdb-ui`, `tier0-openbb-backend`, `tier0-ollama-docker-bridge`, `tier0-openbb-docker-bridge`), brings up `docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d`, and reconciles OmniRoute (`http://127.0.0.1:20128/api/health`).
 3. Probes all `15/15` local portals on `127.0.0.1`, including real `otelcol_*` metrics on `:9464/metrics` and `Server: Caddy` on `:8793`.
 4. Verifies Disk-Z environment variables, AGY native MCP config, `8/8` Windows + WSL2 byte-identical Global Charter SHA-256 (`057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c`), `risk.py` SHA-256, git status & origin (`seathatflowsinourveins/noesis`), Paper Farm preflight readiness, OmniRoute OAuth readiness, and unrestricted native Claude Code / Orca multi-account readiness (`0` global API-key overrides).
 5. Atomically writes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` (`schema_version: "tier0.workstation-preflight-resume.v1"`, `verdict: "PASS"`).
@@ -106,7 +106,7 @@ Every newly opened session (Antigravity, Claude Code, Codex, Gemini CLI, OpenCod
 | # | Portal | Loopback URL | Verification Check |
 |---|---|---|---|
 | 1 | XERJ Memory/RAG | `http://127.0.0.1:9200/` | HTTP 200 |
-| 2 | Zensical Docs | `http://127.0.0.1:8010/` | HTTP 200 + canonical `tier0-sota-clean` |
+| 2 | Zensical Docs | `http://127.0.0.1:8010/` | HTTP 200 + canonical `noesis` |
 | 3 | MLflow 3 | `http://127.0.0.1:5000/` | HTTP 200 |
 | 4 | Dagster Webserver | `http://127.0.0.1:3000/` | HTTP 200 |
 | 5 | Optuna Dashboard | `http://127.0.0.1:8080/` | HTTP 200 |

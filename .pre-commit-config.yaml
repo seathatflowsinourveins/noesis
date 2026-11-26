@@ -50,7 +50,7 @@ repos:
         files: ^(src|scripts)/.*\.(html?|[cm]?[jt]sx?)$
       - id: ty
         name: ty type check
-        entry: bash -c 'if [ -x .venv/Scripts/ty.exe ]; then exec .venv/Scripts/ty.exe check --python .venv/Scripts/python.exe src tests scripts evals; elif [ -x "$HOME/tier0-sota-clean/.venv/bin/ty" ]; then exec "$HOME/tier0-sota-clean/.venv/bin/ty" check --python "$HOME/tier0-sota-clean/.venv/bin/python" src tests scripts evals; elif [ -x .venv/bin/ty ]; then exec .venv/bin/ty check --python .venv/bin/python src tests scripts evals; else exec uv run --no-sync ty check src tests scripts evals; fi'
+        entry: bash -c 'if [ -x .venv/Scripts/ty.exe ]; then exec .venv/Scripts/ty.exe check --python .venv/Scripts/python.exe src tests scripts evals; elif [ -x "$HOME/noesis/.venv/bin/ty" ]; then exec "$HOME/noesis/.venv/bin/ty" check --python "$HOME/noesis/.venv/bin/python" src tests scripts evals; elif [ -x .venv/bin/ty ]; then exec .venv/bin/ty check --python .venv/bin/python src tests scripts evals; else exec uv run --no-sync ty check src tests scripts evals; fi'
         language: system
         pass_filenames: false
         always_run: true

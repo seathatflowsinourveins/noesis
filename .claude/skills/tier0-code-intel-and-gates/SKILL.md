@@ -5,7 +5,7 @@ description: Run zero-overlap code intelligence (codebase-memory-mcp), structura
 
 # Tier-0 Code Intelligence & Disjoint Verification Directive
 
-1. **Search-SOTA-First (Code Intelligence & Memory):** Query `codebase-memory-mcp` (`Z-tier0-sota-clean`) and `XERJ` (`http://127.0.0.1:9200`) plus `ast-grep` structural rules to inspect symbols, call graphs, and forbidden patterns before editing.
+1. **Search-SOTA-First (Code Intelligence & Memory):** Query `codebase-memory-mcp` (`Z-noesis`) and `XERJ` (`http://127.0.0.1:9200`) plus `ast-grep` structural rules to inspect symbols, call graphs, and forbidden patterns before editing.
 2. **Disjoint Single-Winner Upstream Gate Suite:**
    - `uv run --no-sync ruff check .` (incl. Bandit `S`) & `uv run --no-sync ruff format --check src tests scripts evals` -> lint, formatting, and Python security hygiene.
    - `uv run --no-sync ty check` -> fast static type checking.

@@ -28,7 +28,7 @@ def _load_manifest() -> dict[str, object]:
 def test_architecture_manifest_schema_and_files_exist() -> None:
     manifest = _load_manifest()
     assert manifest["schema_version"] == "tier0.architecture-layer-manifest.v1"
-    assert manifest["repo_name"] == "tier0-sota-clean"
+    assert manifest["repo_name"] == "noesis"
     assert manifest["branch"] == "main"
     assert manifest["standalone_repo"] is True
 

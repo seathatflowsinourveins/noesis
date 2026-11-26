@@ -1,6 +1,6 @@
-# Tier-0 SOTA Clean Ecosystem (`tier0-sota-clean`)
+# Tier-0 SOTA Clean Ecosystem (`noesis`)
 
-100% standalone, clean-room Python 3.13 (`uv` + `mise` + `just`) quantitative trading, formal SMT verification, statistical falsification, and 4-lane compounding engineering workspace (`$TIER0_REPO_ROOT`, default `Z:\tier0-sota-clean`).
+100% standalone, clean-room Python 3.13 (`uv` + `mise` + `just`) quantitative trading, formal SMT verification, statistical falsification, and 4-lane compounding engineering workspace (`$TIER0_REPO_ROOT`, default `Z:\noesis`).
 
 ## Core Charter Pillars
 

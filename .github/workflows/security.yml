@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tier0-sota-clean-security-${{ github.ref }}-${{ github.event_name }}
+  group: noesis-security-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:

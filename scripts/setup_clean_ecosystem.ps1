@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Idempotent clean ecosystem setup & health check for Z:\tier0-sota-clean.
+    Idempotent clean ecosystem setup & health check for Z:\noesis.
 .DESCRIPTION
     Verifies:
       1. Clean .venv (Python 3.13 + pinned upstream imports) and immutable risk.py SHA-256

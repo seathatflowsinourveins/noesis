@@ -23,7 +23,7 @@ try {
     }
 
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-        throw "uv is required on PATH to bootstrap tier0-sota-clean."
+        throw "uv is required on PATH to bootstrap noesis."
     }
 
     $HasSrc = Test-Path (Join-Path $RepoRoot "src\tier0_sota\__init__.py")

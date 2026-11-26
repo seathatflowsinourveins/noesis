@@ -1,5 +1,5 @@
 [project]
-site_name = "tier0-sota-clean — Tier-0 SOTA Architecture & Compounding Portal"
+site_name = "noesis — Tier-0 SOTA Architecture & Compounding Portal"
 site_description = "100% standalone Python 3.13 Tier-0 SOTA quantitative architecture (L0..L10), living evolvable MADR 4.0 ADRs (ADR-0001+), Z3 formal risk & Inspect AI/DSPy evals, 15-portal research stack + OmniRoute :20128, and seamless post-restart resume."
 docs_dir = "docs"
 site_dir = "site"

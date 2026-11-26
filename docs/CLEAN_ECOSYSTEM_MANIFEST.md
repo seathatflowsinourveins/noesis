@@ -1,7 +1,7 @@
-# Tier-0 Clean Ecosystem Manifest (`Z:\tier0-sota-clean`)
+# Tier-0 Clean Ecosystem Manifest (`Z:\noesis`)
 
 - **Generated:** 2026-11-26
-- **Target Standalone Repository:** `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`, branch `main`, Python 3.13 via `uv` + `mise` + `just`)
+- **Target Standalone Repository:** `Z:\noesis` (`$env:TIER0_REPO_ROOT`, branch `main`, Python 3.13 via `uv` + `mise` + `just`)
 - **Immutable Risk Kernel SHA-256 (`src/tier0_sota/risk.py`):** `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`
 - **Live Execution Guard:** `live_execution_enabled = False`, `paper_only = True`, zero live broker ports (`:4001`, `:7496`, `:8798`, `:8796`)
 - **Zero Self-Invention Policy:** Enforced strictly through official upstream gates (`ast-grep`, `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `zizmor`, `trivy`, `syft`, GitHub `CodeQL`/`Dependabot`, `z3-solver`, immutable `risk.py` SHA-256, and `live_execution_enabled = False`) with zero arbitrary LOC caps.
@@ -70,8 +70,8 @@
 
 | Directory | Role | Handling |
 |---|---|---|
-| `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`) | Standalone Tier-0 SOTA clean repository (`L0..L10`, `46/46` skills, `0` legacy refs, `0` `yfinance`) | **ACTIVE CANONICAL REPO** |
-| WSL2 `Noesis-SOTA` (`~/tier0-sota-clean/.venv`) | Isolated Linux `.venv` synced via `UV_PROJECT_ENVIRONMENT=~/tier0-sota-clean/.venv uv sync --frozen` | **ACTIVE WSL2 PARITY VENV** (preserves `~/.config/tier0/.env.*` with `chmod 600`) |
+| `Z:\noesis` (`$env:TIER0_REPO_ROOT`) | Standalone Tier-0 SOTA clean repository (`L0..L10`, `46/46` skills, `0` legacy refs, `0` `yfinance`) | **ACTIVE CANONICAL REPO** |
+| WSL2 `Noesis-SOTA` (`~/noesis/.venv`) | Isolated Linux `.venv` synced via `UV_PROJECT_ENVIRONMENT=~/noesis/.venv uv sync --frozen` | **ACTIVE WSL2 PARITY VENV** (preserves `~/.config/tier0/.env.*` with `chmod 600`) |
 | `Z:\workspaces` (`$env:ORCA_WORKSPACES_DIR`) | Clean Orca worktree root | **ACTIVE WORKSPACE ROOT** |
 | `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT\manifests`) | Active live Paper Farm & TV manifests/DuckDB ledgers | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-data\prewall-lake` (`$env:TIER0_DATA_ROOT\prewall-lake`) | Pre-wall (`<= 2026-10-15`) immutable market data lake | **PRESERVED SHARED DATA ROOT** (never delete) |

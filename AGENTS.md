@@ -1,6 +1,6 @@
-# Tier-0 SOTA Quantitative Engineering & Compounding Harness (`tier0-sota-clean`)
+# Tier-0 SOTA Quantitative Engineering & Compounding Harness (`noesis`)
 
-Canonical AAIF agent SSOT for `Z:\tier0-sota-clean` (`CLAUDE.md` -> `@AGENTS.md`, Codex, Gemini, OpenCode, Orca). Authoritative inventories: `upstream-map.toml`, `ARCHITECTURE_MANIFEST.json`, `LLM_HARNESS_MANIFEST.json` (`scripts/sync_manifest.py`), `PHILOSOPHY_COMPOUNDING_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `mise.toml`, `justfile`.
+Canonical AAIF agent SSOT for `Z:\noesis` (`CLAUDE.md` -> `@AGENTS.md`, Codex, Gemini, OpenCode, Orca). Authoritative inventories: `upstream-map.toml`, `ARCHITECTURE_MANIFEST.json`, `LLM_HARNESS_MANIFEST.json` (`scripts/sync_manifest.py`), `PHILOSOPHY_COMPOUNDING_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `mise.toml`, `justfile`.
 
 ## 1. Single Rule: SOTA Upstream Convergence per Core Trading Philosophy (Sole Source of Truth)
 

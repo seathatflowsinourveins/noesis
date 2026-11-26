@@ -1,6 +1,6 @@
 # Grand-Reset Runbook: Standalone Zero-Hook Clean Disk-Z, WSL2, Fresh AGY, TradingView, 4-Runtime & Orca Setup
 
-This runbook executes a **standalone, non-destructive, zero-hook, fail-closed Grand Reset** anchored on `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`): archiving superseded Disk-Z clutter, preparing a fresh zero-hook Antigravity (AGY) reinstall, initializing clean Disk-Z + WSL2 `Noesis-SOTA`, syncing 4-runtime native `uv` MCPs + `.claude/mcp-lanes/*.mcp.json` + Orca + `46` standalone locked skills, bringing up the `13` hosted SOTA portals, syncing TradingView Pine v6 + Paper Farm manifests, and passing all `12/12` gates of the master verifier.
+This runbook executes a **standalone, non-destructive, zero-hook, fail-closed Grand Reset** anchored on `Z:\noesis` (`$env:TIER0_REPO_ROOT`): archiving superseded Disk-Z clutter, preparing a fresh zero-hook Antigravity (AGY) reinstall, initializing clean Disk-Z + WSL2 `Noesis-SOTA`, syncing 4-runtime native `uv` MCPs + `.claude/mcp-lanes/*.mcp.json` + Orca + `46` standalone locked skills, bringing up the `13` hosted SOTA portals, syncing TradingView Pine v6 + Paper Farm manifests, and passing all `12/12` gates of the master verifier.
 
 ## Safety Boundaries (Fail-Closed)
 
@@ -18,42 +18,42 @@ This runbook executes a **standalone, non-destructive, zero-hook, fail-closed Gr
 Safe-by-default (`-DryRun` unless `-Execute` is explicitly passed; pass `-ArchiveLegacyDirs <string[]>` only for explicit legacy directories to archive):
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\00_clean_disk_z_and_agy_reset.ps1 -DryRun -CleanAgyReinstall
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\00_clean_disk_z_and_agy_reset.ps1 -Execute -CleanAgyReinstall
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\00_clean_disk_z_and_agy_reset.ps1 -DryRun -CleanAgyReinstall
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\00_clean_disk_z_and_agy_reset.ps1 -Execute -CleanAgyReinstall
 ```
 
 What this establishes:
 - Archives stray `Z:\tmp_*.diff` files and any operator-specified `-ArchiveLegacyDirs` into `Z:\archive\pre_grand_reset_2026-11-25\` (preserving locked paths safely without force-kills).
-- Backs up existing `~/.gemini` configs to `Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\`, writes a fresh **zero-hook** `~/.gemini/settings.json` directly from `Z:\tier0-sota-clean\.gemini\settings.json`, syncs the `46` standalone locked skills from `Z:\tier0-sota-clean\.claude\skills\` into `~/.gemini/config/skills/`, and prints fresh Antigravity reinstall + clean workspace open steps (`Z:\tier0-sota-clean`).
+- Backs up existing `~/.gemini` configs to `Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\`, writes a fresh **zero-hook** `~/.gemini/settings.json` directly from `Z:\noesis\.gemini\settings.json`, syncs the `46` standalone locked skills from `Z:\noesis\.claude\skills\` into `~/.gemini/config/skills/`, and prints fresh Antigravity reinstall + clean workspace open steps (`Z:\noesis`).
 
 ### Step 01: Clean Disk-Z Folder Tree & WSL2 `Noesis-SOTA` Bootstrap
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\01_disk_z_and_wsl_setup.ps1 -DryRun
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\01_disk_z_and_wsl_setup.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\01_disk_z_and_wsl_setup.ps1 -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\01_disk_z_and_wsl_setup.ps1
 ```
 
 What this establishes:
-- Clean Disk-Z folder tree: `Z:\tier0-sota-clean`, `Z:\sota-data\{prewall-lake,manifests,mlflow,duckdb,logs}`, `Z:\sota-cache`, `Z:\archive`.
+- Clean Disk-Z folder tree: `Z:\noesis`, `Z:\sota-data\{prewall-lake,manifests,mlflow,duckdb,logs}`, `Z:\sota-cache`, `Z:\archive`.
 - WSL2 `Noesis-SOTA` runtime via `scripts/grand_reset/01_wsl_bootstrap.sh` (`uv`, Python `3.13`, `.venv`, `with_lane_env.sh`, and placeholder `~/.config/tier0/.env.{data,paper}` with `chmod 600` if absent).
 
 ### Step 02: Zero-Hook 4-Runtime Parity, Standalone Locked Skills & Orca Setup
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\02_runtimes_agy_orca_setup.ps1 -DryRun
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\02_runtimes_agy_orca_setup.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\02_runtimes_agy_orca_setup.ps1 -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\02_runtimes_agy_orca_setup.ps1
 ```
 
 What this establishes:
 - Confirms `hooks_zero = True` (no `.codex/hooks.json`, no `"hooks"` keys in `.claude/settings.json`, `.gemini/settings.json`, or `.codex/config.toml`).
 - Syncs fresh zero-hook AGY (`~/.gemini/settings.json`, `~/.gemini/config/mcp_config.json`) + Claude Code (`.claude/agents`, `.claude/commands`, `.claude/mcp-lanes/*.mcp.json`) + Codex + OpenCode wiring strictly the 4 vetted native `uv` MCPs (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
-- Syncs the `46` standalone locked skills strictly from `Z:\tier0-sota-clean\.claude\skills\` across AGY, Claude, and Codex, and verifies `orca.yaml`.
+- Syncs the `46` standalone locked skills strictly from `Z:\noesis\.claude\skills\` across AGY, Claude, and Codex, and verifies `orca.yaml`.
 
 ### Step 03: Hosted Stack (`13/13` Portals), TradingView Pine v6 & Paper Farm Sync
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\03_hosted_stack_tv_paper.ps1 -DryRun
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\03_hosted_stack_tv_paper.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\03_hosted_stack_tv_paper.ps1 -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\03_hosted_stack_tv_paper.ps1
 ```
 
 What this establishes:
@@ -64,7 +64,7 @@ What this establishes:
 ### Step 04: Master 12-Gate Grand-Reset Verification
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\tier0-sota-clean\scripts\grand_reset\verify_grand_reset.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\verify_grand_reset.ps1
 ```
 
 Requires `[VERDICT: PASS]` across all `12/12` gates:

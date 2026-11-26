@@ -364,7 +364,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
 
     return {
         "schema_version": "tier0.architecture-layer-manifest.v1",
-        "repo_name": "tier0-sota-clean",
+        "repo_name": "noesis",
         "branch": branch,
         "python_version": python_version,
         "standalone_repo": True,
@@ -418,7 +418,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "entrypoints": entrypoints,
         "repository_files": repo_files,
         "workstation_topology": {
-            "active_repo": "Z:\\tier0-sota-clean",
+            "active_repo": "Z:\\noesis",
             "shared_manifests_root": "Z:\\sota-data\\manifests",
             "prewall_lake_root": "Z:\\sota-data\\prewall-lake",
             "workspaces_root": "Z:\\workspaces",
@@ -636,7 +636,7 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
 
     return {
         "schema_version": "tier0.llm-harness-manifest.v1",
-        "repo_name": "tier0-sota-clean",
+        "repo_name": "noesis",
         "future_flagship_name": "noesis",
         "branch": _detect_branch(repo_root),
         "ssot_entrypoints": {

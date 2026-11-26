@@ -1,6 +1,6 @@
 {
   "schema_version": "tier0.llm-harness-manifest.v1",
-  "repo_name": "tier0-sota-clean",
+  "repo_name": "noesis",
   "future_flagship_name": "noesis",
   "branch": "main",
   "ssot_entrypoints": {

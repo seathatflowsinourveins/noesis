@@ -6,10 +6,10 @@
     Defaults to -DryRun unless -Execute is explicitly passed.
     - Optionally archives operator-specified superseded Disk-Z directories via -ArchiveLegacyDirs <string[]>
       and stray Z:\tmp_*.diff files into Z:\archive\pre_grand_reset_2026-11-25\
-    - Strictly protects Z:\tier0-sota-clean ($TIER0_REPO_ROOT), Z:\sota-data\prewall-lake,
+    - Strictly protects Z:\noesis ($TIER0_REPO_ROOT), Z:\sota-data\prewall-lake,
       Z:\sota-data\manifests, Z:\sota-cache, Z:\WSL, and Z:\archive
     - Supports -CleanAgyReinstall: backs up ~/.gemini to Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\,
-      writes a fresh ZERO-hook ~/.gemini/settings.json from Z:\tier0-sota-clean\.gemini\settings.json,
+      writes a fresh ZERO-hook ~/.gemini/settings.json from Z:\noesis\.gemini\settings.json,
       syncs ONLY the 46 standalone locked skills from $RepoRoot\.claude\skills into ~/.gemini/config/skills/,
       and prints fresh Antigravity (AGY) reinstall & clean workspace open steps.
     - NEVER formats drives or runs wsl --shutdown.
