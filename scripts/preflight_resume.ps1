@@ -173,8 +173,9 @@ function Invoke-PortalProbes {
                 $note = "health_ok=$ok"
             }
         } catch {
-            if ($_.Exception.Response) {
-                $statusCode = [int]$_.Exception.Response.StatusCode
+            $respProp = $_.Exception.PSObject.Properties["Response"]
+            if ($null -ne $respProp -and $null -ne $respProp.Value) {
+                $statusCode = [int]$respProp.Value.StatusCode
             }
             $note = $_.Exception.Message
         }
