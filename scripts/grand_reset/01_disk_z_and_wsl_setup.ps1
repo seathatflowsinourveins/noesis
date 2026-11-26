@@ -1,7 +1,7 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-    Idempotent Disk-Z folder tree & WSL2 Noesis-SOTA bootstrap for Tier-0 SOTA Clean.
+    Idempotent Disk-Z folder tree & WSL2 Noesis-SOTA bootstrap for noesis — Tier-0 SOTA.
 .DESCRIPTION
     Initializes Z:\noesis, Z:\sota-data\{prewall-lake,manifests,mlflow,duckdb,logs},
     Z:\sota-cache, and Z:\archive without formatting/wiping disks or shutting down WSL.

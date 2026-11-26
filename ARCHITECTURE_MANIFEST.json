@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 140,
+    "repository_files_count": 142,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -146,6 +146,14 @@
     {
       "name": "openbb-backend",
       "url": "http://127.0.0.1:6900/"
+    },
+    {
+      "name": "duckdb-ui",
+      "url": "http://127.0.0.1:4213/"
+    },
+    {
+      "name": "otel-health",
+      "url": "http://127.0.0.1:13133/"
     }
   ],
   "layers": {
@@ -345,7 +353,8 @@
         "docs/adr/ADR-0018.md",
         "docs/adr/ADR-0019.md",
         "docs/adr/ADR-0020.md",
-        "docs/adr/ADR-0021.md"
+        "docs/adr/ADR-0021.md",
+        "docs/adr/ADR-0022.md"
       ]
     },
     "L7": {
@@ -475,7 +484,8 @@
         ".opencode/commands/verify-tier0.md",
         "scripts/nautilus_mcp_server.py",
         "scripts/orca_account_failover.py",
-        "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1"
+        "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
+        ".agents/skills.json"
       ]
     },
     "L10": {
@@ -544,6 +554,7 @@
     "dspy_self_reflect": "evals/dspy_self_reflect.py"
   },
   "repository_files": [
+    ".agents/skills.json",
     ".claude/agents/code-intel-redteam.md",
     ".claude/agents/memory-rag-evolution.md",
     ".claude/agents/observability-operator.md",
@@ -625,6 +636,7 @@
     "docs/adr/ADR-0019.md",
     "docs/adr/ADR-0020.md",
     "docs/adr/ADR-0021.md",
+    "docs/adr/ADR-0022.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",

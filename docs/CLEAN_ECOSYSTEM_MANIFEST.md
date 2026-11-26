@@ -24,7 +24,7 @@
 | `scripts/launch_clean_lanes.ps1` | Non-overlapping lane launcher | Supports `-DryRun`; orchestrates Pre-Wall Sim Lab (`<= 2026-10-15`), 3-Lane Paper Farm (`ALPACA_PA1..PA3` + `IBKR_DU_4002`), TV Half-Auto Cockpit, and Verifier Gate |
 | `scripts/run_live_paper_farm.ps1` | Paper Farm controller | Supports `preflight`, `scan`, `paper-farm` (requires `-ConfirmPaper`), and `performance` |
 | `scripts/tv_console.ps1` | TradingView Half-Auto console | Display-only Pine v6 + Pydantic v2 (`TvAlertV1`) staging (`qty=1`, `semi_auto_confirmed=false`, zero CDP `:9223`) |
-| `scripts/grand_reset/verify_grand_reset.ps1` | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, dynamic living ADRs `ADR-0001..ADR-0021+`, `zensical`, `risk.py`, MCP smoke, portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
+| `scripts/grand_reset/verify_grand_reset.ps1` | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, dynamic living ADRs `ADR-0001..ADR-0022+`, `zensical`, `risk.py`, MCP smoke, portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
 | [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) | Grand-Reset Operator Runbook | Step-by-step zero-hook Disk-Z + WSL2 + fresh AGY + TV + 4-Runtime + Orca reset guide |
 | [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](ARCHITECTURE_LAYER_MANIFEST.md) | Architecture Layer Manifest | Complete `L0`–`L10` upstream stack map, Mermaid flow diagram, and `L11`–`L15` earned-trigger frontier |
 
@@ -32,7 +32,7 @@
 
 - **PEP 735 Dependency Groups (`pyproject.toml` + `uv.lock`):** Core runtime dependencies (including `pydantic>=2.10.0`) separated cleanly from `[dependency-groups]` (`dev`, `research`, `evals`, `portals`, `observability`) with `[tool.uv] default-groups`; `0` `yfinance` and `0` `quantstats` in `uv.lock`; `deptry .` reports `0` issues (`0` `DEP003`, `<= 3` optional-LLM `DEP002` ignores).
 - **Official Upstream Telemetry & Static Serving (Docker/WSL2):** Inline Python shims eliminated — `otel/opentelemetry-collector-contrib` (`docker/otel-collector-config.yaml`) exposes real `otelcol_*` Prometheus metrics on `:9464/metrics`, and official upstream `caddy` serves tearsheets on `:8793` (zero `python -m http.server`).
-- **4-Runtime Native `uv` MCP Parity (`hooks_zero = True`):** All 5 repo configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, `opencode.json`) wire the exact 4 vetted native `uv` MCP servers (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`) with scoped `.claude/mcp-lanes/{sim,paper,tv,gate}.mcp.json` and `46/46` SHA-locked standalone skills in `.claude/skills/`.
+- **4-Runtime Native `uv` MCP Parity (`hooks_zero = True`):** All 5 repo configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, `opencode.json`) wire the exact 4 vetted native `uv` MCP servers (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`) with scoped `.claude/mcp-lanes/{sim,paper,tv,gate}.mcp.json` and `46/46` SHA-locked standalone skills in `.claude/skills/` (zero-copy AGY discovery via `.agents/skills.json` and `~/.gemini/config/skills.json` per [ADR-0022](adr/ADR-0022.md)).
 
 ---
 

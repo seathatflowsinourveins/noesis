@@ -17,7 +17,8 @@
         "slippage",
         "walk-forward"
       ],
-      "skill_sha256": "f2c9ce6501b574cdf1cc35b757b5dfc3cb5e234222af84e67ce07775dfdc689d"
+      "skill_sha256": "f2c9ce6501b574cdf1cc35b757b5dfc3cb5e234222af84e67ce07775dfdc689d",
+      "dir_sha256": "57a2696462f874a0ce3ec9d7c486c0229c524ff50cc0a7275aedfc8476498f41"
     },
     {
       "skill": "breakout-trade-planner",
@@ -33,7 +34,8 @@
         "heat",
         "risk-reward"
       ],
-      "skill_sha256": "cc819f88031bbb3b2ca525b67c0a13cee72c364a929e129cb93e19b8ea6cbfdc"
+      "skill_sha256": "cc819f88031bbb3b2ca525b67c0a13cee72c364a929e129cb93e19b8ea6cbfdc",
+      "dir_sha256": "11a462fce71f4d2496130b76a4d2daf18e4f4df0f815c1b8726a0a81acc54235"
     },
     {
       "skill": "dagster-docs-skill",
@@ -49,7 +51,8 @@
         "pipeline",
         "orchestration"
       ],
-      "skill_sha256": "6c5d104bcae6d29acb046ec4c26d41e0e26976971969c5df3067b9f3a3c7c40f"
+      "skill_sha256": "6c5d104bcae6d29acb046ec4c26d41e0e26976971969c5df3067b9f3a3c7c40f",
+      "dir_sha256": "7a2bcd427c18da51c107a372975dd585737587e4650e21a0f793139461f43792"
     },
     {
       "skill": "drawdown-circuit-breaker",
@@ -65,7 +68,8 @@
         "stop-loss",
         "rule-612"
       ],
-      "skill_sha256": "4a2a9302a0837ee8a24f074a107df6e5cb70948c0d106a2f02ca9e18777067d2"
+      "skill_sha256": "4a2a9302a0837ee8a24f074a107df6e5cb70948c0d106a2f02ca9e18777067d2",
+      "dir_sha256": "c81872f3aa0b7b3f278c9e01bf310a4d7683ea56bc4949907590343a3ce68555"
     },
     {
       "skill": "exposure-coach",
@@ -81,7 +85,8 @@
         "cash-priority",
         "bias"
       ],
-      "skill_sha256": "a55c0111d64dcee2424432d7c6fb28f366f383397d91ab2e23ae60ea716c9312"
+      "skill_sha256": "a55c0111d64dcee2424432d7c6fb28f366f383397d91ab2e23ae60ea716c9312",
+      "dir_sha256": "d506a3f91c959d0b48d2b80699dd394f9bd6ed43cfa2ee66c55e3b909da70da0"
     },
     {
       "skill": "finos-administer-via-cli",
@@ -98,7 +103,8 @@
         "terminal",
         "admin"
       ],
-      "skill_sha256": "f3f5fceb2cca86b2f0728ac3ace65d95249fe609b6aabf6cd9a372234ffc602d"
+      "skill_sha256": "f3f5fceb2cca86b2f0728ac3ace65d95249fe609b6aabf6cd9a372234ffc602d",
+      "dir_sha256": "27dc54efdb800065f60d760f8f884990989720a2991321fa5f7e0ecb849258e9"
     },
     {
       "skill": "finos-develop-plugins",
@@ -115,7 +121,8 @@
         "ag-grid",
         "dashboard"
       ],
-      "skill_sha256": "73c3e6178f77d5f464c3dccd1379bcb5caafc19c1f9c061579f361476f7b76ed"
+      "skill_sha256": "73c3e6178f77d5f464c3dccd1379bcb5caafc19c1f9c061579f361476f7b76ed",
+      "dir_sha256": "84e9b567cc7a7060306361cf62080a35bea1bdc5d3335ad606cb14fa9bb04a7b"
     },
     {
       "skill": "ftd-detector",
@@ -131,7 +138,8 @@
         "rally-attempt",
         "reversal"
       ],
-      "skill_sha256": "174b6603d80161cca89b01cdd6159cffa84ec0b4b35a72dbcf0922615d1d0029"
+      "skill_sha256": "174b6603d80161cca89b01cdd6159cffa84ec0b4b35a72dbcf0922615d1d0029",
+      "dir_sha256": "912e03b70f24588bef7bc8981e5582015bac7fc278a7b899ac5dcbd0ff24dddf"
     },
     {
       "skill": "ibd-distribution-day-monitor",
@@ -148,7 +156,8 @@
         "trailing-stop",
         "market-top"
       ],
-      "skill_sha256": "627d9d614f10be92e2724ce7fd774849b7ca17c4405fe68e0d4aa0c4ff965c6a"
+      "skill_sha256": "627d9d614f10be92e2724ce7fd774849b7ca17c4405fe68e0d4aa0c4ff965c6a",
+      "dir_sha256": "525ad06ab6c038f139321b6cc4112b847239738a8635564686efc5a40a396719"
     },
     {
       "skill": "lightweight-charts",
@@ -164,7 +173,8 @@
         "tradingview",
         "vwap"
       ],
-      "skill_sha256": "47d36bf245e21c878d6cfe3d3a5addf29b11bc69c2cf0d1c8a36023e821c2228"
+      "skill_sha256": "47d36bf245e21c878d6cfe3d3a5addf29b11bc69c2cf0d1c8a36023e821c2228",
+      "dir_sha256": "da7b6d252f57ced2f4de4fba9bcd28289472d0bd52826092b05c264e91a47159"
     },
     {
       "skill": "macro-regime-detector",
@@ -180,7 +190,8 @@
         "alfred",
         "fred"
       ],
-      "skill_sha256": "46a19fdf3b718a51cdc869ac6d04cf63a3e77e31e6db85ff8650a3d19670b2a1"
+      "skill_sha256": "46a19fdf3b718a51cdc869ac6d04cf63a3e77e31e6db85ff8650a3d19670b2a1",
+      "dir_sha256": "53a9ad31a0d62a5ef57b1dced8fc43ad8d3e57f0b277205c9e5ba58b77d11c29"
     },
     {
       "skill": "market-breadth-analyzer",
@@ -195,7 +206,8 @@
         "participation",
         "market-health"
       ],
-      "skill_sha256": "3d73ea43a60f1a7207d4e376defa97c15aab9ba23f76916cf581ad9458438549"
+      "skill_sha256": "3d73ea43a60f1a7207d4e376defa97c15aab9ba23f76916cf581ad9458438549",
+      "dir_sha256": "f8b626309d64c914b5e38f9b42ecaa21caca52e010c9f2600c076ef2ad291178"
     },
     {
       "skill": "market-top-detector",
@@ -211,7 +223,8 @@
         "correction",
         "crash"
       ],
-      "skill_sha256": "29b6dc36a5aa184911ea0201325e006152db955102440286450334f1a30e35cd"
+      "skill_sha256": "29b6dc36a5aa184911ea0201325e006152db955102440286450334f1a30e35cd",
+      "dir_sha256": "b751f2cd6dfea081f34e92ab88c5606f53ed0819fe3b8966d3bde6bed14cef46"
     },
     {
       "skill": "ml4t-agent-state-memory",
@@ -228,7 +241,8 @@
         "xerj",
         "checkpoint"
       ],
-      "skill_sha256": "60bfe217a86a136c0229b284a64d3aa1cfa3106922835a831ed156f7ec705fce"
+      "skill_sha256": "60bfe217a86a136c0229b284a64d3aa1cfa3106922835a831ed156f7ec705fce",
+      "dir_sha256": "cad495bf588f4d395c35963a12cfbd3f76e3f2b0b8bf7ce29784183718e0c0d7"
     },
     {
       "skill": "ml4t-backtest-tearsheet",
@@ -245,7 +259,8 @@
         "quantstats",
         "nautilus"
       ],
-      "skill_sha256": "9670bcaa96ac48c3d548e1408069df5a4f3795cc86e9037bd9102b817381142d"
+      "skill_sha256": "9670bcaa96ac48c3d548e1408069df5a4f3795cc86e9037bd9102b817381142d",
+      "dir_sha256": "d384516befb6f9901b2d6dbbba882c7939b3b21c5fbc6720a12b4fed6e2d8797"
     },
     {
       "skill": "ml4t-causal-identification",
@@ -262,7 +277,8 @@
         "pit",
         "refutation"
       ],
-      "skill_sha256": "8f230ce7e691e93afc9b9643d2efe2cd827841a45f411edfb27e9d22dac02683"
+      "skill_sha256": "8f230ce7e691e93afc9b9643d2efe2cd827841a45f411edfb27e9d22dac02683",
+      "dir_sha256": "6c85e698e12f3fba4e18c6e69a9acc622538ffdf0d000bab20d9dcca128cda1f"
     },
     {
       "skill": "ml4t-cpcv",
@@ -279,7 +295,8 @@
         "overfitting",
         "validation"
       ],
-      "skill_sha256": "df0377fb1b6b5a9beae2d12293fbab00788ee1e681588b341574e7dbfe71b091"
+      "skill_sha256": "df0377fb1b6b5a9beae2d12293fbab00788ee1e681588b341574e7dbfe71b091",
+      "dir_sha256": "bfaa286bb91245d9b136df0937a200b284c751c8bc142a73074fc320c699aac6"
     },
     {
       "skill": "ml4t-deflated-sharpe",
@@ -297,7 +314,8 @@
         "hlz",
         "falsification"
       ],
-      "skill_sha256": "0bdd5d2edd8821c37845a26c6dd14aa65e2abc277d3320be2d145d9ee4bd7adf"
+      "skill_sha256": "0bdd5d2edd8821c37845a26c6dd14aa65e2abc277d3320be2d145d9ee4bd7adf",
+      "dir_sha256": "1235ebb61df362034f9c7516a04a9a79f3cd252eff0915a36236ae4742bfed00"
     },
     {
       "skill": "ml4t-drift-detection",
@@ -314,7 +332,8 @@
         "ruptures",
         "regime"
       ],
-      "skill_sha256": "32518cb7d6db7a378ff0d9520c05eee5eb167f14bddd8100a214cfd310169661"
+      "skill_sha256": "32518cb7d6db7a378ff0d9520c05eee5eb167f14bddd8100a214cfd310169661",
+      "dir_sha256": "0d55ba4f83e3b3226061b142f32d411a49e4d546ac0d53297fc0ee2efde99486"
     },
     {
       "skill": "ml4t-factor-research",
@@ -331,7 +350,8 @@
         "decay",
         "signal"
       ],
-      "skill_sha256": "cd93000c5430f613644c1a5089f731f55514bc3edae721468d3c0ca94a6bb2bf"
+      "skill_sha256": "cd93000c5430f613644c1a5089f731f55514bc3edae721468d3c0ca94a6bb2bf",
+      "dir_sha256": "b5d9db9b507bbdf2c3ce76115318dec72d1ba4b134d5df7ac8d5a724fd2d51e2"
     },
     {
       "skill": "ml4t-monitoring-alerting",
@@ -349,7 +369,8 @@
         "telemetry",
         "metrics"
       ],
-      "skill_sha256": "5b955314a4b14f30f441dca557361d78b8ccf8efd68190a4d89bb3ba6c3f8069"
+      "skill_sha256": "5b955314a4b14f30f441dca557361d78b8ccf8efd68190a4d89bb3ba6c3f8069",
+      "dir_sha256": "542b781b61c4149a44d92377b34cb1844b84af7168f86485c161a83342738dd3"
     },
     {
       "skill": "ml4t-point-in-time",
@@ -367,7 +388,8 @@
         "alfred",
         "edgar"
       ],
-      "skill_sha256": "cff8e72b709d54bed7bbc1edc3387fafa6a8a4191326cd1844ff6dd65c9be697"
+      "skill_sha256": "cff8e72b709d54bed7bbc1edc3387fafa6a8a4191326cd1844ff6dd65c9be697",
+      "dir_sha256": "3a9671393c7bfcefdaf0b761cbdba080d377368b07c1b592fdc5c67ff5426408"
     },
     {
       "skill": "ml4t-polars-patterns",
@@ -384,7 +406,8 @@
         "data-lake",
         "columnar"
       ],
-      "skill_sha256": "bcc9062c8b4947765ef467c3becf3c1873eac16612118c2bdd187adcaf62df8e"
+      "skill_sha256": "bcc9062c8b4947765ef467c3becf3c1873eac16612118c2bdd187adcaf62df8e",
+      "dir_sha256": "595b33af0a0a2bccd9c565b1dc83632b881ee6e65923069687b589010a6b33f1"
     },
     {
       "skill": "ml4t-research-operator",
@@ -401,7 +424,8 @@
         "hypothesis",
         "discovery"
       ],
-      "skill_sha256": "8601231ce1c9a651194d8090c34c983167b96279f6cc4bc2689101969dcd49aa"
+      "skill_sha256": "8601231ce1c9a651194d8090c34c983167b96279f6cc4bc2689101969dcd49aa",
+      "dir_sha256": "3a19f881fe8394ebf26592c9629a68d85c862bfb596d66a04988521a1fb2b656"
     },
     {
       "skill": "ml4t-shap-analysis",
@@ -417,7 +441,8 @@
         "lightgbm",
         "trade-shap"
       ],
-      "skill_sha256": "232857d846d3da9d814b54d9486f97f6ba0f871276b0100c175beca3782cf571"
+      "skill_sha256": "232857d846d3da9d814b54d9486f97f6ba0f871276b0100c175beca3782cf571",
+      "dir_sha256": "7eb8f4b53aa1aa703435bbad1af0355085ed2f4bf54e1147f74fc929fd68f38e"
     },
     {
       "skill": "orca-cli",
@@ -434,7 +459,8 @@
         "lane",
         "claude-code"
       ],
-      "skill_sha256": "84485364a5a7f17cf222223c25be2839d7501c9e7e92c51cf67c59dc11d0dd0b"
+      "skill_sha256": "84485364a5a7f17cf222223c25be2839d7501c9e7e92c51cf67c59dc11d0dd0b",
+      "dir_sha256": "b1d11ddfef23ac35abf49d045e3ce1b85cd38ae8c4c4999a7fdc5574615ef382"
     },
     {
       "skill": "orca-per-workspace-env",
@@ -450,7 +476,8 @@
         "workspace",
         "lane"
       ],
-      "skill_sha256": "39c457ada06e320108516f97ea81a331e6bfa484bd7dccf4d025a7ca6bde99a4"
+      "skill_sha256": "39c457ada06e320108516f97ea81a331e6bfa484bd7dccf4d025a7ca6bde99a4",
+      "dir_sha256": "eb85e7db72cd6f521603aa3572b9687d5d05ea9309af7ae8ae5369e13361c9b6"
     },
     {
       "skill": "orchestration",
@@ -467,7 +494,8 @@
         "multi-agent",
         "lane"
       ],
-      "skill_sha256": "0a781637d8c9c1dd9409b8ca6ea7eb8a83add577a1aacfb3b8146e442213be53"
+      "skill_sha256": "0a781637d8c9c1dd9409b8ca6ea7eb8a83add577a1aacfb3b8146e442213be53",
+      "dir_sha256": "6f0d9334696384320cef2c1780eea61813250bb8e2760424d0f62439fb3dbe08"
     },
     {
       "skill": "parabolic-short-trade-planner",
@@ -483,7 +511,8 @@
         "exhaustion",
         "climax"
       ],
-      "skill_sha256": "d1458b33b541fc77858f2dee1f9f7c5f1a9c779ee6ab87b59a0f97cb74164f75"
+      "skill_sha256": "d1458b33b541fc77858f2dee1f9f7c5f1a9c779ee6ab87b59a0f97cb74164f75",
+      "dir_sha256": "fe5edb79c308be32cca5a83883e431fc952aefa81768a06691366b6a2846329e"
     },
     {
       "skill": "pead-screener",
@@ -499,7 +528,8 @@
         "catalyst",
         "8-k"
       ],
-      "skill_sha256": "47cf00d5dc0725f51ecfa18041d49819e32f197e5e430e43c82f853b4f0989ee"
+      "skill_sha256": "47cf00d5dc0725f51ecfa18041d49819e32f197e5e430e43c82f853b4f0989ee",
+      "dir_sha256": "458618621cfa4aae38930266028605de87af15cd5775a364a0801645fc8a5a16"
     },
     {
       "skill": "position-sizer",
@@ -517,7 +547,8 @@
         "risk-budget",
         "lossless"
       ],
-      "skill_sha256": "b0eda467eef9c0804118ee34d67bda89038e10fb7471f7d0fd0b591ccd67f6ac"
+      "skill_sha256": "b0eda467eef9c0804118ee34d67bda89038e10fb7471f7d0fd0b591ccd67f6ac",
+      "dir_sha256": "683102f3e0b3a01cbb4296a242df5288005f3d6214174b8813f1259cb1d49390"
     },
     {
       "skill": "pre-trade-discipline-gate",
@@ -533,7 +564,8 @@
         "cooldown",
         "circuit-breaker"
       ],
-      "skill_sha256": "94ad27f4c1e894eb0285b3eff0d88bf4cf4d90a5d1c6576eb666fc0fd1e29ccc"
+      "skill_sha256": "94ad27f4c1e894eb0285b3eff0d88bf4cf4d90a5d1c6576eb666fc0fd1e29ccc",
+      "dir_sha256": "afc14e7c410ef28906b125fe4ef5ba32e0e1dd6dfbd561d9f380134f2dc50e67"
     },
     {
       "skill": "security-audit",
@@ -549,7 +581,8 @@
         "vulnerability",
         "firewall"
       ],
-      "skill_sha256": "5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85"
+      "skill_sha256": "5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85",
+      "dir_sha256": "f9854485a2e51e4d9dc3a87c98a2e80eca6b23410d121bc6ac549697ad8e6042"
     },
     {
       "skill": "skillevaluator",
@@ -566,7 +599,8 @@
         "tier1",
         "landscape"
       ],
-      "skill_sha256": "2147e4076c115b914bcd4a10c9760abc904bf2a544699e6eb4301dd2f89c3f94"
+      "skill_sha256": "2147e4076c115b914bcd4a10c9760abc904bf2a544699e6eb4301dd2f89c3f94",
+      "dir_sha256": "a3942bedc01e2391554725a18e7b32951d1f5d829c79d452b7215d463ec69aba"
     },
     {
       "skill": "stockbee-episodic-pivot-analyzer",
@@ -583,7 +617,8 @@
         "gap",
         "pead"
       ],
-      "skill_sha256": "70b59bd244d42ed5b3b00609b2e4764fefefc2aceacd063bcda68a7eb4d756cd"
+      "skill_sha256": "70b59bd244d42ed5b3b00609b2e4764fefefc2aceacd063bcda68a7eb4d756cd",
+      "dir_sha256": "d5bf26273730cc806ab9de37b9b9ceb349a4429010ed9c82acad4c08733fdb5e"
     },
     {
       "skill": "stockbee-exhaustion-hammer-screener",
@@ -600,7 +635,8 @@
         "reversal",
         "top-reversal"
       ],
-      "skill_sha256": "dd0a8769bab86a09baae700573df060ecca3f38bbc808c88f805e53c2b133421"
+      "skill_sha256": "dd0a8769bab86a09baae700573df060ecca3f38bbc808c88f805e53c2b133421",
+      "dir_sha256": "3cc428a2b22ce4069fbd681b2c8a3801e0ddd14230778b24407539e4aef962c2"
     },
     {
       "skill": "stockbee-momentum-burst-screener",
@@ -616,7 +652,8 @@
         "breakout",
         "range-expansion"
       ],
-      "skill_sha256": "2d0d94f105689ff64844313cfab7105696198476fddc30ad11f43ff71b6d0202"
+      "skill_sha256": "2d0d94f105689ff64844313cfab7105696198476fddc30ad11f43ff71b6d0202",
+      "dir_sha256": "1574b9c147a2ee79ffc34bc85c9a0d33b789316dd9a073ad8b90686bfbe915d4"
     },
     {
       "skill": "tier0-code-intel-and-gates",
@@ -635,7 +672,8 @@
         "harbor",
         "code-intel"
       ],
-      "skill_sha256": "9768cbdefbe1aa395161f4f891238bcbea95a85eb7997385f0456be30f3d95d0"
+      "skill_sha256": "9768cbdefbe1aa395161f4f891238bcbea95a85eb7997385f0456be30f3d95d0",
+      "dir_sha256": "334429a37123fac90aa77aff84342a7161ca3fd2348ed4fa8ebdc17003d8097f"
     },
     {
       "skill": "tier0-quant-falsification",
@@ -653,7 +691,8 @@
         "risk",
         "pit"
       ],
-      "skill_sha256": "fb56579d7a9b185585b481069cf3933040ba5806e5e913aaca447b92816b455f"
+      "skill_sha256": "fb56579d7a9b185585b481069cf3933040ba5806e5e913aaca447b92816b455f",
+      "dir_sha256": "8633176aa56e039c87665dde257d1a1145dd1711c348a2f105bcbcb0088f0112"
     },
     {
       "skill": "tier0-upstream-convergence",
@@ -675,7 +714,8 @@
         "upstream",
         "zensical"
       ],
-      "skill_sha256": "1d3b919a0eecabbe799c1adc5073a68e4eb781dda08b8dafb3751d49548a506c"
+      "skill_sha256": "1d3b919a0eecabbe799c1adc5073a68e4eb781dda08b8dafb3751d49548a506c",
+      "dir_sha256": "aea08cd8ffcbd8230d8b9b8807fb49b6d343e9168e8b17680e0161884e388727"
     },
     {
       "skill": "tier0-upstream-dashboards-and-observability",
@@ -694,7 +734,8 @@
         "tearsheet",
         "duckdb"
       ],
-      "skill_sha256": "5b0b05a1c6d5f5f62e8a9084c31e78f820fdc2de21413ec000e7cc512e5a21d7"
+      "skill_sha256": "5b0b05a1c6d5f5f62e8a9084c31e78f820fdc2de21413ec000e7cc512e5a21d7",
+      "dir_sha256": "91d12a4fd713dd88961e96255e48dafb82fe7f47c2e2af3ca26b9f1855320464"
     },
     {
       "skill": "trading-skills-navigator",
@@ -710,7 +751,8 @@
         "navigator",
         "claude-trading-skills"
       ],
-      "skill_sha256": "65db18136321fca02f39d177e7c6babc4edc581a4a4371cc035be10cc8100ae5"
+      "skill_sha256": "65db18136321fca02f39d177e7c6babc4edc581a4a4371cc035be10cc8100ae5",
+      "dir_sha256": "201c37d1212b9e7d912f21665a2fa16f75d0cfa5c5ceabf193ee004989b81614"
     },
     {
       "skill": "uptrend-analyzer",
@@ -725,7 +767,8 @@
         "sector-participation",
         "rotation"
       ],
-      "skill_sha256": "e514dea7f48530c8f5bd8087bb136a09212b1a4d557fee8068aaad0a1fee65bd"
+      "skill_sha256": "e514dea7f48530c8f5bd8087bb136a09212b1a4d557fee8068aaad0a1fee65bd",
+      "dir_sha256": "d54989e616dd6394e53df541a5c1ec066f57e8ae754ec5a95cb018535b219dbd"
     },
     {
       "skill": "us-market-bubble-detector",
@@ -741,7 +784,8 @@
         "vix",
         "margin-debt"
       ],
-      "skill_sha256": "eb1e64b333d11315b87458bcddcf4cea73fefc2eb3e7ee1b42bdeaa5bc53583b"
+      "skill_sha256": "eb1e64b333d11315b87458bcddcf4cea73fefc2eb3e7ee1b42bdeaa5bc53583b",
+      "dir_sha256": "24868ea254aa3d724c8900d0a100e1ca260602077ea1e92a6d0a57423c33e1ef"
     },
     {
       "skill": "vcp-screener",
@@ -757,7 +801,8 @@
         "breakout",
         "volatility-contraction"
       ],
-      "skill_sha256": "48f70110d416244be742116696852bd7495fe53988ef0e275fa42eb9da6b5559"
+      "skill_sha256": "48f70110d416244be742116696852bd7495fe53988ef0e275fa42eb9da6b5559",
+      "dir_sha256": "d1543c13812f224a43965da4714e54948296e9bf1547c15296ec2c15d5c60ebd"
     },
     {
       "skill": "verification-before-completion",
@@ -774,8 +819,9 @@
         "gate",
         "commit"
       ],
-      "skill_sha256": "2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3"
+      "skill_sha256": "2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3",
+      "dir_sha256": "29d4bd654fdc57679501bf73b2821abf4ce035c536054a3e8e90ed7ed38644c7"
     }
   ],
-  "lock_sha256": "fd95b12b164fb8d63fafa643d744787769b55654101a2824998ede77c7819f99"
+  "lock_sha256": "e6b1184308dae766b49861b8dedb32a8f6b3c7ceb09b90e206e0afa273ef47f6"
 }

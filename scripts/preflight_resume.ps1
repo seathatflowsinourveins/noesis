@@ -404,6 +404,7 @@ Record-Gate -Name "disk_z_env" `
 $AgyMcpPath = Join-Path $env:USERPROFILE ".gemini\config\mcp_config.json"
 $AgyMcpOk = $false
 $AgyMcpServers = @()
+$AgySkillsJsonStatus = "absent"
 $AgyMcpDetail = "missing $AgyMcpPath"
 if (Test-Path -LiteralPath $AgyMcpPath) {
     try {
@@ -421,11 +422,30 @@ if (Test-Path -LiteralPath $AgyMcpPath) {
                 }
             }
         }
-        $nautCmd = [string]$mcpObj.mcpServers.'nautilus-engine'.command
-        $edgarCmd = [string]$mcpObj.mcpServers.edgartools.command
-        $diskZClean = (($nautCmd -match 'noesis') -and ($edgarCmd -match 'noesis'))
+        $nautSrv = $mcpObj.mcpServers.'nautilus-engine'
+        $edgarSrv = $mcpObj.mcpServers.edgartools
+        $nautCmd = [string]$nautSrv.command
+        $nautArgs = @($nautSrv.args) -join " "
+        $edgarCmd = [string]$edgarSrv.command
+        $edgarArgs = @($edgarSrv.args) -join " "
+        $diskZClean = (
+            (($nautCmd -match 'noesis') -or ($nautArgs -match 'noesis')) -and
+            (($edgarCmd -match 'noesis') -or ($edgarArgs -match 'noesis'))
+        )
+        $AgySkillsJsonPath = Join-Path $env:USERPROFILE ".gemini\config\skills.json"
+        $AgySkillsJsonStatus = "absent"
+        if (Test-Path -LiteralPath $AgySkillsJsonPath) {
+            try {
+                $skObj = Get-Content -LiteralPath $AgySkillsJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $skPaths = @($skObj.entries | ForEach-Object { [string]$_.path })
+                $hasSkillsEntry = @($skPaths | Where-Object { $_ -match '\.claude[/\\]skills' -and $_ -match 'noesis' }).Count -gt 0
+                $AgySkillsJsonStatus = if ($hasSkillsEntry) { "ok" } else { "missing_noesis_entry" }
+            } catch {
+                $AgySkillsJsonStatus = "parse_error"
+            }
+        }
         $AgyMcpOk = ($namesMatch -and $noBashWrapper -and $missingBins.Count -eq 0 -and $diskZClean)
-        $AgyMcpDetail = "servers=$($AgyMcpServers -join ',') native_no_bash=$noBashWrapper disk_z_clean=$diskZClean missing_bins=$($missingBins.Count)"
+        $AgyMcpDetail = "servers=$($AgyMcpServers -join ',') native_no_bash=$noBashWrapper disk_z_clean=$diskZClean missing_bins=$($missingBins.Count) skills_json=$AgySkillsJsonStatus"
     } catch {
         $AgyMcpDetail = "parse error: $($_.Exception.Message)"
     }
@@ -434,8 +454,9 @@ Record-Gate -Name "agy_native_mcp_config" `
     -Passed $AgyMcpOk `
     -Detail $AgyMcpDetail `
     -Meta @{
-        path    = $AgyMcpPath
-        servers = $AgyMcpServers
+        path        = $AgyMcpPath
+        servers     = $AgyMcpServers
+        skills_json = $(if ($null -ne $AgySkillsJsonStatus) { $AgySkillsJsonStatus } else { "absent" })
     }
 
 # 9. 8/8 Windows + WSL2 byte-identical Global Charter SHA-256

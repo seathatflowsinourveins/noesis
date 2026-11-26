@@ -1,7 +1,7 @@
 # Upstream directives:
 #   - https://github.com/astral-sh/setup-uv | https://github.com/anchore/sbom-action | https://github.com/cli/cli
 
-name: Tier-0 SOTA Clean Release
+name: noesis — Tier-0 SOTA Release
 
 on:
   push:

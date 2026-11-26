@@ -1,4 +1,4 @@
-# Tier-0 SOTA Clean Ecosystem (`noesis`)
+# `noesis` — Tier-0 SOTA Ecosystem
 
 100% standalone, clean-room Python 3.13 (`uv` + `mise` + `just`) quantitative trading, formal SMT verification, statistical falsification, and 4-lane compounding engineering workspace (`$TIER0_REPO_ROOT`, default `Z:\noesis`).
 
@@ -30,4 +30,4 @@ flowchart LR
 - [Grand-Reset Disk-Z & WSL2 Runbook](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md)
 - [Post-Restart Seamless Resume Playbook](POST_RESTART_RESUME_PLAYBOOK.md)
 - [TradingView Automation Playbook](TV_AUTOMATION_PLAYBOOK.md)
-- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0021+`)](adr/CATALOG.md)
+- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0022+`)](adr/CATALOG.md)

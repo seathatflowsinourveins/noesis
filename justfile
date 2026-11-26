@@ -1,4 +1,4 @@
-# Tier-0 SOTA Clean — Declarative Upstream Task Runner (`just`)
+# noesis — Tier-0 SOTA — Declarative Upstream Task Runner (`just`)
 # Works identically across Windows (`pwsh`) and WSL2/Linux (`bash`).
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
@@ -101,19 +101,19 @@ security: gitleaks zizmor trivy
 
 # Start WSL2/Docker hosted SOTA research stack (-p docker)
 docker-up:
-    docker compose -p docker -f docker/compose.sota.yml up -d
+    {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d'" } else { "docker compose -p docker -f docker/compose.sota.yml up -d" } }}
 
 # Stop hosted SOTA research stack (-p docker)
 docker-down:
-    docker compose -p docker -f docker/compose.sota.yml down
+    {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml down'" } else { "docker compose -p docker -f docker/compose.sota.yml down" } }}
 
 # Build custom Docker images for SOTA research stack
 docker-build:
-    docker compose -p docker -f docker/compose.sota.yml build
+    {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml build'" } else { "docker compose -p docker -f docker/compose.sota.yml build" } }}
 
 # Show hosted SOTA research stack status
 docker-ps:
-    docker compose -p docker -f docker/compose.sota.yml ps
+    {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml ps'" } else { "docker compose -p docker -f docker/compose.sota.yml ps" } }}
 
 # Run read-only workstation & ecosystem preflight (writes workstation_preflight_resume_manifest.json)
 preflight *args:

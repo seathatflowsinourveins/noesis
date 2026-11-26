@@ -9,8 +9,9 @@
     - Strictly protects Z:\noesis ($TIER0_REPO_ROOT), Z:\sota-data\prewall-lake,
       Z:\sota-data\manifests, Z:\sota-cache, Z:\WSL, and Z:\archive
     - Supports -CleanAgyReinstall: backs up ~/.gemini to Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\,
-      writes a fresh ZERO-hook ~/.gemini/settings.json from Z:\noesis\.gemini\settings.json,
-      syncs ONLY the 46 standalone locked skills from $RepoRoot\.claude\skills into ~/.gemini/config/skills/,
+      writes ~/.gemini/settings.json from Z:\noesis\.gemini\settings.json while preserving official
+      upstream Orca status hooks (~/.orca/agent-hooks/*.cmd) and stripping any custom hooks,
+      writes zero-copy ~/.gemini/config/skills.json pointing to $RepoRoot\.claude\skills,
       and prints fresh Antigravity (AGY) reinstall & clean workspace open steps.
     - NEVER formats drives or runs wsl --shutdown.
 #>
@@ -85,7 +86,55 @@ $AgyDir = Join-Path $HomeDir ".gemini"
 $AgyBackupDir = Join-Path $ArchiveRoot "gemini_backup"
 $RepoGeminiSettings = Join-Path $RepoRoot ".gemini\settings.json"
 $AgySettingsTarget = Join-Path $AgyDir "settings.json"
-$AgySkillsTarget = Join-Path $AgyDir "config\skills"
+$AgySkillsConfigTarget = Join-Path $AgyDir "config\skills.json"
+$SkillsSourceSlash = ($SkillsSourceDir.Replace('\', '/').TrimEnd('/'))
+
+function Get-PreservedOrcaHooks {
+    param([object]$SettingsObj)
+    if ($null -eq $SettingsObj -or -not ($SettingsObj.PSObject.Properties.Name -contains "hooks")) {
+        return $null
+    }
+    $hooksObj = $SettingsObj.hooks
+    if ($null -eq $hooksObj) {
+        return $null
+    }
+    $preserved = [ordered]@{}
+    foreach ($evtProp in $hooksObj.PSObject.Properties) {
+        $keptMatchers = [System.Collections.Generic.List[object]]::new()
+        foreach ($matcherItem in @($evtProp.Value)) {
+            if ($null -eq $matcherItem) { continue }
+            $innerHooks = @()
+            if ($matcherItem.PSObject.Properties.Name -contains "hooks") {
+                $innerHooks = @(
+                    $matcherItem.hooks | Where-Object {
+                        $_ -and ([string]$_.command -match '[/\\]\.orca[/\\]agent-hooks[/\\]')
+                    }
+                )
+            } elseif ($matcherItem.PSObject.Properties.Name -contains "command" -and ([string]$matcherItem.command -match '[/\\]\.orca[/\\]agent-hooks[/\\]')) {
+                $keptMatchers.Add($matcherItem)
+                continue
+            }
+            if ($innerHooks.Count -gt 0) {
+                $copyMatcher = [ordered]@{}
+                foreach ($mp in $matcherItem.PSObject.Properties) {
+                    if ($mp.Name -eq "hooks") {
+                        $copyMatcher["hooks"] = @($innerHooks)
+                    } else {
+                        $copyMatcher[$mp.Name] = $mp.Value
+                    }
+                }
+                $keptMatchers.Add([pscustomobject]$copyMatcher)
+            }
+        }
+        if ($keptMatchers.Count -gt 0) {
+            $preserved[$evtProp.Name] = @($keptMatchers)
+        }
+    }
+    if ($preserved.Count -gt 0) {
+        return [pscustomobject]$preserved
+    }
+    return $null
+}
 
 if ($IsDryRun) {
     Write-Host "[DRY-RUN] Grand-Reset Step 00: Clean Disk-Z Reset & Fresh AGY Reinstall (safe-by-default; pass -Execute to apply)" -ForegroundColor Yellow
@@ -95,8 +144,8 @@ if ($IsDryRun) {
     foreach ($c in $ArchiveCandidates) {
         Write-Host ("    - {0} -> {1}" -f $c.Source, $c.Target) -ForegroundColor Gray
     }
-    Write-Host "  Skills Source    : $SkillsSourceDir (locked=$($LockedSkills.Count))" -ForegroundColor Cyan
-    Write-Host "  CleanAgyReinstall: $([bool]$CleanAgyReinstall) (zero-hook settings -> $AgySettingsTarget)" -ForegroundColor Cyan
+    Write-Host "  Skills Source    : $SkillsSourceDir (locked=$($LockedSkills.Count)) -> $AgySkillsConfigTarget" -ForegroundColor Cyan
+    Write-Host "  CleanAgyReinstall: $([bool]$CleanAgyReinstall) (Orca-hook-preserving settings -> $AgySettingsTarget)" -ForegroundColor Cyan
     Write-Host "  Live Broker Ports: 0 (fail-closed)" -ForegroundColor Green
     return
 }
@@ -140,9 +189,21 @@ if ($CleanAgyReinstall) {
     if (-not (Test-Path -LiteralPath $RepoGeminiSettings)) {
         throw "Missing clean AGY settings template: $RepoGeminiSettings"
     }
+    $existingOrcaHooks = $null
+    if (Test-Path -LiteralPath $AgySettingsTarget) {
+        try {
+            $existingSettingsObj = Get-Content -LiteralPath $AgySettingsTarget -Raw -Encoding UTF8 | ConvertFrom-Json
+            $existingOrcaHooks = Get-PreservedOrcaHooks -SettingsObj $existingSettingsObj
+        } catch {
+            $existingOrcaHooks = $null
+        }
+    }
     $cleanSettings = Get-Content -LiteralPath $RepoGeminiSettings -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($cleanSettings.PSObject.Properties.Name -contains "hooks") {
         $cleanSettings.PSObject.Properties.Remove("hooks")
+    }
+    if ($null -ne $existingOrcaHooks) {
+        $cleanSettings | Add-Member -MemberType NoteProperty -Name "hooks" -Value $existingOrcaHooks -Force
     }
     New-Item -ItemType Directory -Path $AgyDir -Force | Out-Null
     [System.IO.File]::WriteAllText(
@@ -150,21 +211,20 @@ if ($CleanAgyReinstall) {
         (($cleanSettings | ConvertTo-Json -Depth 10) + "`n"),
         [System.Text.UTF8Encoding]::new($false)
     )
-    Write-Host "[AGY SETTINGS] Wrote zero-hook settings -> $AgySettingsTarget" -ForegroundColor Green
+    Write-Host "[AGY SETTINGS] Wrote clean settings (orca_hooks_preserved=$($null -ne $existingOrcaHooks)) -> $AgySettingsTarget" -ForegroundColor Green
 
-    $SyncedSkills = 0
-    if ($LockedSkills.Count -gt 0 -and (Test-Path -LiteralPath $SkillsSourceDir)) {
-        New-Item -ItemType Directory -Path $AgySkillsTarget -Force | Out-Null
-        foreach ($skillName in $LockedSkills) {
-            $srcSkill = Join-Path $SkillsSourceDir $skillName
-            if (-not (Test-Path -LiteralPath $srcSkill)) { continue }
-            $dstSkill = Join-Path $AgySkillsTarget $skillName
-            New-Item -ItemType Directory -Path $dstSkill -Force | Out-Null
-            Copy-Item -Path (Join-Path $srcSkill "*") -Destination $dstSkill -Recurse -Force
-            $SyncedSkills++
-        }
+    $agySkillsPayload = [ordered]@{
+        entries = @(
+            [ordered]@{ path = $SkillsSourceSlash }
+        )
     }
-    Write-Host "[AGY SKILLS] Synced $SyncedSkills/$($LockedSkills.Count) standalone locked skills -> $AgySkillsTarget" -ForegroundColor Green
+    New-Item -ItemType Directory -Path (Split-Path -Parent $AgySkillsConfigTarget) -Force | Out-Null
+    [System.IO.File]::WriteAllText(
+        $AgySkillsConfigTarget,
+        (($agySkillsPayload | ConvertTo-Json -Depth 5) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Write-Host "[AGY SKILLS] Wrote zero-copy skills.json ($SkillsSourceSlash, locked=$($LockedSkills.Count)) -> $AgySkillsConfigTarget" -ForegroundColor Green
 
     Write-Host "`n[NEXT STEPS - FRESH ANTIGRAVITY (AGY) REINSTALL]" -ForegroundColor Cyan
     Write-Host "  1. Close Antigravity UI cleanly and uninstall/reinstall the fresh Antigravity desktop build (keeps ~/.gemini settings & skills)." -ForegroundColor Gray

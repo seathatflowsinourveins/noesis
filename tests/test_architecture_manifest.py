@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tomllib
 
+import pytest
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXPECTED_RISK_SHA256 = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 EXPECTED_MCP_SERVERS = ["codebase-memory", "edgartools", "nautilus-engine", "xerj"]
@@ -42,6 +44,9 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     assert "loc_enforcement" not in safety
     assert "advisory_loc_telemetry" not in manifest
     assert safety["forbidden_live_ports"] == [4001, 7496, 8798, 8796]
+    hosted_portals = manifest["hosted_portals"]
+    assert isinstance(hosted_portals, list)
+    assert len(hosted_portals) == 15
 
     repo_files = manifest["repository_files"]
     assert isinstance(repo_files, list)
@@ -222,9 +227,21 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     assert skills_lock["skills_count"] == 46
     assert len(skills_lock["skills"]) == 46
     for entry in skills_lock["skills"]:
-        skill_md = REPO_ROOT / ".claude/skills" / entry["skill"] / "SKILL.md"
+        skill_dir = REPO_ROOT / ".claude/skills" / entry["skill"]
+        skill_md = skill_dir / "SKILL.md"
         assert skill_md.is_file(), f"Missing standalone skill {entry['skill']}"
         assert hashlib.sha256(skill_md.read_bytes()).hexdigest() == entry["skill_sha256"]
+        dir_digest = hashlib.sha256()
+        for rel_posix, fpath in sorted(
+            (p.relative_to(skill_dir).as_posix(), p) for p in skill_dir.rglob("*") if p.is_file()
+        ):
+            file_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
+            dir_digest.update(f"{rel_posix}\0{file_sha}\n".encode())
+        assert dir_digest.hexdigest() == entry["dir_sha256"]
+    expected_lock_sha = hashlib.sha256(
+        json.dumps(skills_lock["skills"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert skills_lock["lock_sha256"] == expected_lock_sha
 
     starred = json.loads(
         (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
@@ -468,3 +485,102 @@ def test_meta_convergence_and_zero_banned_caps_in_skills_and_readme() -> None:
         text = target.read_text(encoding="utf-8")
         match = banned_rx.search(text)
         assert match is None, f"Banned arbitrary cap or tool in {target}: {match.group(0)}"
+
+
+def test_nautilus_mcp_watchlist_v2_movers_fallback(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import nautilus_mcp_server as mcp_srv
+
+    wl_path = tmp_path / "live_watchlist_manifest.json"
+    movers_path = tmp_path / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "ranked_count": 2,
+                "entries": [{"symbol": "NVDA"}, {"symbol": "SOXL"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("TIER0_WATCHLIST_MANIFEST", raising=False)
+    monkeypatch.delenv("TIER0_LIVE_WATCHLIST_MANIFEST", raising=False)
+    monkeypatch.setattr(mcp_srv, "DEFAULT_WATCHLIST_PATH", wl_path)
+    monkeypatch.setattr(mcp_srv, "_FALLBACK_MOVERS_PATH", movers_path)
+
+    fallback_res = mcp_srv.get_live_watchlist_manifest()
+    assert fallback_res["ok"] is True
+    assert fallback_res["manifest_path"] == str(movers_path)
+    assert fallback_res["schema_version"] == "tier0.whole-market-movers.v2"
+    assert fallback_res["ranked_count"] == 2
+
+    wl_path.write_text(
+        json.dumps({"schema_version": "tier0.watchlist-manifest.v1", "entries": []}),
+        encoding="utf-8",
+    )
+    primary_res = mcp_srv.get_live_watchlist_manifest()
+    assert primary_res["ok"] is True
+    assert primary_res["manifest_path"] == str(wl_path)
+    assert primary_res["schema_version"] == "tier0.watchlist-manifest.v1"
+
+    bad_path = tmp_path / "bad_watchlist.json"
+    bad_path.write_text(json.dumps({"schema_version": "tier0.unknown.v99"}), encoding="utf-8")
+    bad_res = mcp_srv.get_live_watchlist_manifest(str(bad_path))
+    assert bad_res["ok"] is False
+
+
+def test_compounding_reflection_paper_farm_nested_schema(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import run_compounding_reflection as rcr
+
+    perf_path = tmp_path / "paper_farm_live_performance_manifest.json"
+    perf_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.paper-farm-live-performance.v1",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "summary": {"combined_equity_usd": 400000.0},
+                "per_lane": {
+                    "ALPACA_PA1": {},
+                    "ALPACA_PA2": {},
+                    "ALPACA_PA3": {},
+                    "IBKR_DU_4002": {},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    rep = rcr.run_compounding_reflection(offline=True, manifest_dir=tmp_path)
+    assert rep["paper_farm"]["present"] is True
+    assert rep["paper_farm"]["combined_equity_usd"] == 400000.0
+    assert rep["paper_farm"]["accounts_count"] == 4
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_http(
+        method: str,
+        url: str,
+        *,
+        body: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float = 2.5,
+    ) -> tuple[int, bytes]:
+        del body, headers, timeout
+        calls.append((method, url))
+        return 200, json.dumps({"_id": "reflection-2026-11-26-core_24x5_compound"}).encode("utf-8")
+
+    monkeypatch.setattr(rcr, "_http_request", _fake_http)
+    pushed = rcr._push_xerj_lesson(
+        "http://127.0.0.1:9200",
+        {"timestamp_utc": "2026-11-26T12:00:00+00:00", "best_profile": "core_24x5_compound"},
+    )
+    assert pushed["pushed"] is True
+    assert pushed["id"] == "reflection-2026-11-26-core_24x5_compound"
+    expected_url = (
+        "http://127.0.0.1:9200/tier0-compounding-lessons/_doc/"
+        "reflection-2026-11-26-core_24x5_compound"
+    )
+    assert calls == [("PUT", expected_url)]

@@ -1,6 +1,6 @@
 # Grand-Reset Runbook: Standalone Zero-Hook Clean Disk-Z, WSL2, Fresh AGY, TradingView, 4-Runtime & Orca Setup
 
-This runbook executes a **standalone, non-destructive, zero-hook, fail-closed Grand Reset** anchored on `Z:\noesis` (`$env:TIER0_REPO_ROOT`): archiving superseded Disk-Z clutter, preparing a fresh zero-hook Antigravity (AGY) reinstall, initializing clean Disk-Z + WSL2 `Noesis-SOTA`, syncing 4-runtime native `uv` MCPs + `.claude/mcp-lanes/*.mcp.json` + Orca + `46` standalone locked skills, bringing up the `13` hosted SOTA portals, syncing TradingView Pine v6 + Paper Farm manifests, and passing all `12/12` gates of the master verifier.
+This runbook executes a **standalone, non-destructive, zero-hook, fail-closed Grand Reset** anchored on `Z:\noesis` (`$env:TIER0_REPO_ROOT`): archiving superseded Disk-Z clutter, preparing a fresh Antigravity (AGY 2.0) reinstall (preserving official Orca status hooks), initializing clean Disk-Z + WSL2 `Noesis-SOTA`, syncing 4-runtime native `uv` MCPs + `.claude/mcp-lanes/*.mcp.json` + Orca + `46` standalone locked skills (`.agents/skills.json` + zero-copy `~/.gemini/config/skills.json`), bringing up the `15` hosted SOTA portals, syncing TradingView Pine v6 + Paper Farm manifests, and passing all `12/12` gates of the master verifier.
 
 ## Safety Boundaries (Fail-Closed)
 
@@ -24,7 +24,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\00_c
 
 What this establishes:
 - Archives stray `Z:\tmp_*.diff` files and any operator-specified `-ArchiveLegacyDirs` into `Z:\archive\pre_grand_reset_2026-11-25\` (preserving locked paths safely without force-kills).
-- Backs up existing `~/.gemini` configs to `Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\`, writes a fresh **zero-hook** `~/.gemini/settings.json` directly from `Z:\noesis\.gemini\settings.json`, syncs the `46` standalone locked skills from `Z:\noesis\.claude\skills\` into `~/.gemini/config/skills/`, and prints fresh Antigravity reinstall + clean workspace open steps (`Z:\noesis`).
+- Backs up existing `~/.gemini` configs to `Z:\archive\pre_grand_reset_2026-11-25\gemini_backup\`, writes `~/.gemini/settings.json` directly from `Z:\noesis\.gemini\settings.json` while preserving official upstream Orca status hooks (`~/.orca/agent-hooks/*.cmd`) and filtering out any custom hooks (never altering `~/.gemini/config/hooks.json`), writes zero-copy `~/.gemini/config/skills.json` pointing to `Z:/noesis/.claude/skills` (`.agents/skills.json` at repo root, per [ADR-0022](adr/ADR-0022.md)), and prints fresh Antigravity reinstall + clean workspace open steps (`Z:\noesis`).
 
 ### Step 01: Clean Disk-Z Folder Tree & WSL2 `Noesis-SOTA` Bootstrap
 
@@ -46,8 +46,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\02_r
 
 What this establishes:
 - Confirms `hooks_zero = True` (no `.codex/hooks.json`, no `"hooks"` keys in `.claude/settings.json`, `.gemini/settings.json`, or `.codex/config.toml`).
-- Syncs fresh zero-hook AGY (`~/.gemini/settings.json`, `~/.gemini/config/mcp_config.json`) + Claude Code (`.claude/agents`, `.claude/commands`, `.claude/mcp-lanes/*.mcp.json`) + Codex + OpenCode wiring strictly the 4 vetted native `uv` MCPs (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
-- Syncs the `46` standalone locked skills strictly from `Z:\noesis\.claude\skills\` across AGY, Claude, and Codex, and verifies `orca.yaml`.
+- Syncs AGY (`~/.gemini/settings.json` preserving official Orca hooks, `~/.gemini/config/mcp_config.json`, zero-copy `~/.gemini/config/skills.json` -> `Z:/noesis/.claude/skills`) + Claude Code (`.claude/agents`, `.claude/commands`, `.claude/mcp-lanes/*.mcp.json`) + Codex + OpenCode wiring strictly the 4 vetted native MCPs (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
+- Syncs the `46` standalone locked skills strictly from `Z:\noesis\.claude\skills\` to Claude and Codex (while AGY discovers them zero-copy via `.agents/skills.json` and `~/.gemini/config/skills.json`), and verifies `orca.yaml`.
 
 ### Step 03: Hosted Stack (`15/15` Portals), TradingView Pine v6 & Paper Farm Sync
 
@@ -71,7 +71,7 @@ Requires `[VERDICT: PASS]` across all `12/12` gates:
 1. `0` live broker ports (`4001/7496/8798/8796`)
 2. `risk.py` SHA-256 (`ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`)
 3. `ARCHITECTURE_MANIFEST.json` (`L0..L10`, `11/11` layers)
-4. Living MADR 4.0 ADRs (`ADR-0001..ADR-0021+`) + `zensical build --clean`
+4. Living MADR 4.0 ADRs (`ADR-0001..ADR-0022+`) + `zensical build --clean`
 5. `5/5` native `uv` MCP parity + `scripts/nautilus_mcp_server.py --smoke` (`10/10`)
 6. `15/15` hosted portals HTTP `200`
 7. TradingView Pine v6 balance + `schema_v1.json`

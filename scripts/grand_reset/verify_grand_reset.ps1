@@ -7,7 +7,7 @@
       1. Zero live broker ports (:4001/:7496/:8798/:8796)
       2. Immutable risk.py SHA-256 (ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847)
       3. ARCHITECTURE_MANIFEST.json across L0..L10 (11 layers) + all declared repository_files on disk
-      4. Living MADR 4.0 ADRs (ADR-0001..ADR-0021+), CATALOG.md, docs/index.md, zensical.toml, and zensical build --clean
+      4. Living MADR 4.0 ADRs (ADR-0001..ADR-0022+), CATALOG.md, docs/index.md, zensical.toml, and zensical build --clean
       5. 5/5 native uv MCP parity configs (zero bash -c wrappers) + scripts/nautilus_mcp_server.py --smoke (10/10 tools)
       6. 15/15 hosted portals HTTP 200 on 127.0.0.1
       7. TradingView Pine v6 balance + JSON schema_v1.json safety invariants

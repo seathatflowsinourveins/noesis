@@ -66,6 +66,7 @@ _DEFAULT_LAKE_ROOT = (
 )
 _DEFAULT_PERF_PATH = DEFAULT_MANIFEST_DIR / "paper_farm_live_performance_manifest.json"
 _FALLBACK_PERF_PATH = DEFAULT_MANIFEST_DIR / "live_performance_manifest.json"
+_FALLBACK_MOVERS_PATH = DEFAULT_MANIFEST_DIR / "live_whole_market_movers_manifest.json"
 
 mcp = FastMCP("tier0-nautilus-engine")
 
@@ -223,20 +224,26 @@ def evaluate_l1_queue_markout(
 
 @mcp.tool()
 def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, Any]:
-    """Read live_watchlist_manifest.json (tier0.watchlist-manifest.v1) fail-closed."""
+    """Read live watchlist/movers manifest JSON (v1 or v2) fail-closed."""
     env_p = os.environ.get("TIER0_WATCHLIST_MANIFEST") or os.environ.get(
         "TIER0_LIVE_WATCHLIST_MANIFEST"
     )
-    target = Path(manifest_path or env_p or str(DEFAULT_WATCHLIST_PATH))
+    default_p = (
+        DEFAULT_WATCHLIST_PATH if DEFAULT_WATCHLIST_PATH.is_file() else _FALLBACK_MOVERS_PATH
+    )
+    target = Path(manifest_path or env_p or str(default_p))
     if not target.is_file():
         return {"ok": False, "error": f"Watchlist manifest not found: {target}"}
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"ok": False, "error": f"Invalid watchlist manifest JSON: {exc}"}
-    if data.get("schema_version") != "tier0.watchlist-manifest.v1":
-        return {"ok": False, "error": f"Unexpected schema_version: {data.get('schema_version')!r}"}
-    return {"ok": True, **data}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "Invalid watchlist manifest JSON: expected object"}
+    schema = data.get("schema_version")
+    if schema not in {"tier0.watchlist-manifest.v1", "tier0.whole-market-movers.v2"}:
+        return {"ok": False, "error": f"Unexpected schema_version: {schema!r}"}
+    return {"ok": True, "manifest_path": str(target), **data}
 
 
 @mcp.tool()

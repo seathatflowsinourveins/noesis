@@ -4,7 +4,7 @@
 #   - https://github.com/zizmorcore/zizmor-action
 # SBOM artifact generation lives exclusively in release.yml; CodeQL runs via GitHub Default Setup.
 
-name: Tier-0 SOTA Clean Security
+name: noesis — Tier-0 SOTA Security
 
 on:
   push:

@@ -19,7 +19,7 @@ On Windows startup / logon:
 ### Step 1: Open `Z:\noesis` in Antigravity (AGY) or Orca
 
 1. Launch **Antigravity (AGY)** or **Orca** and open `Z:\noesis` as the active workspace (never open superseded paths).
-2. Confirm a fresh terminal inherits the persisted Disk-Z environment (`TIER0_REPO_ROOT=Z:\noesis`, `TIER0_DATA_ROOT=Z:\sota-data`, `ORCA_WORKSPACES_DIR=Z:\workspaces`) and AGY loads native stdio MCPs from `~/.gemini/config/mcp_config.json` (`$env:USERPROFILE\.gemini\config\mcp_config.json`: `codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
+2. Confirm a fresh terminal inherits the persisted Disk-Z environment (`TIER0_REPO_ROOT=Z:\noesis`, `TIER0_DATA_ROOT=Z:\sota-data`, `ORCA_WORKSPACES_DIR=Z:\workspaces`) and AGY loads native stdio MCPs from `~/.gemini/config/mcp_config.json` (`$env:USERPROFILE\.gemini\config\mcp_config.json`: `codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`), zero-copy skills from `.agents/skills.json` + `~/.gemini/config/skills.json` (`Z:/noesis/.claude/skills`), and preserved official Orca hooks in `~/.gemini/settings.json` (`ADR-0022`).
 
 ### Step 2: Run `just resume` (Reconcile & Full 15/15 Portal + OmniRoute + Orca Preflight)
 
@@ -128,4 +128,4 @@ Every newly opened session (Antigravity, Claude Code, Codex, Gemini CLI, OpenCod
 - [Clean Ecosystem Manifest](CLEAN_ECOSYSTEM_MANIFEST.md)
 - [Architecture Layer Manifest (`L0..L10`)](ARCHITECTURE_LAYER_MANIFEST.md)
 - [TradingView Automation Playbook](TV_AUTOMATION_PLAYBOOK.md)
-- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0021+`)](adr/CATALOG.md)
+- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0022+`)](adr/CATALOG.md)

@@ -4,14 +4,14 @@
     Idempotent standalone zero-hook setup & sync for Antigravity (AGY), Claude Code, Codex, OpenCode, and Orca.
 .DESCRIPTION
     Syncs strictly from standalone Z:\noesis ($RepoRoot):
-      - Zero self-invented hooks (no .codex/hooks.json, no "hooks" in Claude/Gemini/Codex configs)
-      - 4-runtime native uv MCP parity (codebase-memory, xerj, nautilus-engine, edgartools)
-      - Fresh AGY (~/.gemini/settings.json, ~/.gemini/config/mcp_config.json, ~/.gemini/config/skills)
+      - Preserve official upstream Orca status hooks (~/.orca/agent-hooks/*.cmd) in ~/.gemini/settings.json
+      - 4-runtime native uv/venv MCP parity (codebase-memory, xerj, nautilus-engine, edgartools)
+      - Fresh AGY (~/.gemini/settings.json, ~/.gemini/config/mcp_config.json, zero-copy ~/.gemini/config/skills.json)
       - Claude Code (.claude/settings.json, agents, commands, mcp-lanes, skills, ~/.claude/skills)
       - Codex (.codex/config.toml, ~/.codex/skills)
       - OpenCode (opencode.json, .opencode/commands)
       - Orca (orca.yaml + clean lane launch readiness)
-      - All 46 vetted skills copied strictly from $RepoRoot\.claude\skills per UPSTREAM_SKILLS_LOCK.json
+      - All 46 vetted skills synced from $RepoRoot\.claude\skills to Claude/Codex and zero-copy referenced by AGY
 #>
 [CmdletBinding()]
 param(
@@ -99,6 +99,78 @@ $AgyDir = Join-Path $HomeDir ".gemini"
 $AgyConfigDir = Join-Path $AgyDir "config"
 $AgySettingsTarget = Join-Path $AgyDir "settings.json"
 $AgyMcpTarget = Join-Path $AgyConfigDir "mcp_config.json"
+$AgySkillsConfigTarget = Join-Path $AgyConfigDir "skills.json"
+$RepoRootSlash = ($RepoRoot.Replace('\', '/').TrimEnd('/'))
+$SkillsSourceSlash = ($SkillsSourceDir.Replace('\', '/').TrimEnd('/'))
+
+function Get-PersistedEnvVar {
+    param([string]$Name)
+    foreach ($scope in @("User", "Machine", "Process")) {
+        $v = [Environment]::GetEnvironmentVariable($Name, $scope)
+        if (-not [string]::IsNullOrWhiteSpace($v)) {
+            return $v.Trim()
+        }
+    }
+    return ""
+}
+
+function Get-PreservedOrcaHooks {
+    param([object]$SettingsObj)
+    if ($null -eq $SettingsObj -or -not ($SettingsObj.PSObject.Properties.Name -contains "hooks")) {
+        return $null
+    }
+    $hooksObj = $SettingsObj.hooks
+    if ($null -eq $hooksObj) {
+        return $null
+    }
+    $preserved = [ordered]@{}
+    foreach ($evtProp in $hooksObj.PSObject.Properties) {
+        $keptMatchers = [System.Collections.Generic.List[object]]::new()
+        foreach ($matcherItem in @($evtProp.Value)) {
+            if ($null -eq $matcherItem) { continue }
+            $innerHooks = @()
+            if ($matcherItem.PSObject.Properties.Name -contains "hooks") {
+                $innerHooks = @(
+                    $matcherItem.hooks | Where-Object {
+                        $_ -and ([string]$_.command -match '[/\\]\.orca[/\\]agent-hooks[/\\]')
+                    }
+                )
+            } elseif ($matcherItem.PSObject.Properties.Name -contains "command" -and ([string]$matcherItem.command -match '[/\\]\.orca[/\\]agent-hooks[/\\]')) {
+                $keptMatchers.Add($matcherItem)
+                continue
+            }
+            if ($innerHooks.Count -gt 0) {
+                $copyMatcher = [ordered]@{}
+                foreach ($mp in $matcherItem.PSObject.Properties) {
+                    if ($mp.Name -eq "hooks") {
+                        $copyMatcher["hooks"] = @($innerHooks)
+                    } else {
+                        $copyMatcher[$mp.Name] = $mp.Value
+                    }
+                }
+                $keptMatchers.Add([pscustomobject]$copyMatcher)
+            }
+        }
+        if ($keptMatchers.Count -gt 0) {
+            $preserved[$evtProp.Name] = @($keptMatchers)
+        }
+    }
+    if ($preserved.Count -gt 0) {
+        return [pscustomobject]$preserved
+    }
+    return $null
+}
+
+$EdgarServerSpec = [ordered]@{
+    command = "$RepoRootSlash/.venv/Scripts/edgartools-mcp.exe"
+    args    = @()
+}
+$EdgarIdentityVal = Get-PersistedEnvVar -Name "EDGAR_IDENTITY"
+if (-not [string]::IsNullOrWhiteSpace($EdgarIdentityVal)) {
+    $EdgarServerSpec["env"] = [ordered]@{
+        EDGAR_IDENTITY = $EdgarIdentityVal
+    }
+}
 
 $CleanMcpServers = [ordered]@{
     "codebase-memory" = [ordered]@{
@@ -114,13 +186,14 @@ $CleanMcpServers = [ordered]@{
         }
     }
     "nautilus-engine" = [ordered]@{
-        command = "uv"
-        args    = @("run", "--directory", $RepoRoot, "--no-sync", "python", "scripts/nautilus_mcp_server.py")
+        command = "$RepoRootSlash/.venv/Scripts/python.exe"
+        args    = @("$RepoRootSlash/scripts/nautilus_mcp_server.py")
+        env     = [ordered]@{
+            PYTHONPATH              = "$RepoRootSlash/src;$RepoRootSlash"
+            PYTHONDONTWRITEBYTECODE = "1"
+        }
     }
-    "edgartools" = [ordered]@{
-        command = "uv"
-        args    = @("run", "--directory", $RepoRoot, "--no-sync", "edgartools-mcp")
-    }
+    "edgartools" = $EdgarServerSpec
 }
 
 $ClaudeDir = Join-Path $HomeDir ".claude"
@@ -128,7 +201,6 @@ $CodexDir = Join-Path $HomeDir ".codex"
 $OpenCodeConfigDir = Join-Path $HomeDir ".config\opencode"
 
 $SkillTargets = @(
-    (Join-Path $AgyConfigDir "skills"),
     (Join-Path $ClaudeDir "skills"),
     (Join-Path $CodexDir "skills")
 )
@@ -145,9 +217,9 @@ if ($DryRun) {
     Write-Host "  MCP Parity      : OK (5/5 repo configs -> $($ExpectedMcps -join ', '))" -ForegroundColor Green
     Write-Host "  Hooks Zero      : $HooksZero (no .codex/hooks.json, no runtime hooks)" -ForegroundColor Cyan
     Write-Host "  Locked Skills   : $($LockedSkills.Count) skill(s) in UPSTREAM_SKILLS_LOCK.json (source=$SkillsSourceDir)" -ForegroundColor Cyan
-    Write-Host "  AGY Targets     : $AgySettingsTarget, $AgyMcpTarget, $($SkillTargets[0])" -ForegroundColor Cyan
-    Write-Host "  Claude Targets  : $RepoRoot\.claude\, $($SkillTargets[1])" -ForegroundColor Cyan
-    Write-Host "  Codex Targets   : $RepoRoot\.codex\, $($SkillTargets[2])" -ForegroundColor Cyan
+    Write-Host "  AGY Targets     : $AgySettingsTarget, $AgyMcpTarget, $AgySkillsConfigTarget" -ForegroundColor Cyan
+    Write-Host "  Claude Targets  : $RepoRoot\.claude\, $($SkillTargets[0])" -ForegroundColor Cyan
+    Write-Host "  Codex Targets   : $RepoRoot\.codex\, $($SkillTargets[1])" -ForegroundColor Cyan
     Write-Host "  OpenCode Target : $RepoRoot\opencode.json, $OpenCodeConfigDir\opencode.json" -ForegroundColor Cyan
     Write-Host "  Orca Config     : $RepoOrcaYaml" -ForegroundColor Cyan
     Write-Host "  CLI Availability: $(($CliChecks.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' | ')" -ForegroundColor Gray
@@ -173,11 +245,23 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
-# 1. Sync fresh zero-hook AGY (~/.gemini/settings.json & ~/.gemini/config/mcp_config.json)
+# 1. Sync AGY (~/.gemini/settings.json preserving Orca hooks, ~/.gemini/config/mcp_config.json, & ~/.gemini/config/skills.json)
 New-Item -ItemType Directory -Path $AgyConfigDir -Force | Out-Null
+$ExistingOrcaHooks = $null
+if (Test-Path -LiteralPath $AgySettingsTarget) {
+    try {
+        $ExistingAgyObj = Get-Content -LiteralPath $AgySettingsTarget -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ExistingOrcaHooks = Get-PreservedOrcaHooks -SettingsObj $ExistingAgyObj
+    } catch {
+        $ExistingOrcaHooks = $null
+    }
+}
 $AgySettingsObj = Get-Content -LiteralPath $RepoGeminiSettings -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($AgySettingsObj.PSObject.Properties.Name -contains "hooks") {
     $AgySettingsObj.PSObject.Properties.Remove("hooks")
+}
+if ($null -ne $ExistingOrcaHooks) {
+    $AgySettingsObj | Add-Member -MemberType NoteProperty -Name "hooks" -Value $ExistingOrcaHooks -Force
 }
 $AgySettingsObj | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value $CleanMcpServers -Force
 Save-BackupIfExists -TargetPath $AgySettingsTarget
@@ -186,6 +270,14 @@ Write-Utf8NoBom -Path $AgySettingsTarget -Content (($AgySettingsObj | ConvertTo-
 $AgyMcpPayload = [ordered]@{ mcpServers = $CleanMcpServers }
 Save-BackupIfExists -TargetPath $AgyMcpTarget
 Write-Utf8NoBom -Path $AgyMcpTarget -Content (($AgyMcpPayload | ConvertTo-Json -Depth 10) + "`n")
+
+$AgySkillsPayload = [ordered]@{
+    entries = @(
+        [ordered]@{ path = $SkillsSourceSlash }
+    )
+}
+Save-BackupIfExists -TargetPath $AgySkillsConfigTarget
+Write-Utf8NoBom -Path $AgySkillsConfigTarget -Content (($AgySkillsPayload | ConvertTo-Json -Depth 5) + "`n")
 
 # 2. Sync OpenCode global config mirror (without touching secrets)
 New-Item -ItemType Directory -Path $OpenCodeConfigDir -Force | Out-Null

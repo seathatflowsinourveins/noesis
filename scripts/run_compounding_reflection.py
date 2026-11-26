@@ -191,18 +191,27 @@ def _http_reachable(url: str, timeout: float = 2.0) -> bool:
 
 
 def _push_xerj_lesson(xerj_url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    endpoint = f"{xerj_url.rstrip('/')}/tier0-compounding-lessons/_doc"
+    doc_id = (
+        f"reflection-{str(payload.get('timestamp_utc', ''))[:10]}"
+        f"-{payload.get('best_profile') or 'none'}"
+    )
+    safe_id = urllib.parse.quote(doc_id, safe="-_.")
+    endpoint = f"{xerj_url.rstrip('/')}/tier0-compounding-lessons/_doc/{safe_id}"
     try:
         body = json.dumps(payload, sort_keys=True).encode("utf-8")
         _, raw = _http_request(
-            "POST",
+            "PUT",
             endpoint,
             body=body,
             headers={"Content-Type": "application/json"},
             timeout=3.0,
         )
         res = json.loads(raw.decode("utf-8"))
-        return {"pushed": True, "index": "tier0-compounding-lessons", "id": res.get("_id")}
+        return {
+            "pushed": True,
+            "index": "tier0-compounding-lessons",
+            "id": res.get("_id", doc_id),
+        }
     except (
         http.client.HTTPException,
         json.JSONDecodeError,
@@ -371,12 +380,24 @@ def run_compounding_reflection(
     paper_manifest_path = target_manifest_dir / "paper_farm_live_performance_manifest.json"
     if paper_manifest_path.is_file():
         paper_doc = json.loads(paper_manifest_path.read_text(encoding="utf-8"))
+        summary = paper_doc.get("summary") or {}
+        per_lane = paper_doc.get("per_lane") or {}
+        combined_equity_usd = (
+            summary.get("combined_equity_usd", paper_doc.get("combined_equity_usd"))
+            if isinstance(summary, dict)
+            else paper_doc.get("combined_equity_usd")
+        )
+        accounts_count = (
+            len(per_lane)
+            if isinstance(per_lane, dict) and per_lane
+            else len(paper_doc.get("accounts", {}))
+        )
         paper_summary: dict[str, Any] = {
             "present": True,
             "paper_only": bool(paper_doc.get("paper_only", True)),
             "live_execution_enabled": bool(paper_doc.get("live_execution_enabled", False)),
-            "combined_equity_usd": paper_doc.get("combined_equity_usd"),
-            "accounts_count": len(paper_doc.get("accounts", {})),
+            "combined_equity_usd": combined_equity_usd,
+            "accounts_count": accounts_count,
         }
     else:
         paper_summary = {"present": False, "paper_only": True, "live_execution_enabled": False}

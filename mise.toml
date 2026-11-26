@@ -1,4 +1,4 @@
-# Tier-0 SOTA Clean — Declarative Upstream CLI Toolchain Manifest
+# noesis — Tier-0 SOTA — Declarative Upstream CLI Toolchain Manifest
 # Managed via official mise registry backends (core/aqua) with minor-version pins
 # compatible across Windows 11, WSL2 Noesis-SOTA, and Ubuntu GitHub Actions runners.
 # Python virtual environments remain managed natively by `uv` (.venv on Windows,

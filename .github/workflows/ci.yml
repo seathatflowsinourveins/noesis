@@ -2,7 +2,7 @@
 #   - https://github.com/astral-sh/setup-uv | https://github.com/astral-sh/ruff | https://github.com/astral-sh/ty
 #   - https://github.com/fpgmaas/deptry | https://github.com/ast-grep/ast-grep | https://github.com/Z3Prover/z3 | https://github.com/pytest-dev/pytest
 
-name: Tier-0 SOTA Clean CI
+name: noesis — Tier-0 SOTA CI
 
 on:
   push:

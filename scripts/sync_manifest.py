@@ -169,6 +169,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "scripts/nautilus_mcp_server.py",
         "scripts/orca_account_failover.py",
         "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
+        ".agents/skills.json",
     ],
     "L10": [
         "src/tier0_sota/live/performance.py",
@@ -310,10 +311,54 @@ def _check_zero_hooks(repo_root: Path) -> bool:
     return True
 
 
+def compute_skill_dir_sha256(skill_dir: Path) -> str:
+    """Compute deterministic SHA-256 over all files in `skill_dir` sorted by POSIX path."""
+    files = sorted(
+        (p.relative_to(skill_dir).as_posix(), p) for p in skill_dir.rglob("*") if p.is_file()
+    )
+    digest = hashlib.sha256()
+    for rel_posix, file_path in files:
+        file_sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        digest.update(f"{rel_posix}\0{file_sha}\n".encode())
+    return digest.hexdigest()
+
+
+def compute_skills_lock_sha256(skills: list[dict[str, Any]]) -> str:
+    """Compute deterministic top-level SHA-256 over the serialized skills array."""
+    canonical = json.dumps(skills, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def verify_skills_lock(repo_root: Path, skills_lock: dict[str, Any]) -> None:
+    """Verify skill_sha256, dir_sha256, and top-level lock_sha256 against .claude/skills."""
+    skills = skills_lock.get("skills")
+    if not isinstance(skills, list) or len(skills) != int(skills_lock.get("skills_count", -1)):
+        raise ValueError("UPSTREAM_SKILLS_LOCK.json skills list length mismatch")
+    skills_dir = repo_root / ".claude" / "skills"
+    for entry in skills:
+        name = str(entry["skill"])
+        skill_dir = skills_dir / name
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            raise ValueError(f"Missing SKILL.md for locked skill: {name}")
+        actual_skill_sha = hashlib.sha256(skill_md.read_bytes()).hexdigest()
+        if entry.get("skill_sha256") != actual_skill_sha:
+            raise ValueError(f"skill_sha256 mismatch for {name}")
+        actual_dir_sha = compute_skill_dir_sha256(skill_dir)
+        if entry.get("dir_sha256") != actual_dir_sha:
+            raise ValueError(f"dir_sha256 mismatch for {name}")
+    expected_lock_sha = compute_skills_lock_sha256(skills)
+    if skills_lock.get("lock_sha256") != expected_lock_sha:
+        raise ValueError(
+            f"lock_sha256 mismatch: {skills_lock.get('lock_sha256')} != {expected_lock_sha}"
+        )
+
+
 def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     """Derive ARCHITECTURE_MANIFEST.json deterministically from repository SSOT inputs."""
     upstream = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
     skills_lock = json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
+    verify_skills_lock(repo_root, skills_lock)
     mcp_root = json.loads((repo_root / ".mcp.json").read_text(encoding="utf-8"))
     uv_lock_text = (repo_root / "uv.lock").read_text(encoding="utf-8")
     phil_doc = json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -413,7 +458,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             ],
             "mcp_lanes": mcp_lanes,
         },
-        "hosted_portals": HOSTED_PORTALS,
+        "hosted_portals": [*HOSTED_PORTALS, *COMPANION_PORTALS],
         "layers": layers,
         "entrypoints": entrypoints,
         "repository_files": repo_files,

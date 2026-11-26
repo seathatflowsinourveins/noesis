@@ -19,6 +19,7 @@ MADR_SECTIONS = (
     "## Decision Drivers",
     "## Considered Options",
     "## Decision Outcome",
+    "## Consequences",
 )
 BANNED_IMPORT_RE = re.compile(
     r"(?m)^\s*(?:import|from)\s+(?:yfinance|backtrader|vectorbt|talib|mlfinlab)\b"
@@ -107,6 +108,11 @@ def test_few_line_harnesses_mcp_lanes_and_sota_manifest() -> None:
         assert len(entry["skill_sha256"]) == 64
         assert (REPO_ROOT / ".claude" / "skills" / entry["skill"] / "SKILL.md").is_file()
 
+    agy_skills_cfg = REPO_ROOT / ".agents" / "skills.json"
+    assert agy_skills_cfg.is_file(), "Missing .agents/skills.json"
+    agy_skills_doc = json.loads(agy_skills_cfg.read_text("utf-8"))
+    assert {"path": ".claude/skills"} in agy_skills_doc.get("entries", [])
+
 
 def test_zero_legacy_references_and_zero_yfinance_in_uv_lock() -> None:
     uv_lock = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
@@ -140,7 +146,10 @@ def test_madr_adrs_catalog_and_zensical_toml() -> None:
     assert "superseded by adr-" in catalog.lower()
 
     adr_paths = sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
-    assert len(adr_paths) >= 1
+    assert len(adr_paths) >= 22
+    assert (REPO_ROOT / "docs" / "adr" / "ADR-0022.md").is_file()
+    nav_targets = [next(iter(item.values())) for item in z_cfg["project"]["nav"]]
+    assert "adr/ADR-0022.md" in nav_targets
     for adr_path in adr_paths:
         assert adr_path.name in catalog, f"{adr_path.name} missing from CATALOG.md"
         body = adr_path.read_text(encoding="utf-8")

@@ -482,7 +482,7 @@ else
   record_gate "paper_farm_preflight" "false" "preflight=${PF_OK} manifest_safe=${PERF_OK} output=${PF_OUT}"
 fi
 
-# 13. OmniRoute local router (:20128) & zero global API-key override
+# 12. OmniRoute local router (:20128)
 OMNI_OK=false
 OMNI_DETAIL="http://127.0.0.1:20128/api/health unreachable"
 OMNI_BODY="$(curl -sS -m 3 http://127.0.0.1:20128/api/health 2>/dev/null || true)"
@@ -492,6 +492,7 @@ if jq -e '.status == "ok"' <<<"$OMNI_BODY" >/dev/null 2>&1; then
 fi
 record_gate "omniroute_local_router" "$OMNI_OK" "$OMNI_DETAIL"
 
+# 13. Native OAuth & unrestricted Claude models (WSL2 counterpart to .ps1 gate #13 orca_multi_account_readiness; 13 always-on gates)
 CLAUDE_MODEL_UNRESTRICTED=false
 if [[ -f "${HOME}/.claude/settings.json" ]] && jq -e 'has("availableModels") | not' "${HOME}/.claude/settings.json" >/dev/null 2>&1; then
   CLAUDE_MODEL_UNRESTRICTED=true
