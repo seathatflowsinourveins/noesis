@@ -20,9 +20,9 @@ services:
       - --port
       - "5000"
       - --allowed-hosts
-      - mlflow:5000,127.0.0.1:5000,localhost:5000
+      - mlflow:5000,127.0.0.1:5000,localhost:5000,${TIER0_TAILSCALE_HOST:-localhost}:5000,${TIER0_TAILSCALE_SHORT:-localhost}:5000,${TIER0_TAILSCALE_IP:-127.0.0.1}:5000
       - --cors-allowed-origins
-      - http://127.0.0.1:5000,http://localhost:5000
+      - http://127.0.0.1:5000,http://localhost:5000,http://${TIER0_TAILSCALE_HOST:-localhost}:5000,https://${TIER0_TAILSCALE_HOST:-localhost}:5000,http://${TIER0_TAILSCALE_SHORT:-localhost}:5000
       - --workers
       - "2"
     ports:
@@ -162,10 +162,22 @@ services:
       - http://127.0.0.1:7575
       - --trusted-origin
       - http://localhost:7575
+      - --trusted-origin
+      - http://${TIER0_TAILSCALE_HOST:-localhost}:7575
+      - --trusted-origin
+      - https://${TIER0_TAILSCALE_HOST:-localhost}:7575
+      - --trusted-origin
+      - http://${TIER0_TAILSCALE_SHORT:-localhost}:7575
       - --trusted-host
       - 127.0.0.1:7575
       - --trusted-host
       - localhost:7575
+      - --trusted-host
+      - ${TIER0_TAILSCALE_HOST:-localhost}:7575
+      - --trusted-host
+      - ${TIER0_TAILSCALE_SHORT:-localhost}:7575
+      - --trusted-host
+      - ${TIER0_TAILSCALE_IP:-127.0.0.1}:7575
       - --log-dir
       - /state/inspect-logs
     ports:
@@ -193,6 +205,8 @@ services:
       - serve
       - --dev-addr
       - 0.0.0.0:8000
+      - --external-origin
+      - http://${TIER0_TAILSCALE_HOST:-localhost}:8010
     ports:
       - "127.0.0.1:8010:8000"
     volumes:

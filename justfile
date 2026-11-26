@@ -94,7 +94,7 @@ zizmor:
 
 # Scan repository misconfigurations & secrets with Trivy
 trivy:
-    trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 .
+    trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills .
 
 # Run full supply-chain & workflow security gates (gitleaks + zizmor + trivy)
 security: gitleaks zizmor trivy

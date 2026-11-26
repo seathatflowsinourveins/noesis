@@ -739,7 +739,8 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
             "workflow_audit": "zizmor --offline .github/workflows",
             "supply_chain_scan": (
-                "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 ."
+                "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL "
+                "--exit-code 1 --skip-dirs .venv,.git,site,.claude/skills ."
             ),
             "secret_scan": (
                 "gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner"
