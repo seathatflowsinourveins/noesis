@@ -2,7 +2,7 @@
   "schema_version": "tier0.llm-harness-manifest.v1",
   "repo_name": "noesis",
   "future_flagship_name": "noesis",
-  "branch": "main",
+  "branch": "seathatflowsinourveins/paper-farm-24x5-tca",
   "ssot_entrypoints": {
     "canonical_agents_md": "AGENTS.md",
     "claude_md_pointer": "@AGENTS.md",

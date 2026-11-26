@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import duckdb
 import polars as pl
 import pytest
 from alpaca.trading.enums import OrderClass
+from alpaca.trading.requests import LimitOrderRequest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -25,8 +30,10 @@ from tier0_sota.live import (
     PaperFarmCoordinator,
     aggregate_finra_trf_ratios,
     aggregate_paper_farm_performance,
+    execution,
     select_short_or_inverse_fallback,
 )
+from tier0_sota.live.execution import Guard
 from tier0_sota.live.paper_farm import (
     IBKR_PAPER_MAX_RPM,
     borrow_accrual_days,
@@ -36,11 +43,13 @@ from tier0_sota.live.paper_farm import (
     round_lot_up,
 )
 from tier0_sota.live.performance import record_paper_farm_telemetry
+from tier0_sota.live.runner import exit_context, reconcile_fills
 from tier0_sota.risk import MAX_STOP_LOSS_PCT
 
 
 def _make_bar(open_px: float, close_px: float, vol: float) -> SimpleNamespace:
     return SimpleNamespace(
+        timestamp=datetime(2026, 10, 15, 14, 59, tzinfo=UTC),
         open=open_px,
         high=max(open_px, close_px),
         low=min(open_px, close_px),
@@ -99,6 +108,13 @@ class _FakeTradingClient:
         self.shortable = shortable
         self.etb = etb
         self.orders: list[object] = []
+        self.confirmed: dict[str, SimpleNamespace] = {}
+
+    def get_order_by_id(self, order_id: str) -> SimpleNamespace:
+        return self.confirmed.get(order_id, SimpleNamespace(filled_qty="0", status="accepted"))
+
+    def get_open_position(self, symbol: str) -> SimpleNamespace:
+        return next(row for row in self.confirmed.values() if row.symbol == symbol)
 
     def get_asset(self, symbol: str) -> SimpleNamespace:
         return SimpleNamespace(symbol=symbol, shortable=self.shortable, easy_to_borrow=self.etb)
@@ -141,6 +157,313 @@ def test_finra_trf_ratio_aggregation() -> None:
         ]
     )
     assert agg["NVDA"]["darkpool_trf_ratio"] == 0.25
+
+
+def test_live_activity_replay_and_split_borrow_accrual(tmp_path: Path) -> None:
+    class ReplayClient(_FakeTradingClient):
+        def get(self, path: str, params: dict[str, str]) -> list[dict[str, str]]:
+            assert path == "/account/activities/FILL"
+            return [
+                {
+                    "id": f"execution-{i}",
+                    "order_id": "ord-1",
+                    "qty": "30",
+                    "cum_qty": str(i * 30),
+                    "side": "buy",
+                    "symbol": "SOXS",
+                    "transaction_time": "2026-11-20T15:00:00Z",
+                    "price": "25.02",
+                }
+                for i in (1, 2)
+            ]
+
+    client = ReplayClient()
+    lane = AlpacaPaperLane("ALPACA_PA2", tmp_path, client, CrossLaneSymbolLock())
+    submitted = lane.submit_guarded_entry(
+        symbol="SOXS",
+        side="LONG",
+        ref_price=Decimal("25.00"),
+        arrival_price=Decimal("25.01"),
+        origin="INVERSE_HEDGE_SOXS",
+        annual_borrow_rate=Decimal("0.12"),
+        prior_close=Decimal("24"),
+        client_order_id="scan-1",
+    )
+    assert submitted
+    client.confirmed["ord-1"] = SimpleNamespace(
+        client_order_id="scan-1", side=SimpleNamespace(value="buy")
+    )
+    assert reconcile_fills(lane) == 2
+    # A restart can replay a committed page before its cursor has been checkpointed.
+    with duckdb.connect(str(lane.duckdb_path)) as conn:
+        conn.execute("DELETE FROM paper_activity_cursor")
+    assert reconcile_fills(lane) == 0
+    with duckdb.connect(str(lane.duckdb_path), read_only=True) as conn:
+        assert conn.execute(
+            "SELECT count(*),sum(filled_qty),sum(borrow_fee_usd),"
+            "avg(implementation_shortfall_bps) FROM paper_tca_fills"
+        ).fetchone() == (2, Decimal("60"), Decimal("2.4"), 8.0)
+
+
+def test_worker_admits_one_paper_oto_from_fresh_sip_trades(tmp_path: Path, monkeypatch) -> None:
+    stop = threading.Event()
+
+    class Broker(_FakeTradingClient):
+        def __init__(self):
+            super().__init__()
+            self.identity = uuid4()
+
+        def get_account(self):
+            return SimpleNamespace(
+                id=self.identity,
+                status=SimpleNamespace(value="ACTIVE"),
+                account_blocked=False,
+                trading_blocked=False,
+                trade_suspended_by_user=False,
+                equity="100000",
+                last_equity="100000",
+            )
+
+        def get_all_positions(self):
+            return []
+
+        def get_orders(self, request):
+            return []
+
+        def get_clock(self):
+            return SimpleNamespace(is_open=True)
+
+        def get_asset(self, symbol):
+            return SimpleNamespace(tradable=True, attributes=["overnight_tradable"])
+
+        def get_order_by_id(self, order_id, *args):
+            request = self.orders[0]
+            assert isinstance(request, LimitOrderRequest) and request.stop_loss is not None
+            child = SimpleNamespace(
+                id="child",
+                status=SimpleNamespace(value="held"),
+                replaced_by=None,
+                symbol=request.symbol,
+                side=SimpleNamespace(value="sell"),
+                stop_price=str(request.stop_loss.stop_price),
+            )
+            return SimpleNamespace(
+                id=order_id,
+                legs=[child],
+                status=SimpleNamespace(value="new"),
+                filled_qty="0",
+                filled_avg_price=None,
+            )
+
+    brokers = {acct: Broker() for acct in ALPACA_LANE_PROFILES}
+    farm = PaperFarmCoordinator(tmp_path, alpaca_clients=brokers)
+
+    class Quotes:
+        def get_stock_latest_quote(self, request):
+            return {
+                "NVDA": SimpleNamespace(
+                    bid_price=100, ask_price=100.01, timestamp=datetime.now(UTC)
+                )
+            }
+
+    class Stream:
+        def __init__(self, *args, feed):
+            self.feed = feed
+            self.subscribed = threading.Event()
+
+        def subscribe_trades(self, callback, *symbols):
+            self.callback = callback
+            if "NVDA" in symbols:
+                self.subscribed.set()
+
+        def run(self):
+            assert self.subscribed.wait(15)
+            if self.feed.value == "sip":
+                for _ in range(2):
+                    asyncio.run(
+                        self.callback(
+                            SimpleNamespace(symbol="NVDA", price=100, timestamp=datetime.now(UTC))
+                        )
+                    )
+                stop.set()
+            assert stop.wait(15)
+
+        def stop(self):
+            stop.set()
+
+    now = datetime.now(UTC).isoformat()
+    (tmp_path / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "macro_regime": {"regime": 1},
+                "entries": [
+                    {
+                        "symbol": "NVDA",
+                        "extreme_mover_eligible": True,
+                        "side": "BUY",
+                        "session": "RTH",
+                        "bar_close_utc": now,
+                        "natr_pct": 0.012,
+                        "last_price": 100,
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(execution, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(execution, "resolve_alpaca_env_creds", lambda: ("", ""))
+    monkeypatch.setattr(execution, "PaperFarmCoordinator", lambda _: farm)
+    monkeypatch.setattr(execution, "StockDataStream", Stream)
+    monkeypatch.setattr(
+        execution.ExtremeMoverScanner, "from_env", lambda: SimpleNamespace(data_client=Quotes())
+    )
+    monkeypatch.setattr(execution.engine, "classify_us_equity_session_et", lambda _: "RTH")
+    execution.run_execution(tmp_path, stop=stop)
+    submitted = [o for broker in brokers.values() for o in broker.orders]
+    assert len(submitted) == 1
+    entry = submitted[0]
+    assert isinstance(entry, LimitOrderRequest) and entry.order_class == OrderClass.OTO
+    assert entry.stop_loss is not None and entry.limit_price is not None
+    assert entry.stop_loss.stop_price < entry.limit_price
+    with duckdb.connect(str(farm.lanes["ALPACA_PA1"].duckdb_path)) as db:
+        assert db.execute("SELECT count(*) FROM paper_entry_decisions").fetchone() == (1,)
+        assert db.execute("SELECT count(*) FROM paper_tca_fills").fetchone() == (0,)
+
+
+def test_adverse_published_farm_calibration_holds_new_risk(tmp_path: Path) -> None:
+    receipt = {
+        "schema_version": "tier0.tca-calibration-manifest.v1",
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "duckdb_errors": [],
+        "parity_within_2x_envelope": False,
+    }
+    path = tmp_path / "tca_calibration_manifest.json"
+    path.write_text(json.dumps(receipt))
+    assert not execution.cost_calibration_allows_entry(tmp_path)
+    path.write_text(json.dumps(receipt | {"parity_within_2x_envelope": True}))
+    assert execution.cost_calibration_allows_entry(tmp_path)
+
+
+def test_execution_worker_ratchets_confirmed_oto_and_restores_stop(tmp_path: Path) -> None:
+    class Broker(_FakeTradingClient):
+        def replace_order_by_id(self, oid, request):
+            assert oid == "protective"
+            child.stop_price = str(request.stop_price)
+            return child
+
+    broker = Broker()
+    lane = AlpacaPaperLane("ALPACA_PA1", tmp_path, broker, CrossLaneSymbolLock())
+    order = lane.submit_guarded_entry(
+        symbol="SPY", side="LONG", ref_price=Decimal("100"), client_order_id="parent"
+    )
+    assert order
+    initial = Decimal(str(order["stop_price"]))
+    child = SimpleNamespace(
+        id="protective", stop_price=str(initial), status=SimpleNamespace(value="new")
+    )
+    parent = SimpleNamespace(
+        status=SimpleNamespace(value="filled"), filled_qty="1", filled_avg_price="100"
+    )
+    guard = Guard(
+        lane,
+        "parent",
+        "SPY",
+        "LONG",
+        initial,
+        initial,
+        Decimal("0.015"),
+        "RTH",
+        False,
+        parent,
+        child,
+    )
+    for price in ("101", "103", "105", "110"):
+        previous = guard.stop
+        guard.on_price(Decimal(price), "RTH")
+        assert guard.stop >= previous
+    assert guard.stop > Decimal("100")
+    guard.on_price(guard.stop, "RTH")
+    assert not guard.triggered and len(broker.orders) == 1
+    with duckdb.connect(str(lane.duckdb_path)) as db:
+        assert db.execute("SELECT active_stop FROM paper_entry_decisions").fetchone() == (
+            guard.stop,
+        )
+
+
+def test_replaced_child_exit_uses_owned_stop_and_causal_arrival(tmp_path: Path) -> None:
+    submitted = datetime(2026, 11, 25, 15, 0, tzinfo=UTC)
+    side = SimpleNamespace(value="sell")
+    child = SimpleNamespace(
+        id="new",
+        replaces="old",
+        symbol="NVDA",
+        stop_price="101",
+        client_order_id="new-leg",
+        submitted_at=submitted,
+        side=side,
+    )
+    original = SimpleNamespace(id="old", replaces=None)
+    parent = SimpleNamespace(id="parent-id", side=SimpleNamespace(value="buy"), legs=[original])
+
+    class Broker(_FakeTradingClient):
+        def get_order_by_client_id(self, cid):
+            assert cid == "signal"
+            return parent
+
+        def get_order_by_id(self, order_id, *args):
+            return original if order_id == "old" else parent
+
+    class Quotes:
+        def get_stock_quotes(self, request):
+            assert request.limit == 1
+            return SimpleNamespace(
+                data={
+                    "NVDA": [
+                        SimpleNamespace(bid_price=101.10, ask_price=101.12, timestamp=submitted)
+                    ]
+                }
+            )
+
+    lane = AlpacaPaperLane("ALPACA_PA2", tmp_path, Broker(), CrossLaneSymbolLock())
+    ctx = exit_context(lane, child, {"signal": ("NVDA",)}, Quotes())
+    assert ctx and ctx[:6] == (
+        "NVDA",
+        "SHORT",
+        Decimal("101"),
+        Decimal("101.11"),
+        "RTH",
+        "PROTECTIVE_EXIT",
+    )
+    child.replaces = None
+    assert exit_context(lane, child, {"signal": ("NVDA",)}, Quotes()) is None
+
+
+def test_supervised_four_tiers_only_ratchet_on_confirmed_fill(tmp_path: Path) -> None:
+    client = _FakeTradingClient()
+    lane = AlpacaPaperLane("ALPACA_PA3", tmp_path, client, CrossLaneSymbolLock())
+    order = lane.submit_guarded_entry(
+        symbol="NVDA", side="LONG", ref_price=Decimal("100"), session="PRE_MARKET"
+    )
+    assert order
+    oid = order["broker_order_id"]
+    client.confirmed[oid] = SimpleNamespace(
+        filled_qty=10,
+        filled_avg_price="100",
+        status="filled",
+        symbol="NVDA",
+        qty=10,
+        qty_available=4,
+    )
+    previous = lane.supervised_stops[oid].stop_price
+    for last in ("101", "103", "105", "108"):
+        assert lane.trigger_supervised_stop(oid, trigger_px=Decimal(last)) is None
+        stop = lane.supervised_stops[oid].stop_price
+        assert previous < stop < Decimal(last)
+        previous = stop
+    assert lane.trigger_supervised_stop(oid, trigger_px=previous)
+    assert getattr(client.orders[-1], "qty", None) == 4
 
 
 def test_paper_farm_non_overlapping_lanes_and_fail_closed_gates(tmp_path: Path) -> None:
@@ -480,6 +803,16 @@ def test_extended_hours_stop_supervision_and_submit_vs_fill_separation(tmp_path:
         else:
             assert sup.stop_limit_price > sup.stop_price > ref_px
 
+    # Crossing the stop of an unfilled parent must not open a short.
+    assert lane.trigger_supervised_stop(pre_res["broker_order_id"], trigger_px=Decimal("1")) is None
+    client.confirmed[pre_res["broker_order_id"]] = SimpleNamespace(
+        symbol="SOXL",
+        filled_qty=pre_res["qty"],
+        filled_avg_price="40.04",
+        status="filled",
+        qty=pre_res["qty"],
+        qty_available=pre_res["qty"],
+    )
     # Confirming one broker fill increments confirmed fills strictly to 1 (not 3).
     tca = lane.record_broker_fill(
         broker_order_id=pre_res["broker_order_id"],

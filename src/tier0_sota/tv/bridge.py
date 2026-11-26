@@ -124,7 +124,7 @@ def refuse_live_endpoints(payload: Mapping[str, Any]) -> None:
     if (
         live_alpaca
         or _LIVE_ALPACA_RE.search(raw)
-        or any(m in raw for m in FORBIDDEN_ENDPOINT_MARKERS)
+        or any(re.search(rf"(?<!\d){port}(?!\d)", raw) for port in FORBIDDEN_ENDPOINT_MARKERS)
     ):
         raise ValueError("Refused live broker endpoint or port marker in alert payload")
 

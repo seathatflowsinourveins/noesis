@@ -16,7 +16,12 @@ from pydantic import ValidationError
 
 from tier0_sota import engine as _eng
 from tier0_sota import risk as _risk
-from tier0_sota.tv.bridge import DEFAULT_MANIFEST_DIR, TvAlertV1, refuse_live_endpoints
+from tier0_sota.tv.bridge import (
+    DEFAULT_MANIFEST_DIR,
+    TvAlertV1,
+    refuse_live_endpoints,
+    validate_tv_alert_payload,
+)
 
 NY_TZ = ZoneInfo("America/New_York")
 LOW_EXTREME_HOLD_REASONS = frozenset({"LOW_MOVE_NOT_EXTREME", "LOW_RVOL_NOT_EXTREME"})
@@ -118,6 +123,9 @@ def build_half_auto_tickets(
     ts_utc = now_utc or datetime.now(UTC)
     now_et = ts_utc.astimezone(NY_TZ)
     active_sess, ts_ms = current_et_session(now_et), int(ts_utc.timestamp() * 1000)
+    live_scan = movers.get("schema_version") == "tier0.whole-market-movers.v2"
+    if live_scan:
+        active_sess = _eng.classify_us_equity_session_et(ts_ms * 1_000_000)
     macro = dict(movers.get("macro_regime") or {})
     regime_int = int(macro.get("regime", 0))
     b_map = {
@@ -130,6 +138,20 @@ def build_half_auto_tickets(
     schema_ok = 0
 
     for rank, e in enumerate(extreme[:max_tickets], 1):
+        bar_ms = ts_ms
+        if live_scan:
+            if active_sess == "CLOSED" or not e.get("bar_close_utc"):
+                continue
+            close = datetime.fromisoformat(e["bar_close_utc"])
+            if close.tzinfo is None:
+                continue
+            bar_ms = int(close.timestamp() * 1000)
+            if (
+                not 0 <= ts_ms - bar_ms < 60_000
+                or _eng.classify_us_equity_session_et((bar_ms - 60_000) * 1_000_000) != active_sess
+                or e.get("extreme_mover_eligible") is not True
+            ):
+                continue
         sym = str(e["symbol"]).strip().upper()
         px = Decimal(str(round(float(e["last_price"]), 4)))
         natr = max(
@@ -197,7 +219,7 @@ def build_half_auto_tickets(
         alert_in: dict[str, Any] = {
             "schema_version": "tier0.tv-alert.v1",
             "symbol": sym,
-            "ts_utc_ms": ts_ms,
+            "ts_utc_ms": bar_ms,
             "bar_confirmed": True,
             "side": side,
             "qty": 1,
@@ -219,7 +241,13 @@ def build_half_auto_tickets(
             "macro_regime": regime_int,
             "rvol": round(rvol, 2),
             "is_leveraged_or_inverse": sym in ("SOXL", "SOXS", "TQQQ", "SQQQ", "SPXS", "UPRO"),
-            "data_source": "alpaca_screener",
+            "data_source": (
+                "alpaca_boats"
+                if "alpaca_boats" in movers.get("feed_sources", [])
+                else "alpaca_sip"
+                if live_scan
+                else "alpaca_screener"
+            ),
         }
         if side == "SELL":
             alert_in |= {"shortable": shortable, "easy_to_borrow": etb}
@@ -367,7 +395,12 @@ def _atomic_write_text(path: Path, text: str) -> Path:
 
 
 def refresh_tickets_from_paths(
-    *, movers_path: Path, out_dir: Path, bundle_path: Path | None = None, venue: str = "IBKR"
+    *,
+    movers_path: Path,
+    out_dir: Path,
+    bundle_path: Path | None = None,
+    venue: str = "IBKR",
+    now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Load local mover/bundle manifests and atomically write JSON, Markdown, and watchlist."""
     movers = json.loads(movers_path.read_text(encoding="utf-8"))
@@ -376,7 +409,33 @@ def refresh_tickets_from_paths(
         if bundle_path is not None and bundle_path.is_file()
         else None
     )
-    doc = build_half_auto_tickets(movers, bundle=bundle, venue=venue)
+    doc = build_half_auto_tickets(movers, bundle=bundle, venue=venue, now_utc=now_utc)
+    if movers.get("schema_version") == "tier0.whole-market-movers.v2":
+        # Replace only the scanner-owned snapshot; manual/Pine intake has its own history.
+        presets = [
+            validate_tv_alert_payload(t["tv_alert_preset"], watchlist_manifest=movers, venue=venue)
+            for t in doc["tickets"]
+            if t["side"] != "SELL"
+            or (
+                t["easy_to_borrow"]
+                and t["shortable"]
+                and (venue != "ALPACA" or t["active_session"] != "OVERNIGHT")
+            )
+        ]
+        doc["staged_count"] = len(presets)
+        _atomic_write_text(
+            out_dir / "staged_scan_presets.json",
+            json.dumps(
+                {
+                    "schema_version": "tier0.staged-tv-presets.v1",
+                    "scan_generated_at_utc": movers["generated_at_utc"],
+                    "semi_auto_confirmed": False,
+                    "presets": presets,
+                },
+                indent=2,
+            )
+            + "\n",
+        )
     _atomic_write_text(out_dir / "live_half_auto_tickets.json", json.dumps(doc, indent=2) + "\n")
     _atomic_write_text(out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md", render_tickets_markdown(doc))
     _atomic_write_text(

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import tempfile
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -88,6 +86,7 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
         "realized_pnl_usd": 0.0,
         "tca_fills_count": 0,
         "tca_is_bps": [],
+        "worker_fills": 0,
         "tca_total_net_cost_bps": [],
         "tca_borrow_fee_usd": _DEC_ZERO,
         "tca_borrow_bps": [],
@@ -97,67 +96,69 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
     }
     if not duck_path.is_file():
         return out
-    tmp: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False) as tf:
-            tmp = Path(tf.name)
-        shutil.copy2(duck_path, tmp)
-        with duckdb.connect(str(tmp), read_only=True) as conn:
-            tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-            if "paper_wire_orders" in tables:
-                row = conn.execute("SELECT COUNT(*) FROM paper_wire_orders").fetchone()
-                out["duckdb_orders"] = int(row[0]) if row else 0
-                ext_row = conn.execute(
-                    "SELECT COUNT(*) FROM paper_wire_orders "
-                    "WHERE UPPER(session) IN ('PRE_MARKET', 'AFTER_HOURS') "
-                    "AND order_type = 'LIMIT_EXTENDED'"
-                ).fetchone()
-                out["ext_orders_db"] = int(ext_row[0]) if ext_row else 0
-            if "paper_roundtrips" in tables:
-                sql = (
-                    "SELECT COUNT(*), "
-                    "COALESCE(SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END), 0), "
-                    "COALESCE(SUM(realized_pnl_usd), 0.0) FROM paper_roundtrips"
+    with duckdb.connect(str(duck_path), read_only=True) as conn:
+        tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+        if "paper_wire_orders" in tables:
+            row = conn.execute("SELECT COUNT(*) FROM paper_wire_orders").fetchone()
+            out["duckdb_orders"] = int(row[0]) if row else 0
+            ext_row = conn.execute(
+                "SELECT COUNT(*) FROM paper_wire_orders "
+                "WHERE UPPER(session) IN ('PRE_MARKET', 'AFTER_HOURS', 'OVERNIGHT') "
+                "AND order_type = 'LIMIT_EXTENDED'"
+            ).fetchone()
+            out["ext_orders_db"] = int(ext_row[0]) if ext_row else 0
+        if "paper_roundtrips" in tables:
+            sql = (
+                "SELECT COUNT(*), "
+                "COALESCE(SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END), 0), "
+                "COALESCE(SUM(realized_pnl_usd), 0.0) FROM paper_roundtrips"
+            )
+            if (row := conn.execute(sql).fetchone()) is not None:
+                out["roundtrips"] = int(row[0])
+                out["wins"] = int(row[1])
+                out["realized_pnl_usd"] = round(float(row[2]), 2)
+        if "paper_tca_fills" in tables:
+            columns = set(conn.table("paper_tca_fills").columns)
+            if "execution_id" in columns and "paper_entry_decisions" in tables:
+                count = (
+                    conn.execute(
+                        "SELECT COUNT(*) FROM paper_tca_fills f JOIN paper_wire_orders w "
+                        "ON w.account=f.account AND w.broker_order_id=f.broker_order_id "
+                        "WHERE f.execution_id IS NOT NULL"
+                    ).fetchone()
+                    if "paper_wire_orders" in tables
+                    else None
                 )
-                if (row := conn.execute(sql).fetchone()) is not None:
-                    out["roundtrips"] = int(row[0])
-                    out["wins"] = int(row[1])
-                    out["realized_pnl_usd"] = round(float(row[2]), 2)
-            if "paper_tca_fills" in tables:
-                tca_rows = conn.execute(
-                    "SELECT implementation_shortfall_bps, total_net_cost_bps, "
-                    "borrow_fee_usd, borrow_bps, markout_60s_bps "
-                    "FROM paper_tca_fills"
-                ).fetchall()
-                out["tca_fills_count"] = len(tca_rows)
-                is_vals: list[Decimal] = []
-                net_vals: list[Decimal] = []
-                borrow_sum = _DEC_ZERO
-                borrow_bps_vals: list[Decimal] = []
-                mk60_vals: list[Decimal] = []
-                for is_bps, net_bps, b_usd, b_bps, mk60 in tca_rows:
-                    is_vals.append(_to_dec(is_bps))
-                    net_vals.append(_to_dec(net_bps))
-                    borrow_sum += _to_dec(b_usd)
-                    borrow_bps_vals.append(_to_dec(b_bps))
-                    if mk60 is not None:
-                        mk60_vals.append(_to_dec(mk60))
-                out["tca_is_bps"] = is_vals
-                out["tca_total_net_cost_bps"] = net_vals
-                out["tca_borrow_fee_usd"] = borrow_sum
-                out["tca_borrow_bps"] = borrow_bps_vals
-                out["tca_markout_60s_bps"] = mk60_vals
-            if "paper_supervised_stops" in tables:
-                sup_row = conn.execute(
-                    "SELECT COUNT(DISTINCT broker_order_id) FROM paper_supervised_stops "
-                    "WHERE protective_stop_mode = 'COLLARED_STOP_LIMIT_SUPERVISED'"
-                ).fetchone()
-                out["ext_protected_db"] = int(sup_row[0]) if sup_row else 0
-    except (OSError, duckdb.Error):
-        pass
-    finally:
-        if tmp is not None:
-            tmp.unlink(missing_ok=True)
+                out["worker_fills"] = count[0] if count else 0
+            tca_rows = conn.execute(
+                "SELECT implementation_shortfall_bps, total_net_cost_bps, "
+                "borrow_fee_usd, borrow_bps, markout_60s_bps "
+                "FROM paper_tca_fills"
+            ).fetchall()
+            out["tca_fills_count"] = len(tca_rows)
+            is_vals: list[Decimal] = []
+            net_vals: list[Decimal] = []
+            borrow_sum = _DEC_ZERO
+            borrow_bps_vals: list[Decimal] = []
+            mk60_vals: list[Decimal] = []
+            for is_bps, net_bps, b_usd, b_bps, mk60 in tca_rows:
+                is_vals.append(_to_dec(is_bps))
+                net_vals.append(_to_dec(net_bps))
+                borrow_sum += _to_dec(b_usd)
+                borrow_bps_vals.append(_to_dec(b_bps))
+                if mk60 is not None:
+                    mk60_vals.append(_to_dec(mk60))
+            out["tca_is_bps"] = is_vals
+            out["tca_total_net_cost_bps"] = net_vals
+            out["tca_borrow_fee_usd"] = borrow_sum
+            out["tca_borrow_bps"] = borrow_bps_vals
+            out["tca_markout_60s_bps"] = mk60_vals
+        if "paper_supervised_stops" in tables:
+            sup_row = conn.execute(
+                "SELECT COUNT(DISTINCT broker_order_id) FROM paper_supervised_stops "
+                "WHERE protective_stop_mode = 'COLLARED_STOP_LIMIT_SUPERVISED'"
+            ).fetchone()
+            out["ext_protected_db"] = int(sup_row[0]) if sup_row else 0
     return out
 
 
@@ -199,7 +200,7 @@ class PaperPerformanceAggregator:
         if "fills" in status:
             fills = max(int(status["fills"]), duck["tca_fills_count"])
         else:
-            fills = int(entries or duck["tca_fills_count"] or duck["duckdb_orders"])
+            fills = duck["tca_fills_count"]
 
         rts = max(int(status.get("session_roundtrips") or 0), duck["roundtrips"])
         pnl_usd = float(status.get("session_realized_pnl_usd") or duck["realized_pnl_usd"])
@@ -222,11 +223,14 @@ class PaperPerformanceAggregator:
         )
 
         metrics = {
+            "worker_fills": duck["worker_fills"],
             "account": account,
             "lane_id": lane_id,
             "paper_only": True,
             "live_execution_enabled": False,
-            "equity": round(float(status.get("equity") or 0.0), 2),
+            "equity": round(float(status["equity"]), 2)
+            if status.get("equity") is not None
+            else None,
             "drawdown_pct": round(float(status.get("daily_drawdown_pct") or 0.0), 6),
             "entries": entries,
             "orders_submitted": orders_submitted,
@@ -342,7 +346,10 @@ class PaperPerformanceAggregator:
         }
 
         combined = {
-            "combined_equity_usd": round(float(df["equity"].sum()), 2),
+            "combined_equity_usd": round(
+                sum(m["equity"] for m in lanes.values() if m["equity"] is not None), 2
+            ),
+            "accounts_with_equity": sum(m["equity"] is not None for m in lanes.values()),
             "max_drawdown_pct": round(max_dd, 6),
             "entries": int(df["entries"].sum()),
             "orders_submitted": total_submitted,
@@ -368,12 +375,33 @@ class PaperPerformanceAggregator:
         finos_doc = build_finos_openbb_export(
             lanes, combined, generated_at_utc=now_iso, tca_summary=tca_summary
         )
+        worker = _read_json_safe(self.manifest_dir / "paper_farm_execution_status.json")
+        heartbeat = worker.get("generated_at_utc", "")
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(heartbeat)).total_seconds()
+        except (ValueError, TypeError):
+            age = float("inf")
+        supervising = (
+            0 <= age < 90
+            and worker.get("status") in {"SUPERVISING", "ORDER_ACKNOWLEDGED"}
+            and worker.get("entry_fault") is False
+        )
+        for account, metrics in lanes.items():
+            metrics["worker_verified"] = (
+                account in ALPACA_LANE_PROFILES and supervising and metrics["worker_fills"] > 0
+            )
+        ibkr = _read_json_safe(self.manifest_dir / "ibkr_du_4002_live_automation_status.json")
+        deployed = ibkr.get("tcp_reachable") is True and all(
+            lanes.get(account, {}).get("worker_verified") is True
+            for account in ALPACA_LANE_PROFILES
+        )
         manifest: dict[str, Any] = {
             "schema_version": "tier0.paper-farm-live-performance.v1",
             "generated_at_utc": now_iso,
             "paper_only": True,
             "live_execution_enabled": False,
-            "paper_live_deployed": False,
+            "paper_live_deployed": deployed,
+            "execution_status": worker.get("status"),
             "summary": combined,
             "tca_summary": tca_summary,
             "per_lane": lanes,
@@ -496,7 +524,8 @@ def export_prometheus_metrics(
     per_lane = manifest.get("per_lane", {})
     for acct, row in per_lane.items():
         lane_id = str(row.get("lane_id", acct))
-        g_eq.labels(acct, lane_id).set(float(row.get("equity") or 0.0))
+        if row.get("equity") is not None:
+            g_eq.labels(acct, lane_id).set(float(row["equity"]))
         g_dd.labels(acct, lane_id).set(float(row.get("drawdown_pct") or 0.0))
         g_is_mean.labels(acct, lane_id).set(float(row.get("mean_is_bps") or 0.0))
         g_is_p95.labels(acct, lane_id).set(float(row.get("p95_is_bps") or 0.0))
@@ -570,7 +599,11 @@ def record_otel_metrics(
         if meter_provider is not None
         else MeterProvider(
             resource=Resource.create(
-                {"service.name": "tier0-paper-farm", "tier0.paper_only": True}
+                {
+                    "service.name": "tier0-paper-farm",
+                    "service.instance.id": "noesis-paper-farm",
+                    "tier0.paper_only": True,
+                }
             ),
             metric_readers=readers,
         )
@@ -588,7 +621,8 @@ def record_otel_metrics(
 
         for acct, row in manifest.get("per_lane", {}).items():
             attrs = {"account": str(acct), "lane_id": str(row.get("lane_id", acct))}
-            g_eq.set(float(row.get("equity") or 0.0), attrs)
+            if row.get("equity") is not None:
+                g_eq.set(float(row["equity"]), attrs)
             g_is_mean.set(float(row.get("mean_is_bps") or 0.0), attrs)
             g_is_p95.set(float(row.get("p95_is_bps") or 0.0), attrs)
             g_borrow.set(float(row.get("total_borrow_fee_usd") or 0.0), attrs)
@@ -596,10 +630,8 @@ def record_otel_metrics(
             g_fill_ratio.set(float(row.get("submitted_vs_filled_ratio") or 0.0), attrs)
             sub_n = int(row.get("orders_submitted") or 0)
             fill_n = int(row.get("fills") or 0)
-            if sub_n > 0:
-                c_sub.add(sub_n, attrs)
-            if fill_n > 0:
-                c_fills.add(fill_n, attrs)
+            c_sub.add(sub_n, attrs)
+            c_fills.add(fill_n, attrs)
 
         summary = manifest.get("summary", {})
         sum_attrs = {"scope": "combined"}

@@ -212,6 +212,20 @@ secondary_upstreams = ["alpaca-py", "duckdb"]
 feature = "3-lane non-overlapping Alpaca Paper + IBKR :4002 adapter with isolated per-account DuckDB & fail-closed paper-only boundary"
 why = "Delegates Paper Farm execution and isolated per-account telemetry to pinned upstreams"
 
+[files."src/tier0_sota/live/runner.py"]
+how = "integrate"
+upstream = "alpaca-py"
+secondary_upstreams = ["duckdb", "pydantic"]
+feature = "Authenticated paper inventory, broker activity reconciliation and SIP-to-TV staging"
+why = "Uses the native Trading API, per-account DuckDB transactions and the validated TV preset contract"
+
+[files."src/tier0_sota/live/execution.py"]
+how = "integrate"
+upstream = "alpaca-py"
+secondary_upstreams = ["duckdb"]
+feature = "Paper-only SIP and BOATS trade stream supervision, native OTO replacements and extended-session collared exits"
+why = "Uses native market data streams and TradingClient order state with durable per-account protection decisions"
+
 [files."src/tier0_sota/live/performance.py"]
 how = "integrate"
 upstream = "polars"

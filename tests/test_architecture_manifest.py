@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -39,7 +40,16 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     manifest = _load_manifest()
     assert manifest["schema_version"] == "tier0.architecture-layer-manifest.v1"
     assert manifest["repo_name"] == "noesis"
-    assert manifest["branch"] == "main"
+    git = shutil.which("git")
+    assert git is not None
+    branch = subprocess.run(
+        [git, "symbolic-ref", "--quiet", "--short", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert manifest["branch"] == (branch.stdout.strip() or "main")
     assert manifest["standalone_repo"] is True
 
     safety = manifest["safety_invariants"]
