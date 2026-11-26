@@ -39,19 +39,21 @@ dev = [
     "ast-grep-cli>=0.51.3",
     "deptry>=0.23.0",
     "hypothesis>=6.170.15",
-    "pre-commit>=4.0.0",
     "pytest>=9.2.0",
+    "pyyaml>=6.0.2",
     "ruff>=0.17.3",
     "ty>=0.0.100",
 ]
 research = [
     "catboost>=1.2.0",
-    "dvc>=3.60.0",
     "edgartools>=6.0.0",
     "fredapi>=0.5.2",
     "lightgbm>=4.5.0",
     "pyarrow>=26.0.0",
     "shap>=0.54.0",
+]
+data-versioning = [
+    "dvc>=3.67.1",
 ]
 evals = [
     "dspy>=3.0.0",
@@ -66,6 +68,7 @@ portals = [
 ]
 observability = [
     "opentelemetry-api>=1.30.0",
+    "opentelemetry-exporter-otlp>=1.30.0",
     "opentelemetry-sdk>=1.30.0",
     "prometheus-client>=0.21.0",
 ]
@@ -99,20 +102,37 @@ exclude = ["src/tier0_sota/risk.py"]
 exclude = [".claude/skills/**"]
 
 [tool.deptry]
-known_first_party = ["tier0_sota"]
+known_first_party = ["tier0_sota", "evals", "scripts"]
 ignore_notebooks = true
-extend_exclude = ["\\.claude/skills", "site", "evals", "scripts/run_compounding_reflection\\.py"]
+extend_exclude = ["\\.claude/skills", "site"]
+non_dev_dependency_groups = ["evals"]
 
 [tool.deptry.package_module_name_map]
 anthropic = "anthropic"
+dvc = "dvc"
 google-genai = "google_genai"
 openai = "openai"
+opentelemetry-api = "opentelemetry"
+opentelemetry-exporter-otlp = "opentelemetry"
+opentelemetry-sdk = "opentelemetry"
+prometheus-client = "prometheus_client"
+pyyaml = "yaml"
 
 [tool.deptry.per_rule_ignores]
 DEP002 = [
   "anthropic",
   "google-genai",
   "openai",
+]
+DEP004 = [
+  "catboost",
+  "fredapi",
+  "lightgbm",
+  "opentelemetry",
+  "optuna",
+  "prometheus_client",
+  "shap",
+  "yaml",
 ]
 
 [tool.pytest.ini_options]

@@ -62,7 +62,7 @@ def _check_zero_banned_libs() -> str:
         for pkg in lock_doc.get("package", [])
         if isinstance(pkg, dict)
     }
-    lock_banned = {"yfinance", "quantstats", "vectorbt", "osv-scanner"}
+    lock_banned = {"yfinance", "quantstats", "vectorbt", "osv-scanner", "pre-commit"}
     if overlap := sorted(lock_banned & pkgs):
         return f"FAIL:lock:{','.join(overlap)}"
     rx = re.compile(rf"(?m)^\s*(?:import|from)\s+(?:{'|'.join(BANNED_LIBS)})\b")
@@ -165,6 +165,23 @@ def _check_upstream_skills_46_parity() -> str:
     return "PASS"
 
 
+def _check_adr_graph_and_clean_sota_harness_integrity() -> str:
+    from scripts.sync_manifest import parse_and_validate_adrs, validate_clean_sota_harness
+
+    try:
+        harness = validate_clean_sota_harness(REPO_ROOT)
+        adr_graph = parse_and_validate_adrs(REPO_ROOT)
+    except Exception as exc:  # noqa: BLE001
+        return f"FAIL:{type(exc).__name__}:{exc}"
+    if not harness.get("ok"):
+        return "FAIL:clean_sota_harness_not_ok"
+    if int(adr_graph.get("total_adrs", 0)) < 24:
+        return f"FAIL:total_adrs={adr_graph.get('total_adrs')}"
+    if adr_graph.get("catalog_and_zensical_in_sync") is not True:
+        return "FAIL:adr_catalog_zensical_out_of_sync"
+    return "PASS"
+
+
 _CHECK_DISPATCH: dict[str, Any] = {
     "live_refusal": _check_live_refusal,
     "zero_banned_libs": _check_zero_banned_libs,
@@ -172,6 +189,7 @@ _CHECK_DISPATCH: dict[str, Any] = {
     "risk_sha256": _check_risk_sha256,
     "zero_arbitrary_loc_caps_and_living_adrs": _check_zero_arbitrary_loc_caps_and_living_adrs,
     "upstream_skills_46_parity": _check_upstream_skills_46_parity,
+    "adr_graph_and_clean_sota_harness_integrity": _check_adr_graph_and_clean_sota_harness_integrity,
 }
 
 
@@ -193,7 +211,7 @@ def tier0_invariant_solver() -> Any:
 
 
 def verify_inspect_safety_suite() -> dict[str, Any]:
-    """Run all 6 deterministic safety and upstream-convergence invariants."""
+    """Run all 7 deterministic safety, ADR graph, and upstream-convergence invariants."""
     results = {name: fn() for name, fn in _CHECK_DISPATCH.items()}
     t = tier0_safety_eval()
     return {
@@ -252,6 +270,15 @@ def tier0_safety_eval() -> Task:
             target="PASS",
             id="upstream_skills_46_parity",
             metadata={"check": "upstream_skills_46_parity"},
+        ),
+        Sample(
+            input=(
+                "Verify MADR 4.0 ADR graph, fitness bindings, 3-way docs sync, "
+                "zero-overlap single-winner rules, and SPDX OSI firewall."
+            ),
+            target="PASS",
+            id="adr_graph_and_clean_sota_harness_integrity",
+            metadata={"check": "adr_graph_and_clean_sota_harness_integrity"},
         ),
     ]
     return Task(

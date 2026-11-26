@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import dspy
+from dspy.teleprompt.gepa.gepa_utils import ScoreWithFeedback
 
 DEFAULT_OMNIROUTE_MODEL = "openai/auto/best-coding"
 DEFAULT_OMNIROUTE_API_BASE = "http://127.0.0.1:20128/v1"
@@ -101,6 +102,41 @@ def philosophy_convergence_metric(
     return round(score, 4)
 
 
+def philosophy_gepa_feedback_metric(
+    gold: dspy.Example,
+    pred: dspy.Prediction,
+    trace: Any = None,
+    pred_name: str | None = None,
+    pred_trace: Any = None,
+    program_trace: Any = None,
+) -> ScoreWithFeedback:
+    """GEPA feedback metric returning score and textual reflection guidance."""
+    del trace, pred_trace, program_trace
+    score = philosophy_convergence_metric(gold, pred)
+    target = pred_name or "Tier0SelfReflectionProgram"
+    if score >= 1.0:
+        feedback = f"{target}: aligned with Core Trading Philosophy and upstream-only charter."
+    else:
+        feedback = (
+            f"{target}: score={score:.2f}; ensure >=20-char lesson, >=15-char upstream action, "
+            "correct philosophy_aligned flag, and zero banned legacy libraries."
+        )
+    return ScoreWithFeedback(score=score, feedback=feedback)
+
+
+def build_gepa_reflection_optimizer(
+    reflection_lm: dspy.LM | None = None,
+    max_metric_calls: int = 4,
+) -> dspy.GEPA:
+    """Construct an upstream DSPy 3.5.0 GEPA evolutionary reflection optimizer."""
+    resolved_lm = reflection_lm if reflection_lm is not None else build_omniroute_dspy_lm()
+    return dspy.GEPA(
+        metric=philosophy_gepa_feedback_metric,
+        reflection_lm=resolved_lm,
+        max_metric_calls=max_metric_calls,
+    )
+
+
 def verify_dspy_reflection_module() -> dict[str, Any]:
     """Verify DSPy reflection signature, module, metric, and OmniRoute LM wiring offline."""
     program = Tier0SelfReflectionProgram()
@@ -131,6 +167,7 @@ def verify_dspy_reflection_module() -> dict[str, Any]:
         "dspy_version": getattr(dspy, "__version__", "unknown"),
         "program": type(program).__name__,
         "metric_score": score,
+        "gepa_available": hasattr(dspy, "GEPA"),
         "omniroute_model": lm.model,
         "omniroute_api_base": DEFAULT_OMNIROUTE_API_BASE,
     }

@@ -328,7 +328,7 @@ else
   record_gate "disk_z_env" "false" "mismatches=${ENV_NOTES[*]}"
 fi
 
-# 8. AGY native MCP config (Windows host if /mnt/c is mounted; otherwise repo 5/5 native uv MCP parity)
+# 8. AGY native MCP config (WSL2 Linux ~/.gemini/config/mcp_config.json first; fallback to repo 5/5 native uv parity)
 MNT_C_MOUNTED=false
 WIN_USER_HOME=""
 if command -v mountpoint >/dev/null 2>&1 && mountpoint -q /mnt/c 2>/dev/null; then
@@ -340,18 +340,26 @@ if command -v mountpoint >/dev/null 2>&1 && mountpoint -q /mnt/c 2>/dev/null; th
     fi
   done
 fi
-AGY_MCP_PATH="${WIN_USER_HOME:+${WIN_USER_HOME}/.gemini/config/mcp_config.json}"
+WSL_AGY_MCP_PATH="${HOME}/.gemini/config/mcp_config.json"
 AGY_MCP_OK=false
 AGY_MCP_DETAIL=""
-if [[ "$MNT_C_MOUNTED" == "true" && -n "$AGY_MCP_PATH" && -f "$AGY_MCP_PATH" ]]; then
-  AGY_SERVERS="$(jq -r '.mcpServers | keys | sort | join(",")' "$AGY_MCP_PATH" 2>/dev/null || echo "")"
+if [[ -f "$WSL_AGY_MCP_PATH" ]]; then
+  AGY_SERVERS="$(jq -r '.mcpServers | keys | sort | join(",")' "$WSL_AGY_MCP_PATH" 2>/dev/null || echo "")"
+  MISSING_BINS=0
+  while IFS= read -r cmd_bin; do
+    [[ -z "$cmd_bin" ]] && continue
+    if [[ "$cmd_bin" == /* && ! -x "$cmd_bin" ]]; then
+      MISSING_BINS=$((MISSING_BINS + 1))
+    fi
+  done < <(jq -r '.mcpServers[] | .command // empty' "$WSL_AGY_MCP_PATH" 2>/dev/null || true)
   if [[ "$AGY_SERVERS" == "codebase-memory,edgartools,nautilus-engine,xerj" ]] \
-      && ! grep -q '"bash"' "$AGY_MCP_PATH" \
-      && grep -q 'noesis' "$AGY_MCP_PATH"; then
+      && ! grep -q '"bash"' "$WSL_AGY_MCP_PATH" \
+      && grep -q 'noesis' "$WSL_AGY_MCP_PATH" \
+      && [[ "$MISSING_BINS" -eq 0 ]]; then
     AGY_MCP_OK=true
   fi
-  AGY_MCP_DETAIL="scope=windows_agy servers=${AGY_SERVERS}"
-elif [[ "$MNT_C_MOUNTED" != "true" ]]; then
+  AGY_MCP_DETAIL="scope=wsl2_agy servers=${AGY_SERVERS} missing_bins=${MISSING_BINS}"
+else
   MCP_PARITY_OK=true
   for cfg in ".mcp.json" ".claude/settings.json" ".gemini/settings.json"; do
     cpath="${REPO_ROOT}/${cfg}"
@@ -376,9 +384,7 @@ elif [[ "$MNT_C_MOUNTED" != "true" ]]; then
     MCP_PARITY_OK=false
   fi
   AGY_MCP_OK="$MCP_PARITY_OK"
-  AGY_MCP_DETAIL="scope=repo_5x5_native_uv_mnt_c_unmounted parity=${MCP_PARITY_OK}"
-else
-  AGY_MCP_DETAIL="missing ${AGY_MCP_PATH}"
+  AGY_MCP_DETAIL="scope=repo_5x5_native_uv parity=${MCP_PARITY_OK}"
 fi
 WSL_SKILLS_JSON="${HOME}/.gemini/config/skills.json"
 WSL_SKILLS_STATUS="absent"

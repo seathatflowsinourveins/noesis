@@ -28,6 +28,24 @@
       "spdx": "custom",
       "decision": "excluded",
       "reason": "Custom non-OSI license excluded under Tier-0 SPDX OSI firewall."
+    },
+    {
+      "repo": "semgrep/semgrep",
+      "spdx": "Semgrep-Rules-v1.0-Non-OSI",
+      "decision": "excluded",
+      "reason": "Non-OSI Semgrep Rules License v1.0 and proprietary cross-file SAST excluded; use opengrep/opengrep (LGPL-2.1) or CodeQL + ast-grep."
+    },
+    {
+      "repo": "peernagy/LOBS5",
+      "spdx": "NOASSERTION",
+      "decision": "excluded",
+      "reason": "No root OSI LICENSE (all-rights-reserved) and commercial LOBSTER data dependency excluded; use microsoft/MarS (MIT)."
+    },
+    {
+      "repo": "PriorLabs/TabPFN",
+      "spdx": "Non-Commercial-Weights",
+      "decision": "excluded",
+      "reason": "Apache-2.0 code but non-commercial pretrained weights v2.5/v3 excluded; use soda-inria/tabicl TabICLv2 (BSD-3-Clause)."
     }
   ],
   "active_winners_by_layer": {
@@ -45,8 +63,7 @@
         "pydantic/pydantic",
         "gerrymanoim/exchange_calendars",
         "dgunning/edgartools",
-        "mortada/fredapi",
-        "treeverse/dvc"
+        "mortada/fredapi"
       ],
       "artifacts": ["src/tier0_sota/discovery.py", "src/tier0_sota/live/paper_farm.py", "src/tier0_sota/tv/bridge.py"]
     },
@@ -80,7 +97,13 @@
     },
     "L5": {
       "name": "Statistical Falsification & Portfolio Construction",
-      "winners": ["skfolio/skfolio", "ml4t/diagnostic", "bashtage/arch", "statsmodels/statsmodels"],
+      "winners": [
+        "skfolio/skfolio",
+        "ml4t/diagnostic",
+        "bashtage/arch",
+        "statsmodels/statsmodels",
+        "oxfordcontrol/Clarabel.rs (clarabel)"
+      ],
       "artifacts": ["src/tier0_sota/research.py"]
     },
     "L6": {
@@ -94,6 +117,7 @@
         "prometheus/prometheus",
         "prometheus/client_python",
         "open-telemetry/opentelemetry-python",
+        "open-telemetry/opentelemetry-python (opentelemetry-exporter-otlp)",
         "open-telemetry/opentelemetry-collector-contrib",
         "caddyserver/caddy",
         "zensical/zensical"
@@ -109,7 +133,6 @@
       "name": "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security",
       "winners": [
         "j178/prek",
-        "pre-commit/pre-commit",
         "astral-sh/ruff",
         "astral-sh/ty",
         "ast-grep/ast-grep",
@@ -142,13 +165,16 @@
       "winners": [
         "UKGovernmentBEIS/inspect_ai",
         "stanfordnlp/dspy",
-        "harbor-framework/harbor",
-        "promptfoo/promptfoo",
+        "gepa-ai/gepa",
         "NVIDIA/SkillEvaluator",
-        "OpenHands/OpenHands",
         "WecoAI/aideml"
       ],
-      "artifacts": ["evals/tier0_inspect_eval.py", "pyproject.toml", "upstream-map.toml"]
+      "artifacts": [
+        "evals/tier0_inspect_eval.py",
+        "evals/dspy_self_reflect.py",
+        "pyproject.toml",
+        "upstream-map.toml"
+      ]
     },
     "L9": {
       "name": "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs",
@@ -180,7 +206,7 @@
         "openbq-org/backends-for-openbb",
         "perspective-dev/perspective",
         "tradingview/lightweight-charts",
-        "ag-grid/ag-grid"
+        "ag-grid/ag-grid (ag-grid-community MIT)"
       ],
       "watches": ["rerun-io/rerun", "uwdata/mosaic", "finos/FDC3", "evidence-dev/evidence"],
       "artifacts": ["src/tier0_sota/live/performance.py", "src/tier0_sota/tv/bridge.py", "docker/compose.sota.yml"]
@@ -204,19 +230,20 @@
   },
   "earned_trigger_frontier_l11_to_l15": {
     "L11": {
-      "name": "High-Volume Data Lake, Multimodal Filings & SQL Lint",
+      "name": "High-Volume Data Lake, Multimodal Filings, Versioning & SQL Lint",
       "candidates": [
-        {"slug": "vortex-data/vortex", "trigger": "lake > 100 GB/run"},
-        {"slug": "lancedb/lancedb", "trigger": "multimodal SEC filings"},
-        {"slug": "tobymao/sqlglot", "trigger": "PIT SQL static transpilation"},
-        {"slug": "dlt-hub/dlt", "trigger": "declarative PIT ingest pipelines"}
+        {"slug": "treeverse/dvc", "spdx": "Apache-2.0", "trigger": "multi-snapshot versioned dataset sync or remote object-store lake (uv sync --group data-versioning)"},
+        {"slug": "vortex-data/vortex", "spdx": "Apache-2.0", "trigger": "lake > 100 GB/run"},
+        {"slug": "apache/iceberg-python", "alias": "pyiceberg", "spdx": "Apache-2.0", "trigger": "multi-writer ACID Parquet table snapshots"},
+        {"slug": "lancedb/lancedb", "spdx": "Apache-2.0", "trigger": "multimodal SEC filings"},
+        {"slug": "tobymao/sqlglot", "spdx": "MIT", "trigger": "PIT SQL static transpilation"},
+        {"slug": "dlt-hub/dlt", "spdx": "Apache-2.0", "trigger": "declarative PIT ingest pipelines"}
       ]
     },
     "L12": {
       "name": "Tabular Foundation, Time-Series Foundation, Drift & Attribution",
       "candidates": [
-        {"slug": "PriorLabs/TabPFN", "trigger": "tabular baseline benchmark", "spdx_note": "Code Apache-2.0; weights non-commercial — blocked for production weights per ADR-0014"},
-        {"slug": "soda-inria/tabicl", "alias": "TabICLv2", "trigger": "in-context tabular benchmark"},
+        {"slug": "soda-inria/tabicl", "alias": "TabICLv2", "spdx": "BSD-3-Clause", "trigger": "in-context tabular benchmark (replaces non-commercial TabPFN weights)"},
         {"slug": "yandex-research/tabm", "alias": "TabM", "trigger": "parameter-efficient MLP tabular"},
         {"slug": "autogluon/tabarena", "alias": "TabArena", "trigger": "tabular arena evaluation"},
         {"slug": "amazon-science/chronos-forecasting", "alias": "Chronos-2", "trigger": "L5 proof + pre-wall audit"},
@@ -231,10 +258,8 @@
       "name": "Zero-Copy IPC, Generative L2 Sim, Portfolio Opt, Causal & UQ",
       "candidates": [
         {"slug": "eclipse-iceoryx/iceoryx2", "trigger": "zero-copy Rust IPC"},
-        {"slug": "microsoft/MarS", "trigger": "generative L2 market simulation"},
-        {"slug": "peernagy/LOBS5", "trigger": "state-space LOB simulation"},
+        {"slug": "microsoft/MarS", "spdx": "MIT", "trigger": "generative L2 market simulation (OSI winner replacing un-licensed LOBS5)"},
         {"slug": "cvxgrp/cvxportfolio", "trigger": "> 10 concurrent multi-day positions", "spdx_note": "GPL-3.0 copyleft (reference-only, not imported in src/ per ADR-0015)"},
-        {"slug": "oxfordcontrol/Clarabel.rs", "trigger": "conic portfolio solver"},
         {"slug": "ERGO-Code/HiGHS", "trigger": "MILP/LP portfolio constraints"},
         {"slug": "DoubleML/doubleml-for-py", "alias": "DoubleML", "trigger": "causal factor neutralization"},
         {"slug": "meta-pytorch/botorch", "alias": "BoTorch", "trigger": "multi-objective Bayesian HPO"},
@@ -257,23 +282,25 @@
     "L15": {
       "name": "Formal Verification, Sandboxes, Red-Teaming, Evolution & Agent Protocols",
       "candidates": [
-        {"slug": "pschanely/CrossHair", "trigger": "symbolic execution on risk.py"},
-        {"slug": "boxed/mutmut", "trigger": "mutation testing on risk.py"},
-        {"slug": "semgrep/semgrep", "trigger": "cross-file SAST rules"},
+        {"slug": "pschanely/CrossHair", "spdx": "MIT", "trigger": "symbolic execution on risk.py"},
+        {"slug": "boxed/mutmut", "spdx": "BSD-3-Clause", "trigger": "isolated temp-copy mutation testing on risk.py"},
+        {"slug": "opengrep/opengrep", "spdx": "LGPL-2.1", "trigger": "OSI cross-file SAST beyond ast-grep + CodeQL (replaces non-OSI Semgrep rules)"},
         {"slug": "sigstore/cosign", "trigger": "container artifact signing"},
         {"slug": "slsa-framework/slsa-verifier", "trigger": "build provenance verification"},
         {"slug": "open-policy-agent/opa", "trigger": "policy-as-code admission gates"},
+        {"slug": "harbor-framework/harbor", "spdx": "Apache-2.0", "trigger": "live containerized agent benchmark harness"},
+        {"slug": "promptfoo/promptfoo", "spdx": "MIT", "trigger": "CI prompt red-teaming and regression matrix"},
+        {"slug": "OpenHands/OpenHands", "spdx": "MIT", "trigger": "autonomous containerized coding benchmarks"},
         {"slug": "microsoft/PyRIT", "trigger": "automated LLM red-teaming"},
         {"slug": "ethz-spylab/agentdojo", "trigger": "prompt-injection benchmark"},
         {"slug": "superradcompany/microsandbox", "trigger": "libkrun microVM agent isolation"},
         {"slug": "pydantic/monty", "trigger": "Rust Python sandbox"},
         {"slug": "gvisor/gvisor", "trigger": "user-space container kernel"},
         {"slug": "e2b-dev/E2B", "trigger": "cloud microVM sandbox"},
-        {"slug": "meridianlabs-ai/inspect_scout", "trigger": "agent transcript failure scanner"},
-        {"slug": "gepa-ai/gepa", "trigger": "reflective prompt evolution"},
+        {"slug": "meridianlabs-ai/inspect_scout", "spdx": "MIT", "trigger": "agent transcript failure scanner"},
         {"slug": "SakanaAI/ShinkaEvolve", "trigger": "sandbox evolutionary coding"},
         {"slug": "algorithmicsuperintelligence/openevolve", "trigger": "open-ended evolutionary search"},
-        {"slug": "snyk/agent-scan", "trigger": "static MCP & skill supply-chain audit"},
+        {"slug": "snyk/agent-scan", "spdx": "Apache-2.0", "trigger": "static MCP & skill supply-chain audit"},
         {"slug": "agentskills/agentskills", "trigger": "cross-runtime skill spec"},
         {"slug": "a2aproject/A2A", "trigger": "agent-to-agent interoperability"},
         {"slug": "agentclientprotocol/agent-client-protocol", "alias": "ACP", "trigger": "client/editor agent protocol"},

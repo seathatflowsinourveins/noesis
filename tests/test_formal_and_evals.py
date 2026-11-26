@@ -43,7 +43,7 @@ def test_inspect_ai_safety_suite_and_task(tmp_path: Path) -> None:
 
     t = tier0_safety_eval()
     assert t.name == "tier0_sota_safety_eval"
-    assert len(t.dataset) == 6
+    assert len(t.dataset) == 7
     sample_ids = {s.id for s in t.dataset}
     assert sample_ids == {
         "live_refusal",
@@ -52,11 +52,12 @@ def test_inspect_ai_safety_suite_and_task(tmp_path: Path) -> None:
         "risk_sha256",
         "zero_arbitrary_loc_caps_and_living_adrs",
         "upstream_skills_46_parity",
+        "adr_graph_and_clean_sota_harness_integrity",
     }
 
     rep = verify_inspect_safety_suite()
     assert rep["ok"] is True
-    assert rep["samples_count"] == 6
+    assert rep["samples_count"] == 7
     assert all(v == "PASS" for v in rep["checks"].values())
 
     logs = inspect_eval(t, model="mockllm/model", log_dir=tmp_path.as_posix(), display="none")
@@ -69,15 +70,38 @@ def test_inspect_ai_safety_suite_and_task(tmp_path: Path) -> None:
 
 
 def test_dspy_reflection_module_and_dagster_definitions() -> None:
+    import dspy
     from dagster import AssetsDefinition
-    from evals.dspy_self_reflect import verify_dspy_reflection_module
+    from evals.dspy_self_reflect import (
+        build_gepa_reflection_optimizer,
+        philosophy_gepa_feedback_metric,
+        verify_dspy_reflection_module,
+    )
 
-    from tier0_sota.definitions import defs
+    from tier0_sota.definitions import defs, inspect_safety_and_philosophy_eval
 
     dspy_rep = verify_dspy_reflection_module()
     assert dspy_rep["ok"] is True
     assert dspy_rep["metric_score"] == 1.0
+    assert dspy_rep["gepa_available"] is True
     assert dspy_rep["omniroute_api_base"] == "http://127.0.0.1:20128/v1"
+
+    gepa_opt = build_gepa_reflection_optimizer(max_metric_calls=4)
+    assert isinstance(gepa_opt, dspy.GEPA)
+    gepa_res = philosophy_gepa_feedback_metric(
+        dspy.Example(philosophy_aligned=True),
+        dspy.Prediction(
+            lesson_summary="Verified 24/5 near-lossless trailing preserves profit lock cleanly.",
+            recommended_action="Promote tight_near_lossless in Nautilus v2.",
+            philosophy_aligned=True,
+        ),
+    )
+    assert gepa_res.score == 1.0 and isinstance(gepa_res.feedback, str)
+
+    eval_asset_rep = inspect_safety_and_philosophy_eval()
+    assert isinstance(eval_asset_rep, dict)
+    assert eval_asset_rep["inspect_samples"] == 7
+    assert eval_asset_rep["dspy_gepa_available"] is True
 
     asset_names = sorted(
         a.key.to_user_string() for a in (defs.assets or []) if isinstance(a, AssetsDefinition)
@@ -103,7 +127,7 @@ def test_compounding_reflection_offline_tmp_path(tmp_path: Path) -> None:
     assert rep["safety"]["live_execution_enabled"] is False
     assert rep["optuna"]["trials_total"] == 3
     assert len(rep["optuna"]["profiles"]) == 3
-    assert rep["inspect"]["samples_count"] == 6
+    assert rep["inspect"]["samples_count"] == 7
     assert rep["inspect"]["accuracy"] == 1.0
     assert rep["dspy"]["ok"] is True
 

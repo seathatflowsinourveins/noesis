@@ -87,7 +87,7 @@ def paper_farm_performance_snapshot() -> dict[str, object]:
 
 @asset
 def inspect_safety_and_philosophy_eval() -> dict[str, object]:
-    """Run Inspect AI 6-invariant safety & living-ADR evaluation plus DSPy reflection check."""
+    """Run Inspect AI 7-invariant safety & living-ADR evaluation plus DSPy reflection check."""
     inspect_rep = verify_inspect_safety_suite()
     dspy_rep = verify_dspy_reflection_module()
     return {
@@ -95,6 +95,7 @@ def inspect_safety_and_philosophy_eval() -> dict[str, object]:
         "inspect_samples": int(inspect_rep.get("samples_count", 0)),
         "dspy_ok": bool(dspy_rep.get("ok", False)),
         "dspy_metric_score": dspy_rep.get("metric_score"),
+        "dspy_gepa_available": bool(dspy_rep.get("gepa_available", False)),
     }
 
 

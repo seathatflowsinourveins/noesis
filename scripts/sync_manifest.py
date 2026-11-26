@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import datetime as dt
 import difflib
 import hashlib
 import json
@@ -14,7 +16,10 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = REPO_ROOT / "ARCHITECTURE_MANIFEST.json"
@@ -239,6 +244,635 @@ _PRUNED_DIRS = frozenset(
     }
 )
 
+REQUIRED_MADR_SECTIONS: tuple[str, ...] = (
+    "## Context and Problem Statement",
+    "## Decision Drivers",
+    "## Considered Options",
+    "## Decision Outcome",
+    "### Confirmation",
+    "## Consequences",
+    "## Pros and Cons of the Options",
+    "## More Information",
+)
+
+_ALLOWED_LANES = frozenset({"sim-backtest", "paper", "half-auto-tv", "live"})
+_LAYER_ID_RE = re.compile(r"^L(?:[0-9]|1[0-5])$")
+_ADR_ID_RE = re.compile(r"^ADR-\d{4}$")
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ADR_BANNED_IMPORT_RE = re.compile(
+    r"(?m)^\s*(?:import|from)\s+(?:yfinance|backtrader|vectorbt|talib|mlfinlab)\b"
+)
+_ADR_LIVE_ENABLE_RE = re.compile(r"live_execution_enabled\s*[:=]\s*(?:true|True|1)\b")
+_ADR_LINK_RE = re.compile(r"\[(ADR-\d{4})\]\(\1\.md\)")
+_HISTORICAL_LINE_RE = re.compile(
+    r"(?i)\b(?:supersed(?:ed|es|ing)|historical|replaced|former(?:ly)?|prior|retir(?:ed|ing)|"
+    r"topology|example|legacy|was\s+superseded)\b|\(Superseded\)"
+)
+_CLI_PATH_TOKEN_RE = re.compile(
+    r"(?:scripts|evals|tests|rules|docker|docs|\.github)/[A-Za-z0-9_./-]+"
+)
+
+
+def _to_kebab(field_name: str) -> str:
+    return field_name.replace("_", "-")
+
+
+def _normalize_pkg_token(raw: str) -> str:
+    cleaned = raw.strip().lower()
+    cleaned = cleaned.split(" ", 1)[0].strip("()[]`\"'")
+    if "/" in cleaned:
+        cleaned = cleaned.rsplit("/", 1)[-1]
+    return cleaned.replace("_", "-")
+
+
+class AdrFitnessChecks(BaseModel):
+    """Executable architectural fitness-function bindings declared in ADR frontmatter."""
+
+    model_config = ConfigDict(extra="forbid", alias_generator=_to_kebab, populate_by_name=True)
+
+    pytest: list[str] = Field(default_factory=list)
+    ast_grep: list[str] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
+    evals: list[str] = Field(default_factory=list)
+
+    def total_count(self) -> int:
+        return len(self.pytest) + len(self.ast_grep) + len(self.commands) + len(self.evals)
+
+
+class AdrFrontmatter(BaseModel):
+    """Canonical tier0.adr.v1 MADR 4.0 kebab-case YAML frontmatter contract."""
+
+    model_config = ConfigDict(extra="forbid", alias_generator=_to_kebab, populate_by_name=True)
+
+    schema_version: Literal["tier0.adr.v1"]
+    id: str = Field(pattern=r"^ADR-\d{4}$")
+    title: str = Field(min_length=3)
+    status: Literal["proposed", "accepted", "deprecated", "rejected", "superseded"]
+    date: dt.date
+    last_verified: dt.date
+    evidence_grade: Literal["E1", "E2", "E3", "E4"]
+    decision_makers: list[str] = Field(min_length=1)
+    consulted: list[str] = Field(default_factory=list)
+    informed: list[str] = Field(default_factory=list)
+    sole_source_of_truth: Literal["sota-upstream-convergence-per-core-trading-philosophy"]
+    layers: list[str] = Field(min_length=1)
+    lanes: list[str] = Field(min_length=1)
+    tags: list[str] = Field(min_length=1)
+    upstreams: list[str] = Field(default_factory=list)
+    supersedes: list[str] = Field(default_factory=list)
+    superseded_by: list[str] = Field(default_factory=list)
+    related: list[str] = Field(default_factory=list)
+    code_anchors: list[str] = Field(default_factory=list)
+    fitness_checks: AdrFitnessChecks = Field(default_factory=AdrFitnessChecks)
+    review_triggers: list[str] = Field(min_length=1)
+
+    @field_validator("date", "last_verified", mode="before")
+    @classmethod
+    def _validate_iso_date(cls, value: Any) -> dt.date:
+        if isinstance(value, dt.datetime):
+            raise ValueError("Expected ISO YYYY-MM-DD date, not datetime")
+        if isinstance(value, dt.date):
+            return value
+        if isinstance(value, str) and _ISO_DATE_RE.match(value.strip()):
+            return dt.date.fromisoformat(value.strip())
+        raise ValueError(f"Expected ISO YYYY-MM-DD date, got {value!r}")
+
+    @field_validator("layers")
+    @classmethod
+    def _validate_layers(cls, items: list[str]) -> list[str]:
+        invalid = [item for item in items if not _LAYER_ID_RE.match(item)]
+        if invalid:
+            raise ValueError(f"Invalid layer ID(s) outside L0..L15: {invalid}")
+        return items
+
+    @field_validator("lanes")
+    @classmethod
+    def _validate_lanes(cls, items: list[str]) -> list[str]:
+        invalid = [item for item in items if item not in _ALLOWED_LANES]
+        if invalid:
+            raise ValueError(f"Invalid compounding lane(s): {invalid}")
+        return items
+
+    @field_validator("supersedes", "superseded_by", "related")
+    @classmethod
+    def _validate_adr_refs(cls, items: list[str]) -> list[str]:
+        invalid = [item for item in items if not _ADR_ID_RE.match(item)]
+        if invalid:
+            raise ValueError(f"Invalid ADR reference ID(s): {invalid}")
+        return items
+
+
+def extract_adr_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+    """Extract and parse leading YAML frontmatter (`---`) and body from an ADR Markdown file."""
+    raw = path.read_text(encoding="utf-8")
+    normalized = raw.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        raise ValueError(f"{path.name}: missing leading MADR 4.0 YAML frontmatter (`---`)")
+    end_idx = normalized.find("\n---\n", 4)
+    if end_idx == -1:
+        if normalized.endswith("\n---"):
+            end_idx = len(normalized) - 4
+        else:
+            raise ValueError(f"{path.name}: unterminated YAML frontmatter block")
+    yaml_text = normalized[4:end_idx]
+    body = normalized[end_idx + 5 :] if normalized[end_idx : end_idx + 5] == "\n---\n" else ""
+    parsed = yaml.safe_load(yaml_text)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{path.name}: YAML frontmatter must be a mapping")
+    return parsed, body
+
+
+def _build_forbidden_upstream_tokens(upstream_cfg: dict[str, Any]) -> set[str]:
+    rules = upstream_cfg.get("rules", {})
+    tokens: set[str] = set()
+    for key in ("banned_packages", "banned_libraries"):
+        for item in rules.get(key, []):
+            raw = str(item).strip().lower()
+            tokens.add(raw)
+            tokens.add(_normalize_pkg_token(raw))
+    for entry in rules.get("spdx_license_firewall", []):
+        repo = str(entry["repo"]).strip().lower()
+        tokens.add(repo)
+        tokens.add(_normalize_pkg_token(repo))
+    return tokens
+
+
+def _parse_just_recipes(repo_root: Path) -> set[str]:
+    just_text = (repo_root / "justfile").read_text(encoding="utf-8").replace("\r\n", "\n")
+    recipes: set[str] = set()
+    for match in re.finditer(r"(?m)^([a-zA-Z0-9_-]+)(?:\s+[^:=#\n]+)?:\s*(?!=)", just_text):
+        name = match.group(1)
+        if name not in {"set", "export", "alias", "import", "mod"}:
+            recipes.add(name)
+    return recipes
+
+
+def _parse_ast_grep_rule_ids(repo_root: Path) -> set[str]:
+    rules_text = (repo_root / "rules" / "zero_self_invention.yml").read_text(encoding="utf-8")
+    return set(re.findall(r"(?m)^id:\s*(\S+)", rules_text))
+
+
+def _resolve_python_symbol(path: Path, symbol_spec: str) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    parts = [p for p in symbol_spec.split("::") if p]
+    if not parts:
+        return True
+    if len(parts) == 1:
+        target = parts[0]
+        return any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name == target
+            for node in tree.body
+        )
+    if len(parts) == 2:
+        cls_name, method_name = parts
+        return any(
+            isinstance(node, ast.ClassDef)
+            and node.name == cls_name
+            and any(
+                isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub.name == method_name
+                for sub in node.body
+            )
+            for node in tree.body
+        )
+    return False
+
+
+def _resolve_eval_target(path: Path, target_spec: str) -> bool:
+    if _resolve_python_symbol(path, target_spec):
+        return True
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and node.value == target_spec:
+            return True
+    return False
+
+
+def validate_adr_frontmatter_and_sections(
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, tuple[AdrFrontmatter, str]]:
+    """Validate MADR 4.0 kebab-case YAML frontmatter, canonical headings, and OSI upstreams."""
+    upstream_cfg = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    forbidden_tokens = _build_forbidden_upstream_tokens(upstream_cfg)
+
+    adr_dir = repo_root / "docs" / "adr"
+    adr_paths = sorted(adr_dir.glob("ADR-*.md"))
+    if len(adr_paths) < 24:
+        raise ValueError(f"Expected >= 24 living ADRs under docs/adr/, found {len(adr_paths)}")
+
+    adrs: dict[str, tuple[AdrFrontmatter, str]] = {}
+    for adr_path in adr_paths:
+        raw_meta, body = extract_adr_frontmatter(adr_path)
+        fm = AdrFrontmatter.model_validate(raw_meta)
+        if fm.id != adr_path.stem:
+            raise ValueError(f"{adr_path.name}: frontmatter id {fm.id!r} != {adr_path.stem!r}")
+
+        if not re.search(rf"(?m)^#\s+{re.escape(fm.id)}:", body):
+            raise ValueError(f"{adr_path.name}: missing H1 heading `# {fm.id}: ...`")
+        for heading in REQUIRED_MADR_SECTIONS:
+            if not re.search(rf"(?m)^{re.escape(heading)}\s*$", body):
+                raise ValueError(f"{adr_path.name}: missing required MADR 4.0 heading {heading!r}")
+
+        if _ADR_BANNED_IMPORT_RE.search(body):
+            raise ValueError(f"{adr_path.name}: endorses banned library import in body")
+        if _ADR_LIVE_ENABLE_RE.search(body):
+            raise ValueError(f"{adr_path.name}: enables live execution in body")
+
+        for up in fm.upstreams:
+            raw_lo = up.strip().lower()
+            norm = _normalize_pkg_token(up)
+            if raw_lo in forbidden_tokens or norm in forbidden_tokens:
+                raise ValueError(
+                    f"{adr_path.name}: non-OSI or banned upstream {up!r} declared in `upstreams`"
+                )
+
+        adrs[fm.id] = (fm, body)
+    return adrs
+
+
+def validate_adr_supersession_dag_and_related(
+    adrs: dict[str, tuple[AdrFrontmatter, str]],
+) -> list[list[str]]:
+    """Verify bidirectional supersedes <-> superseded-by links, DAG acyclicity, and citations."""
+    adr_ids = set(adrs.keys())
+    edges: list[list[str]] = []
+
+    for aid, (fm, _body) in sorted(adrs.items()):
+        if fm.status == "superseded":
+            if not fm.superseded_by:
+                raise ValueError(f"{aid}: status=superseded requires non-empty `superseded-by`")
+        elif fm.superseded_by:
+            raise ValueError(f"{aid}: status={fm.status} must have empty `superseded-by`")
+
+        for target in fm.superseded_by:
+            if target not in adr_ids:
+                raise ValueError(f"{aid}: `superseded-by` target {target} does not exist")
+            if target == aid:
+                raise ValueError(f"{aid}: self-supersession is forbidden")
+            target_fm = adrs[target][0]
+            if aid not in target_fm.supersedes:
+                raise ValueError(
+                    f"{aid}: `superseded-by` lists {target}, but {target} `supersedes` omits {aid}"
+                )
+            edges.append([target, aid])
+
+        for old_id in fm.supersedes:
+            if old_id not in adr_ids:
+                raise ValueError(f"{aid}: `supersedes` target {old_id} does not exist")
+            if old_id == aid:
+                raise ValueError(f"{aid}: self-supersession is forbidden")
+            old_fm = adrs[old_id][0]
+            if old_fm.status != "superseded":
+                raise ValueError(
+                    f"{aid}: `supersedes` lists {old_id}, but {old_id} status is {old_fm.status!r}"
+                )
+            if aid not in old_fm.superseded_by:
+                raise ValueError(
+                    f"{aid}: `supersedes` lists {old_id}, but {old_id} `superseded-by` omits {aid}"
+                )
+
+        for rel_id in fm.related:
+            if rel_id not in adr_ids:
+                raise ValueError(f"{aid}: `related` target {rel_id} does not exist")
+            if rel_id == aid:
+                raise ValueError(f"{aid}: `related` must not self-reference {aid}")
+
+    # Strict DAG check on supersedes edges (0=unvisited, 1=visiting, 2=visited)
+    state: dict[str, int] = {aid: 0 for aid in adr_ids}
+
+    def _dfs(node: str) -> None:
+        state[node] = 1
+        for nxt in adrs[node][0].supersedes:
+            if state[nxt] == 1:
+                raise ValueError(f"Supersession cycle detected involving {node} -> {nxt}")
+            if state[nxt] == 0:
+                _dfs(nxt)
+        state[node] = 2
+
+    for aid in sorted(adr_ids):
+        if state[aid] == 0:
+            _dfs(aid)
+
+    # Zero active (accepted) ADRs citing a superseded ADR as current authority
+    superseded_ids = {aid for aid, (fm, _) in adrs.items() if fm.status == "superseded"}
+    for aid, (fm, body) in sorted(adrs.items()):
+        if fm.status != "accepted":
+            continue
+        allowed_sup = set(fm.supersedes)
+        for lineno, line in enumerate(body.splitlines(), 1):
+            for match in _ADR_LINK_RE.finditer(line):
+                cited = match.group(1)
+                if (
+                    cited in superseded_ids
+                    and cited not in allowed_sup
+                    and not _HISTORICAL_LINE_RE.search(line)
+                ):
+                    raise ValueError(
+                        f"{aid}.md:{lineno}: accepted ADR cites superseded {cited} "
+                        "without historical/supersession qualification"
+                    )
+
+    return sorted(edges)
+
+
+def validate_adr_anchors_and_fitness_bindings(
+    repo_root: Path,
+    adrs: dict[str, tuple[AdrFrontmatter, str]],
+) -> dict[str, Any]:
+    """Verify every accepted/proposed ADR's code-anchors and executable fitness-checks resolve."""
+    ast_rule_ids = _parse_ast_grep_rule_ids(repo_root)
+    just_recipes = _parse_just_recipes(repo_root)
+
+    accepted_count = 0
+    fitness_bound = 0
+
+    for aid, (fm, _body) in sorted(adrs.items()):
+        if fm.status == "accepted":
+            accepted_count += 1
+            if not fm.code_anchors:
+                raise ValueError(f"{aid}: accepted ADR requires >= 1 `code-anchors` entry")
+            if fm.fitness_checks.total_count() < 1:
+                raise ValueError(f"{aid}: accepted ADR requires >= 1 `fitness-checks` entry")
+            fitness_bound += 1
+
+        if fm.status not in {"accepted", "proposed"}:
+            continue
+
+        for rel in fm.code_anchors:
+            if not (repo_root / rel).exists():
+                raise ValueError(f"{aid}: missing code-anchor path `{rel}`")
+
+        for py_ref in fm.fitness_checks.pytest:
+            rel_file, _, sym = py_ref.partition("::")
+            target_path = repo_root / rel_file
+            if not target_path.is_file():
+                raise ValueError(f"{aid}: pytest fitness binding missing file `{rel_file}`")
+            if sym and not _resolve_python_symbol(target_path, sym):
+                raise ValueError(f"{aid}: pytest fitness symbol `{py_ref}` not found in AST")
+
+        for rule_id in fm.fitness_checks.ast_grep:
+            if rule_id not in ast_rule_ids:
+                raise ValueError(
+                    f"{aid}: ast-grep rule `{rule_id}` not found in rules/zero_self_invention.yml"
+                )
+
+        for cmd in fm.fitness_checks.commands:
+            tokens = cmd.strip().split()
+            if not tokens:
+                raise ValueError(f"{aid}: empty command entry in fitness-checks.commands")
+            if tokens[0] == "just":
+                if len(tokens) < 2 or tokens[1] not in just_recipes:
+                    raise ValueError(f"{aid}: command `{cmd}` references unknown justfile recipe")
+            else:
+                for pmatch in _CLI_PATH_TOKEN_RE.finditer(cmd):
+                    ref_p = pmatch.group(0).rstrip(".,;:")
+                    if not (repo_root / ref_p).exists():
+                        raise ValueError(
+                            f"{aid}: command `{cmd}` references non-existent path `{ref_p}`"
+                        )
+
+        for eval_ref in fm.fitness_checks.evals:
+            rel_file, _, target = eval_ref.partition("::")
+            target_path = repo_root / rel_file
+            if not target_path.is_file():
+                raise ValueError(f"{aid}: eval fitness binding missing file `{rel_file}`")
+            if target and not _resolve_eval_target(target_path, target):
+                raise ValueError(f"{aid}: eval target `{eval_ref}` not found in {rel_file}")
+
+    return {
+        "accepted_count": accepted_count,
+        "fitness_bound_accepted": fitness_bound,
+        "fitness_bound_accepted_ratio": f"{fitness_bound}/{accepted_count}",
+    }
+
+
+def _collect_zensical_adr_nav(nav_items: list[Any]) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    for item in nav_items:
+        if isinstance(item, dict):
+            for label, value in item.items():
+                if isinstance(value, str) and value.startswith("adr/ADR-"):
+                    found.append((str(label), value))
+                elif isinstance(value, list):
+                    found.extend(_collect_zensical_adr_nav(value))
+    return found
+
+
+def validate_adr_catalog_and_zensical_sync(
+    repo_root: Path,
+    adrs: dict[str, tuple[AdrFrontmatter, str]],
+) -> dict[str, Any]:
+    """Verify exact 3-way parity across docs/adr/ADR-*.md, CATALOG.md, and zensical.toml nav."""
+    catalog_path = repo_root / "docs" / "adr" / "CATALOG.md"
+    catalog_text = catalog_path.read_text(encoding="utf-8")
+    if (
+        "<!-- BEGIN:ADR_CATALOG -->" not in catalog_text
+        or "<!-- END:ADR_CATALOG -->" not in catalog_text
+    ):
+        raise ValueError(
+            "docs/adr/CATALOG.md missing `<!-- BEGIN:ADR_CATALOG -->` / `<!-- END:ADR_CATALOG -->`"
+        )
+
+    row_re = re.compile(
+        r"(?m)^\|\s*\[(ADR-\d{4})\]\(\1\.md\)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|"
+    )
+    catalog_rows: dict[str, tuple[str, str]] = {}
+    for match in row_re.finditer(catalog_text):
+        aid = match.group(1)
+        if aid in catalog_rows:
+            raise ValueError(f"Duplicate ADR row {aid} in docs/adr/CATALOG.md")
+        catalog_rows[aid] = (match.group(2).strip(), match.group(3).strip())
+
+    disk_ids = set(adrs.keys())
+    cat_ids = set(catalog_rows.keys())
+    if cat_ids != disk_ids:
+        raise ValueError(
+            f"CATALOG.md parity mismatch: missing={sorted(disk_ids - cat_ids)} "
+            f"extra={sorted(cat_ids - disk_ids)}"
+        )
+
+    for aid, (fm, _body) in sorted(adrs.items()):
+        _title_col, status_col = catalog_rows[aid]
+        st_lo = status_col.lower()
+        if fm.status == "superseded":
+            if "superseded by" not in st_lo:
+                raise ValueError(
+                    f"CATALOG.md {aid}: expected 'Superseded by ...', got {status_col!r}"
+                )
+            for target in fm.superseded_by:
+                if target not in status_col:
+                    raise ValueError(
+                        f"CATALOG.md {aid}: status {status_col!r} omits superseding target {target}"
+                    )
+        else:
+            if not st_lo.startswith(fm.status):
+                raise ValueError(
+                    f"CATALOG.md {aid}: expected status {fm.status!r}, got {status_col!r}"
+                )
+
+    z_cfg = tomllib.loads((repo_root / "zensical.toml").read_text(encoding="utf-8"))
+    nav_adrs = _collect_zensical_adr_nav(list(z_cfg["project"]["nav"]))
+    expected_nav_targets = [f"adr/{aid}.md" for aid in sorted(adrs.keys())]
+    actual_nav_targets = [target for _, target in nav_adrs]
+    if actual_nav_targets != expected_nav_targets:
+        raise ValueError(
+            "zensical.toml nav parity mismatch: "
+            f"missing={sorted(set(expected_nav_targets) - set(actual_nav_targets))} "
+            f"extra={sorted(set(actual_nav_targets) - set(expected_nav_targets))}"
+        )
+
+    for label, target in nav_adrs:
+        aid = Path(target).stem
+        st = adrs[aid][0].status
+        if st == "superseded" and "(Superseded)" not in label:
+            raise ValueError(f"zensical.toml nav for {aid} must include '(Superseded)'")
+        if st == "proposed" and "(Proposed)" not in label:
+            raise ValueError(f"zensical.toml nav for {aid} must include '(Proposed)'")
+        if st == "accepted" and ("(Superseded)" in label or "(Proposed)" in label):
+            raise ValueError(f"zensical.toml nav for accepted {aid} has stale status badge")
+
+    return {
+        "catalog_and_zensical_in_sync": True,
+        "catalog_count": len(catalog_rows),
+        "zensical_nav_count": len(nav_adrs),
+    }
+
+
+def parse_and_validate_adrs(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Run all 5 ADR governance validators and build deterministic `adr_graph` metadata."""
+    adrs = validate_adr_frontmatter_and_sections(repo_root)
+    supersession_edges = validate_adr_supersession_dag_and_related(adrs)
+    fitness_summary = validate_adr_anchors_and_fitness_bindings(repo_root, adrs)
+    sync_summary = validate_adr_catalog_and_zensical_sync(repo_root, adrs)
+
+    counts_by_status: dict[str, int] = {}
+    layer_coverage: dict[str, list[str]] = {}
+    corpus_digest = hashlib.sha256()
+
+    for aid, (fm, _body) in sorted(adrs.items()):
+        counts_by_status[fm.status] = counts_by_status.get(fm.status, 0) + 1
+        for layer in fm.layers:
+            layer_coverage.setdefault(layer, []).append(aid)
+        adr_path = repo_root / "docs" / "adr" / f"{aid}.md"
+        normalized_bytes = (
+            adr_path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+        )
+        file_sha = hashlib.sha256(normalized_bytes).hexdigest()
+        corpus_digest.update(f"{aid}.md\0{file_sha}\n".encode())
+
+    return {
+        "schema_version": "tier0.adr-graph.v1",
+        "total_adrs": len(adrs),
+        "counts_by_status": dict(sorted(counts_by_status.items())),
+        "supersession_edges": supersession_edges,
+        "layer_coverage": {k: sorted(v) for k, v in sorted(layer_coverage.items())},
+        "fitness_bound_accepted_ratio": fitness_summary["fitness_bound_accepted_ratio"],
+        "catalog_and_zensical_in_sync": sync_summary["catalog_and_zensical_in_sync"],
+        "corpus_sha256": corpus_digest.hexdigest(),
+    }
+
+
+def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Enforce zero-overlap single-winner discipline, SPDX OSI firewall, and 100% src mapping."""
+    upstream = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    starred = json.loads(
+        (repo_root / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
+    )
+    pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    lock_doc = tomllib.loads((repo_root / "uv.lock").read_text(encoding="utf-8"))
+
+    risk_sha = hashlib.sha256((repo_root / RISK_REL_PATH).read_bytes()).hexdigest()
+    if risk_sha != EXPECTED_RISK_SHA256:
+        raise ValueError(f"risk.py SHA-256 mismatch: {risk_sha} != {EXPECTED_RISK_SHA256}")
+
+    # Check pyproject has zero pre-commit dependency
+    all_declared_specs: list[str] = list(pyproject.get("project", {}).get("dependencies", []))
+    for grp_deps in pyproject.get("dependency-groups", {}).values():
+        if isinstance(grp_deps, list):
+            all_declared_specs.extend(str(d) for d in grp_deps)
+    for opt_deps in pyproject.get("project", {}).get("optional-dependencies", {}).values():
+        if isinstance(opt_deps, list):
+            all_declared_specs.extend(str(d) for d in opt_deps)
+    declared_pkg_names = {
+        re.split(r"[<>=!~;\[\s]", spec.strip(), maxsplit=1)[0].lower().replace("_", "-")
+        for spec in all_declared_specs
+        if spec.strip()
+    }
+    if "pre-commit" in declared_pkg_names:
+        raise ValueError(
+            "Overlap violation: `pre-commit` declared in pyproject.toml alongside prek"
+        )
+
+    forbidden_tokens = _build_forbidden_upstream_tokens(upstream)
+    lock_pkgs = {
+        str(pkg.get("name", "")).lower().replace("_", "-")
+        for pkg in lock_doc.get("package", [])
+        if isinstance(pkg, dict)
+    }
+    banned_in_lock = sorted(lock_pkgs & forbidden_tokens)
+    if banned_in_lock:
+        raise ValueError(f"Banned/non-OSI packages present in uv.lock: {banned_in_lock}")
+
+    # Verify zero winner overlap with rejected_overlaps or forbidden_tokens
+    all_winners: set[str] = set()
+    all_rejected: set[str] = set()
+    for idx in range(11):
+        layer = upstream["layers"][f"L{idx}"]
+        for w in layer["winners"]:
+            norm_w = _normalize_pkg_token(str(w))
+            if norm_w in forbidden_tokens or str(w).strip().lower() in forbidden_tokens:
+                raise ValueError(f"Layer L{idx} winner {w!r} violates banned/SPDX firewall")
+            all_winners.add(norm_w)
+        for r in layer["rejected_overlaps"]:
+            all_rejected.add(_normalize_pkg_token(str(r)))
+
+    winner_rejected_overlap = sorted(all_winners & all_rejected)
+    if winner_rejected_overlap:
+        raise ValueError(f"Winners overlap with rejected_overlaps: {winner_rejected_overlap}")
+
+    # Verify SPDX firewall parity & absence from active/frontier lists in SOTA_STARRED manifest
+    up_fw = {entry["repo"] for entry in upstream["rules"]["spdx_license_firewall"]}
+    st_fw = {entry["repo"] for entry in starred["spdx_license_firewall"]}
+    if up_fw != st_fw:
+        raise ValueError(
+            f"SPDX firewall drift between upstream-map.toml and SOTA_STARRED: "
+            f"only_up={sorted(up_fw - st_fw)} only_starred={sorted(st_fw - up_fw)}"
+        )
+
+    fw_tokens = {r.lower() for r in up_fw} | {_normalize_pkg_token(r) for r in up_fw}
+    for layer_key, layer_doc in starred["active_winners_by_layer"].items():
+        for w in layer_doc.get("winners", []):
+            if str(w).strip().lower() in fw_tokens or _normalize_pkg_token(str(w)) in fw_tokens:
+                raise ValueError(f"SOTA_STARRED active {layer_key} includes firewalled {w!r}")
+            if _normalize_pkg_token(str(w)) == "pre-commit":
+                raise ValueError(f"SOTA_STARRED active {layer_key} includes overlapping pre-commit")
+    for layer_key, layer_doc in starred["earned_trigger_frontier_l11_to_l15"].items():
+        for cand in layer_doc.get("candidates", []):
+            slug = str(cand.get("slug", ""))
+            if slug.lower() in fw_tokens or _normalize_pkg_token(slug) in fw_tokens:
+                raise ValueError(f"SOTA_STARRED frontier {layer_key} includes firewalled {slug!r}")
+
+    # Verify 100% of src/tier0_sota/**/*.py is mapped in upstream-map.toml [files.*]
+    mapped_files = set(upstream.get("files", {}).keys())
+    src_py_files = sorted(
+        p.relative_to(repo_root).as_posix()
+        for p in (repo_root / "src" / "tier0_sota").rglob("*.py")
+    )
+    unmapped_src = [rel for rel in src_py_files if rel not in mapped_files]
+    if unmapped_src:
+        raise ValueError(
+            f"Unmapped src/tier0_sota Python files in upstream-map.toml: {unmapped_src}"
+        )
+
+    return {
+        "ok": True,
+        "zero_banned_in_uv_lock": True,
+        "zero_winner_overlap_with_rejected": True,
+        "zero_pre_commit_overlap": True,
+        "spdx_firewall_count": len(up_fw),
+        "src_files_mapped_ratio": f"{len(src_py_files) - len(unmapped_src)}/{len(src_py_files)}",
+    }
+
 
 def _run_git(repo_root: Path, *args: str) -> str | None:
     git_exe = shutil.which("git")
@@ -370,6 +1004,9 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     if risk_sha != EXPECTED_RISK_SHA256:
         raise ValueError(f"risk.py SHA-256 mismatch: {risk_sha} != {EXPECTED_RISK_SHA256}")
 
+    clean_sota_harness = validate_clean_sota_harness(repo_root)
+    adr_graph = parse_and_validate_adrs(repo_root)
+
     branch = _detect_branch(repo_root)
     py_ver_path = repo_root / ".python-version"
     python_version = (
@@ -461,6 +1098,8 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "mcp_lanes": mcp_lanes,
         },
         "hosted_portals": [*HOSTED_PORTALS, *COMPANION_PORTALS],
+        "adr_graph": adr_graph,
+        "clean_sota_harness": clean_sota_harness,
         "layers": layers,
         "entrypoints": entrypoints,
         "repository_files": repo_files,

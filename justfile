@@ -76,6 +76,10 @@ test *args:
 docs-build:
     {{uv_run}} zensical build --clean --strict
 
+# Verify MADR 4.0 ADR frontmatter, fitness bindings, manifest parity & strict Zensical build
+adr-check: manifest-check docs-build
+    {{uv_run}} pytest -q tests/test_architecture_manifest.py -k "adr or clean_sota_harness"
+
 # Install prek git hooks
 prek-install:
     prek install
@@ -188,12 +192,12 @@ open-agy:
 # Launch WSL2 Linux Antigravity Desktop (2.35.2 via WSLg) attached to /mnt/z/noesis
 [windows]
 open-agy-wsl:
-    Start-Process wsl.exe -ArgumentList @('-d', 'Noesis-SOTA', '--', 'bash', '-lc', 'nohup "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis >/dev/null 2>&1 &') -WindowStyle Hidden
+    wsl.exe -d Noesis-SOTA -- bash -lc 'setsid -f "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis </dev/null >/tmp/antigravity-wsl.log 2>&1'
 
 # Launch WSL2 Linux Antigravity Desktop (2.35.2 via WSLg) attached to /mnt/z/noesis
 [unix]
 open-agy-wsl:
-    nohup "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis >/dev/null 2>&1 &
+    setsid -f "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis </dev/null >/tmp/antigravity-wsl.log 2>&1
 
 # Run complete local SOTA verification suite
-check: fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke test gitleaks
+check: fmt-check lint typecheck deptry ast adr-check z3 mcp-smoke test gitleaks

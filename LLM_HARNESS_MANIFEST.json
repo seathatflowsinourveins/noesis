@@ -53,6 +53,7 @@
       "mlflow",
       "inspect-ai",
       "dspy",
+      "gepa",
       "dagster",
       "skillevaluator",
       "xerj",

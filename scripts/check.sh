@@ -54,8 +54,27 @@ if [[ "$UV_LOCK_YFINANCE_MATCHES" -ne 0 ]]; then
 fi
 echo "[OK] UV_LOCK_YFINANCE_MATCHES=0"
 
-LEGACY_PATTERN="tier0""-quant|CLEAN"" LIVE|sota-live-tv""-harness|sota_compounding_1000rpm""_harness|RTX ""4090"
-if grep -rnE --exclude-dir=__pycache__ "$LEGACY_PATTERN" src docs evals scripts pyproject.toml ARCHITECTURE_MANIFEST.json SOTA_STARRED_AND_BEYOND_MANIFEST.json >/dev/null 2>&1; then
+if ! "$PY" - <<'PYEOF'
+import re
+from pathlib import Path
+
+rx = re.compile(
+    r"tier0" r"-quant(?!-falsification)|CLEAN" r" LIVE|sota-live-tv" r"-harness|"
+    r"sota_compounding_1000rpm" r"_harness|RTX " r"4090"
+)
+roots = [
+    Path("pyproject.toml"),
+    Path("ARCHITECTURE_MANIFEST.json"),
+    Path("SOTA_STARRED_AND_BEYOND_MANIFEST.json"),
+]
+for d in ("src", "docs", "evals", "scripts"):
+    if Path(d).is_dir():
+        roots.extend(p for p in Path(d).rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+hits = [str(p) for p in roots if p.is_file() and rx.search(p.read_text(encoding="utf-8", errors="ignore"))]
+if hits:
+    raise SystemExit(f"Legacy references detected: {hits}")
+PYEOF
+then
   echo "Legacy references detected" >&2
   exit 1
 fi

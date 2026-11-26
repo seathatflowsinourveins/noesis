@@ -58,9 +58,10 @@ jobs:
           uv run --no-sync deptry .
           uv run --no-sync ast-grep scan --config sgconfig.yml
 
-      - name: Unit tests, Z3 formal risk proofs, manifest parity & MCP smoke
+      - name: Unit tests, Z3 formal risk proofs, ADR/manifest parity, strict docs & MCP smoke
         run: |
           uv run --no-sync pytest -q
           uv run --no-sync python evals/formal_risk_z3.py
           uv run --no-sync python scripts/sync_manifest.py --check
+          uv run --no-sync zensical build --clean --strict
           uv run --no-sync python scripts/nautilus_mcp_server.py --smoke

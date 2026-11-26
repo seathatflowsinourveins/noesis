@@ -17,7 +17,15 @@ LEGACY_PATTERN = re.compile(
     r"tier0-quant(?!-falsification)|CLEAN LIVE|sota-live-tv-harness|"
     r"sota_compounding_1000rpm_harness|RTX 4090"
 )
-NON_OSI_REPOS = {"treeverse/lakeFS", "restatedev/restate", "Arize-ai/phoenix", "NX-AI/tirex"}
+NON_OSI_REPOS = {
+    "treeverse/lakeFS",
+    "restatedev/restate",
+    "Arize-ai/phoenix",
+    "NX-AI/tirex",
+    "semgrep/semgrep",
+    "peernagy/LOBS5",
+    "PriorLabs/TabPFN",
+}
 
 
 def _load_manifest() -> dict[str, object]:
@@ -280,7 +288,8 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
         rel for rel in repo_files if rel.startswith("docs/adr/ADR-") and rel.endswith(".md")
     )
     assert "docs/adr/ADR-0001.md" in adr_files
-    assert len(adr_files) >= 21
+    assert "docs/adr/ADR-0024.md" in adr_files
+    assert len(adr_files) >= 24
 
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "src/tier0_sota/risk.py" in pyproject["tool"]["ruff"]["format"]["exclude"]
@@ -584,3 +593,78 @@ def test_compounding_reflection_paper_farm_nested_schema(
         "reflection-2026-11-26-core_24x5_compound"
     )
     assert calls == [("PUT", expected_url)]
+
+
+def test_adr_madr4_frontmatter_schema_and_sections() -> None:
+    from scripts.sync_manifest import validate_adr_frontmatter_and_sections
+
+    adrs = validate_adr_frontmatter_and_sections(REPO_ROOT)
+    assert len(adrs) >= 24
+    assert "ADR-0001" in adrs
+    assert "ADR-0024" in adrs
+    assert adrs["ADR-0019"][0].status == "proposed"
+
+
+def test_adr_bidirectional_supersession_dag_and_related_links() -> None:
+    from scripts.sync_manifest import (
+        validate_adr_frontmatter_and_sections,
+        validate_adr_supersession_dag_and_related,
+    )
+
+    adrs = validate_adr_frontmatter_and_sections(REPO_ROOT)
+    edges = validate_adr_supersession_dag_and_related(adrs)
+    expected_edges = {
+        ("ADR-0014", "ADR-0008"),
+        ("ADR-0015", "ADR-0008"),
+        ("ADR-0016", "ADR-0004"),
+        ("ADR-0016", "ADR-0006"),
+        ("ADR-0017", "ADR-0011"),
+        ("ADR-0021", "ADR-0011"),
+    }
+    assert expected_edges.issubset({(new_id, old_id) for new_id, old_id in edges})
+
+
+def test_adr_code_anchors_and_fitness_bindings_resolve() -> None:
+    from scripts.sync_manifest import (
+        validate_adr_anchors_and_fitness_bindings,
+        validate_adr_frontmatter_and_sections,
+    )
+
+    adrs = validate_adr_frontmatter_and_sections(REPO_ROOT)
+    summary = validate_adr_anchors_and_fitness_bindings(REPO_ROOT, adrs)
+    assert summary["accepted_count"] >= 19
+    assert summary["fitness_bound_accepted"] == summary["accepted_count"]
+
+
+def test_adr_catalog_zensical_nav_and_manifest_graph_parity() -> None:
+    from scripts.sync_manifest import (
+        parse_and_validate_adrs,
+        validate_adr_catalog_and_zensical_sync,
+        validate_adr_frontmatter_and_sections,
+    )
+
+    adrs = validate_adr_frontmatter_and_sections(REPO_ROOT)
+    sync_rep = validate_adr_catalog_and_zensical_sync(REPO_ROOT, adrs)
+    assert sync_rep["catalog_and_zensical_in_sync"] is True
+    assert sync_rep["catalog_count"] == len(adrs)
+    assert sync_rep["zensical_nav_count"] == len(adrs)
+
+    live_graph = parse_and_validate_adrs(REPO_ROOT)
+    manifest = _load_manifest()
+    assert manifest.get("adr_graph") == live_graph
+
+
+def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
+    from scripts.sync_manifest import validate_clean_sota_harness
+
+    rep = validate_clean_sota_harness(REPO_ROOT)
+    assert rep["ok"] is True
+    assert rep["zero_banned_in_uv_lock"] is True
+    assert rep["zero_winner_overlap_with_rejected"] is True
+    assert rep["zero_pre_commit_overlap"] is True
+    assert rep["spdx_firewall_count"] == len(NON_OSI_REPOS)
+    mapped_num, mapped_den = (int(x) for x in str(rep["src_files_mapped_ratio"]).split("/"))
+    assert mapped_den >= 13 and mapped_num == mapped_den
+
+    manifest = _load_manifest()
+    assert manifest.get("clean_sota_harness") == rep

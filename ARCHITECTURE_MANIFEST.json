@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 145,
+    "repository_files_count": 146,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -49,6 +49,18 @@
     {
       "repo": "NX-AI/tirex",
       "license": "custom"
+    },
+    {
+      "repo": "semgrep/semgrep",
+      "license": "Semgrep-Rules-v1.0-Non-OSI"
+    },
+    {
+      "repo": "peernagy/LOBS5",
+      "license": "NOASSERTION"
+    },
+    {
+      "repo": "PriorLabs/TabPFN",
+      "license": "Non-Commercial-Weights"
     }
   ],
   "safety_invariants": {
@@ -156,6 +168,171 @@
       "url": "http://127.0.0.1:13133/"
     }
   ],
+  "adr_graph": {
+    "schema_version": "tier0.adr-graph.v1",
+    "total_adrs": 24,
+    "counts_by_status": {
+      "accepted": 19,
+      "proposed": 1,
+      "superseded": 4
+    },
+    "supersession_edges": [
+      [
+        "ADR-0014",
+        "ADR-0008"
+      ],
+      [
+        "ADR-0015",
+        "ADR-0008"
+      ],
+      [
+        "ADR-0016",
+        "ADR-0004"
+      ],
+      [
+        "ADR-0016",
+        "ADR-0006"
+      ],
+      [
+        "ADR-0017",
+        "ADR-0011"
+      ],
+      [
+        "ADR-0021",
+        "ADR-0011"
+      ]
+    ],
+    "layer_coverage": {
+      "L0": [
+        "ADR-0001",
+        "ADR-0012",
+        "ADR-0017",
+        "ADR-0022",
+        "ADR-0023"
+      ],
+      "L1": [
+        "ADR-0001",
+        "ADR-0003",
+        "ADR-0010",
+        "ADR-0013"
+      ],
+      "L10": [
+        "ADR-0001",
+        "ADR-0009",
+        "ADR-0010",
+        "ADR-0011",
+        "ADR-0017",
+        "ADR-0021"
+      ],
+      "L11": [
+        "ADR-0013",
+        "ADR-0018"
+      ],
+      "L12": [
+        "ADR-0014",
+        "ADR-0015",
+        "ADR-0018"
+      ],
+      "L13": [
+        "ADR-0015",
+        "ADR-0016",
+        "ADR-0018"
+      ],
+      "L14": [
+        "ADR-0017",
+        "ADR-0018",
+        "ADR-0020",
+        "ADR-0021"
+      ],
+      "L15": [
+        "ADR-0016",
+        "ADR-0018",
+        "ADR-0020"
+      ],
+      "L2": [
+        "ADR-0001",
+        "ADR-0008",
+        "ADR-0014",
+        "ADR-0015"
+      ],
+      "L3": [
+        "ADR-0001",
+        "ADR-0002",
+        "ADR-0004",
+        "ADR-0005",
+        "ADR-0007",
+        "ADR-0016",
+        "ADR-0019",
+        "ADR-0020"
+      ],
+      "L4": [
+        "ADR-0001",
+        "ADR-0008",
+        "ADR-0009",
+        "ADR-0010",
+        "ADR-0013",
+        "ADR-0014",
+        "ADR-0019",
+        "ADR-0020"
+      ],
+      "L5": [
+        "ADR-0001",
+        "ADR-0002",
+        "ADR-0006",
+        "ADR-0015",
+        "ADR-0016",
+        "ADR-0019",
+        "ADR-0020"
+      ],
+      "L6": [
+        "ADR-0001",
+        "ADR-0002",
+        "ADR-0009",
+        "ADR-0011",
+        "ADR-0017",
+        "ADR-0019",
+        "ADR-0020",
+        "ADR-0021",
+        "ADR-0024"
+      ],
+      "L7": [
+        "ADR-0001",
+        "ADR-0005",
+        "ADR-0012",
+        "ADR-0016",
+        "ADR-0018",
+        "ADR-0020",
+        "ADR-0023",
+        "ADR-0024"
+      ],
+      "L8": [
+        "ADR-0001",
+        "ADR-0002",
+        "ADR-0018",
+        "ADR-0024"
+      ],
+      "L9": [
+        "ADR-0001",
+        "ADR-0002",
+        "ADR-0012",
+        "ADR-0018",
+        "ADR-0022",
+        "ADR-0023",
+        "ADR-0024"
+      ]
+    },
+    "fitness_bound_accepted_ratio": "19/19",
+    "catalog_and_zensical_in_sync": true,
+    "corpus_sha256": "8ffe95b4809304d85f930fc9b184f071c789b9bda255de3c6e80914293799216"
+  },
+  "clean_sota_harness": {
+    "ok": true,
+    "zero_banned_in_uv_lock": true,
+    "zero_winner_overlap_with_rejected": true,
+    "zero_pre_commit_overlap": true,
+    "spdx_firewall_count": 7,
+    "src_files_mapped_ratio": "13/13"
+  },
   "layers": {
     "L0": {
       "name": "Runtime, Lockfile & Provenance",
@@ -284,7 +461,8 @@
         "skfolio",
         "ml4t-diagnostic",
         "arch",
-        "statsmodels"
+        "statsmodels",
+        "clarabel"
       ],
       "rejected_overlaps": [
         "pyportfolioopt",
@@ -360,7 +538,8 @@
         "docs/adr/ADR-0020.md",
         "docs/adr/ADR-0021.md",
         "docs/adr/ADR-0022.md",
-        "docs/adr/ADR-0023.md"
+        "docs/adr/ADR-0023.md",
+        "docs/adr/ADR-0024.md"
       ]
     },
     "L7": {
@@ -373,7 +552,6 @@
         "hypothesis",
         "pytest",
         "prek",
-        "pre-commit",
         "z3-solver",
         "deptry",
         "trivy",
@@ -390,7 +568,9 @@
         "bandit",
         "mypy",
         "pyright",
-        "osv-scanner"
+        "osv-scanner",
+        "pre-commit",
+        "semgrep"
       ],
       "repo_artifacts": [
         ".github/workflows/ci.yml",
@@ -426,10 +606,8 @@
       "winners": [
         "inspect-ai",
         "dspy",
-        "harbor",
-        "promptfoo",
+        "gepa",
         "skillevaluator",
-        "OpenHands",
         "aideml"
       ],
       "rejected_overlaps": [
@@ -501,7 +679,7 @@
         "OpenBB",
         "perspective",
         "lightweight-charts",
-        "ag-grid"
+        "ag-grid-community"
       ],
       "watches": [
         "rerun",
@@ -645,6 +823,7 @@
     "docs/adr/ADR-0021.md",
     "docs/adr/ADR-0022.md",
     "docs/adr/ADR-0023.md",
+    "docs/adr/ADR-0024.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",

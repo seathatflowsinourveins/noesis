@@ -26,11 +26,11 @@ chmod 700 "$HOME/.config/fnox"
 # Retire legacy custom shell wrapper (replaced by upstream jdx/fnox + age profiles per ADR-0023)
 rm -f "$HOME/.config/tier0/with_lane_env.sh"
 
-# Idempotently ensure WSL2 AGY zero-copy Disk-Z skills pointer
+# Idempotently ensure WSL2 AGY zero-copy Disk-Z skills pointer (7-skill global Governance Spine; workspace .agents/skills.json loads 46/46 inside noesis)
 mkdir -p "$HOME/.gemini/config"
 SKILLS_JSON="$HOME/.gemini/config/skills.json"
 SKILLS_TMP="$(mktemp "${SKILLS_JSON}.tmp.XXXXXX")"
-printf '{"entries":[{"path":"%s/.claude/skills"}]}\n' "${REPO_ROOT%/}" >"$SKILLS_TMP"
+printf '{"entries":[{"path":"%s/.claude/skills","include_only":["orca-cli","orca-per-workspace-env","orchestration","tier0-code-intel-and-gates","tier0-quant-falsification","tier0-upstream-convergence","verification-before-completion"]}]}\n' "${REPO_ROOT%/}" >"$SKILLS_TMP"
 mv -f "$SKILLS_TMP" "$SKILLS_JSON"
 
 if ! command -v uv >/dev/null 2>&1; then

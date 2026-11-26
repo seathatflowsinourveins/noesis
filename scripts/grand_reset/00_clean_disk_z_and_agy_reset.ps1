@@ -213,9 +213,21 @@ if ($CleanAgyReinstall) {
     )
     Write-Host "[AGY SETTINGS] Wrote clean settings (orca_hooks_preserved=$($null -ne $existingOrcaHooks)) -> $AgySettingsTarget" -ForegroundColor Green
 
+    $globalGovernanceSpineSkills = @(
+        "orca-cli",
+        "orca-per-workspace-env",
+        "orchestration",
+        "tier0-code-intel-and-gates",
+        "tier0-quant-falsification",
+        "tier0-upstream-convergence",
+        "verification-before-completion"
+    )
     $agySkillsPayload = [ordered]@{
         entries = @(
-            [ordered]@{ path = $SkillsSourceSlash }
+            [ordered]@{
+                path         = $SkillsSourceSlash
+                include_only = $globalGovernanceSpineSkills
+            }
         )
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $AgySkillsConfigTarget) -Force | Out-Null
@@ -224,7 +236,7 @@ if ($CleanAgyReinstall) {
         (($agySkillsPayload | ConvertTo-Json -Depth 5) + "`n"),
         [System.Text.UTF8Encoding]::new($false)
     )
-    Write-Host "[AGY SKILLS] Wrote zero-copy skills.json ($SkillsSourceSlash, locked=$($LockedSkills.Count)) -> $AgySkillsConfigTarget" -ForegroundColor Green
+    Write-Host "[AGY SKILLS] Wrote zero-copy skills.json ($SkillsSourceSlash, global_spine=$($globalGovernanceSpineSkills.Count), locked=$($LockedSkills.Count)) -> $AgySkillsConfigTarget" -ForegroundColor Green
 
     Write-Host "`n[NEXT STEPS - FRESH ANTIGRAVITY (AGY) REINSTALL]" -ForegroundColor Cyan
     Write-Host "  1. Close Antigravity UI cleanly and uninstall/reinstall the fresh Antigravity desktop build (keeps ~/.gemini settings & skills)." -ForegroundColor Gray

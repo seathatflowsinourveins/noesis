@@ -250,7 +250,7 @@ services:
     restart: unless-stopped
 
   telemetry-exporter:
-    image: otel/opentelemetry-collector-contrib:0.123.0
+    image: otel/opentelemetry-collector-contrib:0.166.0
     cpus: "1.0"
     mem_limit: 512m
     command:
@@ -265,7 +265,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:v3.2.1
+    image: prom/prometheus:v3.16.0
     cpus: "2.0"
     mem_limit: 1g
     ports:
@@ -287,7 +287,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.5.2
+    image: grafana/grafana:13.3.1
     cpus: "2.0"
     mem_limit: 1g
     ports:
@@ -335,7 +335,7 @@ services:
     restart: unless-stopped
 
   tearsheets:
-    image: caddy:2.9.1-alpine
+    image: caddy:2.11.9-alpine
     cpus: "0.5"
     mem_limit: 256m
     user: "1000:1000"
@@ -362,6 +362,9 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Optional portals-profile helper for inspecting FINOS workspace plugin mounts.
+  # Live FINOS Workspace (:1420/:8000) is served by WSL2 workspace-local, and :6900 is owned
+  # exclusively by WSL2 systemd unit tier0-openbb-backend per ADR-0017 (never bind :6900 here).
   finos-workspace:
     image: tier0-sota-research:latest
     profiles:
@@ -371,10 +374,13 @@ services:
     pull_policy: never
     user: "1000:1000"
     working_dir: /mnt/z/sota-data/hosted-research-frameworks/finos-workspace-plugins
+    command:
+      - python
+      - -c
+      - "import pathlib; p=pathlib.Path('/mnt/z/sota-data/hosted-research-frameworks/finos-workspace-plugins'); assert p.is_dir(); print({'finos_plugins_mount_ok': True, 'entries': sorted(x.name for x in p.iterdir())})"
     ports:
       - "127.0.0.1:1420:1420"
       - "127.0.0.1:8000:8000"
-      - "127.0.0.1:6900:6900"
     volumes:
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/hosted-research-frameworks:/mnt/z/sota-data/hosted-research-frameworks:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
@@ -382,7 +388,7 @@ services:
       - HOME=/tmp
       - PAPER_ONLY=true
       - LIVE_EXECUTION_ENABLED=false
-    restart: unless-stopped
+    restart: "no"
 
   aideml-sandbox:
     profiles:

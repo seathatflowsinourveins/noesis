@@ -19,7 +19,10 @@ MADR_SECTIONS = (
     "## Decision Drivers",
     "## Considered Options",
     "## Decision Outcome",
+    "### Confirmation",
     "## Consequences",
+    "## Pros and Cons of the Options",
+    "## More Information",
 )
 BANNED_IMPORT_RE = re.compile(
     r"(?m)^\s*(?:import|from)\s+(?:yfinance|backtrader|vectorbt|talib|mlfinlab)\b"
@@ -118,11 +121,9 @@ def test_zero_legacy_references_and_zero_yfinance_in_uv_lock() -> None:
     uv_lock = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
     assert "yfinance" not in uv_lock.lower(), "uv.lock must contain 0 yfinance entries"
 
-    legacy_tokens = (
-        "tier0-quant",
-        "sota_compounding_1000rpm_harness",
-        "CLEAN LIVE",
-        "sota-live-tv-harness",
+    legacy_rx = re.compile(
+        r"tier0-quant(?!-falsification)|sota_compounding_1000rpm_harness|"
+        r"CLEAN LIVE|sota-live-tv-harness"
     )
     targets: list[Path] = [REPO_ROOT / "pyproject.toml"]
     targets.extend((REPO_ROOT / "scripts" / "grand_reset").rglob("*"))
@@ -133,8 +134,8 @@ def test_zero_legacy_references_and_zero_yfinance_in_uv_lock() -> None:
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        for tok in legacy_tokens:
-            assert tok not in text, f"Stale legacy token {tok!r} found in {path}"
+        hit = legacy_rx.search(text)
+        assert hit is None, f"Stale legacy token {hit.group(0)!r} found in {path}"
 
 
 def test_madr_adrs_catalog_and_zensical_toml() -> None:
@@ -146,13 +147,13 @@ def test_madr_adrs_catalog_and_zensical_toml() -> None:
     assert "superseded by adr-" in catalog.lower()
 
     adr_paths = sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
-    assert len(adr_paths) >= 23
+    assert len(adr_paths) >= 24
     assert (REPO_ROOT / "docs" / "adr" / "ADR-0022.md").is_file()
     assert (REPO_ROOT / "docs" / "adr" / "ADR-0023.md").is_file()
+    assert (REPO_ROOT / "docs" / "adr" / "ADR-0024.md").is_file()
     nav_targets = [next(iter(item.values())) for item in z_cfg["project"]["nav"]]
-    assert "adr/ADR-0022.md" in nav_targets
-    assert "adr/ADR-0023.md" in nav_targets
     for adr_path in adr_paths:
+        assert f"adr/{adr_path.name}" in nav_targets, f"{adr_path.name} missing from zensical.toml"
         assert adr_path.name in catalog, f"{adr_path.name} missing from CATALOG.md"
         body = adr_path.read_text(encoding="utf-8")
         for sec in MADR_SECTIONS:

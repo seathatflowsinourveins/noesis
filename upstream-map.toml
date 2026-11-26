@@ -49,12 +49,17 @@ banned_packages = [
   "bandit",
   "mypy",
   "pyright",
+  "pre-commit",
+  "osv-scanner",
 ]
 spdx_license_firewall = [
   { repo = "treeverse/lakeFS", license = "BSL-1.1", reason = "Non-OSI source-available license" },
   { repo = "restatedev/restate", license = "BSL-1.1", reason = "Non-OSI source-available license" },
   { repo = "Arize-ai/phoenix", license = "ELv2", reason = "Non-OSI Elastic License 2.0" },
   { repo = "NX-AI/tirex", license = "custom", reason = "Non-OSI custom research license" },
+  { repo = "semgrep/semgrep", license = "Semgrep-Rules-v1.0-Non-OSI", reason = "Non-OSI Semgrep Rules License v1.0 and proprietary cross-file SAST (use opengrep LGPL-2.1 or CodeQL + ast-grep)" },
+  { repo = "peernagy/LOBS5", license = "NOASSERTION", reason = "No root OSI LICENSE (all-rights-reserved) and commercial LOBSTER data dependency (use microsoft/MarS MIT)" },
+  { repo = "PriorLabs/TabPFN", license = "Non-Commercial-Weights", reason = "Apache-2.0 code but non-commercial pretrained weights v2.5/v3 (use soda-inria/tabicl TabICLv2 BSD-3-Clause)" },
 ]
 forbidden_live_ports = [4001, 7496, 8798, 8796]
 forbidden_live_hosts = ["api.alpaca.markets"]
@@ -68,8 +73,11 @@ allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_200"]
 standards = [
   "AAIF AGENTS.md",
   "MADR 4.0 (living evolvable ADRs)",
+  "ISO/IEC/IEEE 42010:2022 (architecture rationale & viewpoints)",
+  "Evolutionary Architecture Fitness Functions",
   "PEP 735 (uv.lock default-groups)",
   "SPDX OSI License Firewall",
+  "AFML/ML4T Causal Statistical Falsification",
   "Conventional Commits",
 ]
 reflection_stack = [
@@ -79,6 +87,7 @@ reflection_stack = [
   "mlflow",
   "inspect-ai",
   "dspy",
+  "gepa",
   "dagster",
   "skillevaluator",
   "xerj",
@@ -94,7 +103,7 @@ rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools", "custom-env-shell
 
 [layers.L1]
 name = "Data, Schema Validation, Calendars & Causal PIT"
-winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "edgartools", "fredapi", "treeverse/dvc"]
+winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "edgartools", "fredapi"]
 rejected_overlaps = ["pandas-datareader", "yfinance", "clickhouse-local-server"]
 
 [layers.L2]
@@ -114,22 +123,22 @@ rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-ser
 
 [layers.L5]
 name = "Statistical Falsification & Portfolio Construction"
-winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels"]
+winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "clarabel"]
 rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab", "quantstats"]
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "otel-collector-contrib", "grafana", "caddy"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy"]
 rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
 
 [layers.L7]
 name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "pre-commit", "z3-solver", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
-rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner"]
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
+rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner", "pre-commit", "semgrep"]
 
 [layers.L8]
 name = "Agent Evals, Sandboxes & Prompt Optimization"
-winners = ["inspect-ai", "dspy", "harbor", "promptfoo", "skillevaluator", "OpenHands", "aideml"]
+winners = ["inspect-ai", "dspy", "gepa", "skillevaluator", "aideml"]
 rejected_overlaps = ["deepeval"]
 
 [layers.L9]
@@ -139,7 +148,7 @@ rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self
 
 [layers.L10]
 name = "Institutional UI & Visual Analytics"
-winners = ["finos-workspace", "OpenBB", "perspective", "lightweight-charts", "ag-grid"]
+winners = ["finos-workspace", "OpenBB", "perspective", "lightweight-charts", "ag-grid-community"]
 watches = ["rerun", "mosaic", "FDC3", "evidence"]
 rejected_overlaps = ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter"]
 
@@ -165,22 +174,29 @@ why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity direct
 [files."src/tier0_sota/discovery.py"]
 how = "integrate"
 upstream = "polars"
-secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy"]
-feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), multi-feed regime & market-aligned reversal signal adapter"
-why = "Delegates causal data transforms, calendar ops, drift, changepoint & motif signals to pinned upstreams"
+secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap", "fredapi"]
+feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), multi-feed regime, offline-first FRED vintages & causal LightGBM/CatBoost/SHAP ranker"
+why = "Delegates causal data transforms, calendar ops, drift, changepoint, motif & GBDT+SHAP ranking to pinned upstreams"
 
 [files."src/tier0_sota/research.py"]
 how = "integrate"
 upstream = "skfolio"
-secondary_upstreams = ["hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"]
-feature = "6-gate statistical falsification adapter (hftbacktest markout, 1x/2x costs, CPCV >= 16, DSR/PBO, Hansen SPA, HAC, MLflow logging)"
-why = "Delegates validation gates and experiment ledger strictly to pinned upstreams"
+secondary_upstreams = ["clarabel", "hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"]
+feature = "6-gate statistical falsification (hftbacktest markout, 1x/2x costs, CPCV >= 16, DSR/PBO, Hansen SPA, HAC) & skfolio+Clarabel.rs portfolio optimization"
+why = "Delegates validation gates, convex portfolio sizing and experiment ledger strictly to pinned upstreams"
 
 [files."src/tier0_sota/definitions.py"]
 how = "integrate"
 upstream = "dagster"
 feature = "Upstream-native Dagster Definitions & asset graph (pre-wall PIT, risk SHA-256, Paper Farm snapshot)"
 why = "Exposes a clean Dagster Definitions entrypoint without duplicating scheduler/UI scaffolding"
+
+[files."src/tier0_sota/live/__init__.py"]
+how = "integrate"
+upstream = "alpaca-py"
+secondary_upstreams = ["nautilus_trader", "polars", "duckdb"]
+feature = "Live Paper Farm package entrypoint (paper_only=True)"
+why = "Exposes fail-closed Paper Farm, extreme-mover scanner, and performance adapters"
 
 [files."src/tier0_sota/live/scanner.py"]
 how = "integrate"
@@ -199,6 +215,27 @@ why = "Delegates Paper Farm execution and isolated per-account telemetry to pinn
 [files."src/tier0_sota/live/performance.py"]
 how = "integrate"
 upstream = "polars"
-secondary_upstreams = ["duckdb"]
-feature = "Paper Farm live performance manifest aggregator & FINOS/OpenBB JSON export"
-why = "Aggregates Paper Farm metrics and emits declarative JSON specs without custom UI servers"
+secondary_upstreams = ["duckdb", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp"]
+feature = "Paper Farm live performance & TCA manifest aggregator, FINOS/OpenBB JSON export & OTel/Prometheus telemetry recording"
+why = "Aggregates Paper Farm metrics and emits declarative JSON & OTel/Prometheus metrics without custom UI servers"
+
+[files."src/tier0_sota/tv/__init__.py"]
+how = "integrate"
+upstream = "pydantic"
+secondary_upstreams = ["nautilus_trader"]
+feature = "TradingView Pine v6 display-only alert bridge & Half-Auto ticket package entrypoint"
+why = "Re-exports Pydantic v2 validated TvAlertV1 bridge and staged ticket helpers"
+
+[files."src/tier0_sota/tv/bridge.py"]
+how = "integrate"
+upstream = "pydantic"
+secondary_upstreams = ["nautilus_trader"]
+feature = "Fail-closed TradingView Pine v6 alert contract (TvAlertV1, semi_auto_confirmed=False) & live endpoint refusal"
+why = "Delegates schema validation directly to Pydantic v2 instead of hand-patched validators"
+
+[files."src/tier0_sota/tv/tickets.py"]
+how = "integrate"
+upstream = "pydantic"
+secondary_upstreams = ["nautilus_trader"]
+feature = "Extreme-mover Half-Auto staged ticket & TradingView watchlist generator (DIRECT_SHORT_ETB vs INVERSE_HEDGE)"
+why = "Generates validated display-only order tickets and watchlists without CDP automation"

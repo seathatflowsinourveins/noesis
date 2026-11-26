@@ -54,6 +54,7 @@ __all__ = [
     "build_venue_risk_engine_config",
     "classify_et_hm",
     "classify_us_equity_session_et",
+    "compute_collared_entry_limit_price",
     "compute_collared_limit_price",
     "compute_dynamic_trailing_stop",
     "compute_progressive_trailing_stop",
@@ -291,6 +292,11 @@ class SessionProtectionProfile:
     max_notional_scale: Decimal
     outside_rth: bool
 
+    @property
+    def limit_collar_bps(self) -> Decimal:
+        """Session collar width expressed in basis points (35 Pre/After, 50 Overnight)."""
+        return self.limit_collar_pct * _BPS_DIV
+
 
 def _sp(
     s: SessionOrClosed, m: Literal["STOP_MARKET", "STOP_LIMIT"], v: str, o: bool
@@ -432,6 +438,28 @@ def compute_collared_limit_price(
     return _rk.quantize_rule_612(px, side=side, is_stop=False)
 
 
+def compute_collared_entry_limit_price(
+    ref_price: Decimal, side: Side, collar_pct: Decimal
+) -> Decimal:
+    """Compute a Rule-612 collared LIMIT price for outside-RTH entries.
+
+    LONG entries buy up to `ref_price * (1 + collar_pct)` rounded conservatively down;
+    SHORT entries sell down to `ref_price * (1 - collar_pct)` rounded conservatively up.
+    """
+    ref, collar = Decimal(str(ref_price)), Decimal(str(collar_pct))
+    if (
+        not ref.is_finite()
+        or ref <= _ZERO
+        or not collar.is_finite()
+        or not (_ZERO <= collar < Decimal("0.20"))
+    ):
+        raise ValueError(f"Invalid ref_price={ref!r} or collar_pct={collar!r}")
+    if side not in ("LONG", "SHORT"):
+        raise ValueError(f"Unsupported side: {side!r}")
+    px = max(_rk.TICK_SUB_DOLLAR, ref * (_ONE + collar if side == "LONG" else _ONE - collar))
+    return _rk.quantize_rule_612(px, side=side, is_stop=False)
+
+
 def _hard_stop(
     entry: Decimal, side: Side, prof: SessionProtectionProfile
 ) -> tuple[Decimal, Decimal]:
@@ -522,6 +550,9 @@ class SignalBacktestResult:
     auto_reverses: int = 0
     auto_reentries: int = 0
     max_lock_tier: int = 0
+    outside_rth_limit_entries: int = 0
+    outside_rth_market_entries: int = 0
+    rth_market_entries: int = 0
 
 
 class SignalExecutionConfig(StrategyConfig):
@@ -599,6 +630,7 @@ class SignalExecutionStrategy(Strategy):
         self.bars_processed = self.bars_5m_processed = self.signals_received = 0
         self.stops_attached = self.trailing_ratchets = self.session_transitions = 0
         self.auto_reverses = self.auto_reentries = self.max_lock_tier = 0
+        self.outside_rth_limit_entries = self.rth_market_entries = 0
         self._reentry_count, self._reversing, self._last_closed_ts_ns = 0, False, -1
         self._halt_triggered = self._closing = self._replacing_stop = self._deferred_guard = False
         self._stop_session: SessionOrClosed | None = None
@@ -700,9 +732,23 @@ class SignalExecutionStrategy(Strategy):
         os = nm.OrderSide.BUY if side == "LONG" else nm.OrderSide.SELL
         tif = nm.TimeInForce.GTC if prof.outside_rth else nm.TimeInForce.DAY
         tags = [f"SESSION={sess}", *([IBKR_OUTSIDE_RTH_TAG] if prof.outside_rth else [])]
-        ord_ = self.order_factory.market(
-            iid, os, nm.Quantity.from_int(qty), time_in_force=tif, tags=tags
-        )
+        if prof.outside_rth:
+            lim_raw = compute_collared_entry_limit_price(ref, side, prof.limit_collar_pct)
+            lim_px = _to_increment(lim_raw, self.price_increment, up=(side == "SHORT"))
+            ord_ = self.order_factory.limit(
+                iid,
+                os,
+                nm.Quantity.from_int(qty),
+                self._fmt(lim_px),
+                time_in_force=tif,
+                tags=tags,
+            )
+            self.outside_rth_limit_entries += 1
+        else:
+            ord_ = self.order_factory.market(
+                iid, os, nm.Quantity.from_int(qty), time_in_force=tif, tags=tags
+            )
+            self.rth_market_entries += 1
         self.submit_order(ord_)
         return True
 
@@ -1030,6 +1076,20 @@ def run_nautilus_signal_backtest(
         engine.run()
         orders, acct = engine.cache.orders(), engine.cache.account_for_venue(VENUE_XNAS)
         fills = sum(1 for ord_ in orders if int(ord_.filled_qty.as_double()) > 0)
+        outside_rth_limit_entries = 0
+        outside_rth_market_entries = 0
+        rth_market_entries = 0
+        for ord_ in orders:
+            ord_tags = tuple(ord_.tags or ())
+            if EXIT_TAG in ord_tags:
+                continue
+            is_outside = IBKR_OUTSIDE_RTH_TAG in ord_tags
+            if is_outside and ord_.order_type == _OT.LIMIT:
+                outside_rth_limit_entries += 1
+            elif is_outside and ord_.order_type == _OT.MARKET:
+                outside_rth_market_entries += 1
+            elif not is_outside and ord_.order_type == _OT.MARKET:
+                rth_market_entries += 1
         bal = acct.balance_total(usd) if acct is not None else None
         end_eq, rets = (float(bal.as_double()) if bal is not None else c0), list(st._trade_returns)
         if bool(o.get("mark_open_positions_at_eof", True)):
@@ -1054,6 +1114,9 @@ def run_nautilus_signal_backtest(
             st.auto_reverses,
             st.auto_reentries,
             st.max_lock_tier,
+            outside_rth_limit_entries,
+            outside_rth_market_entries,
+            rth_market_entries,
         )
     finally:
         engine.dispose()

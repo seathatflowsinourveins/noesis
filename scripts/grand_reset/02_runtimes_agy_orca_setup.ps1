@@ -271,9 +271,21 @@ $AgyMcpPayload = [ordered]@{ mcpServers = $CleanMcpServers }
 Save-BackupIfExists -TargetPath $AgyMcpTarget
 Write-Utf8NoBom -Path $AgyMcpTarget -Content (($AgyMcpPayload | ConvertTo-Json -Depth 10) + "`n")
 
+$GlobalGovernanceSpineSkills = @(
+    "orca-cli",
+    "orca-per-workspace-env",
+    "orchestration",
+    "tier0-code-intel-and-gates",
+    "tier0-quant-falsification",
+    "tier0-upstream-convergence",
+    "verification-before-completion"
+)
 $AgySkillsPayload = [ordered]@{
     entries = @(
-        [ordered]@{ path = $SkillsSourceSlash }
+        [ordered]@{
+            path         = $SkillsSourceSlash
+            include_only = $GlobalGovernanceSpineSkills
+        }
     )
 }
 Save-BackupIfExists -TargetPath $AgySkillsConfigTarget
