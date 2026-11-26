@@ -30,8 +30,20 @@ from nautilus_trader.indicators import SimpleMovingAverage, VolumeWeightedAverag
 from nautilus_trader.persistence import BarDataWrangler
 from river.drift import ADWIN
 
-_RAW_WALL_ISO = os.environ.get("TIER0_PREWALL_CUTOFF", "").strip() or "2026-10-15"
+MAX_PREWALL_DATE: date = date(2026, 10, 15)
+
+
+class PreWallViolationError(ValueError):
+    """Raised when a caller attempts to use post-wall (> 2026-10-15) data."""
+
+
+_RAW_WALL_ISO = os.environ.get("TIER0_PREWALL_CUTOFF", "").strip() or MAX_PREWALL_DATE.isoformat()
 DISCOVERY_WALL_DATE: date = date.fromisoformat(_RAW_WALL_ISO)
+if DISCOVERY_WALL_DATE > MAX_PREWALL_DATE:
+    raise PreWallViolationError(
+        f"TIER0_PREWALL_CUTOFF {DISCOVERY_WALL_DATE} exceeds maximum pre-wall date "
+        f"{MAX_PREWALL_DATE}"
+    )
 DISCOVERY_WALL_ISO: str = DISCOVERY_WALL_DATE.isoformat()
 DISCOVERY_WALL_UTC_NS: int = (
     int(
@@ -58,10 +70,6 @@ FEATURE_COLS: list[str] = ["roc", "rsi", "natr", "vol_ratio"]
 REGIME_BENCHMARK_SYMBOLS: tuple[str, ...] = ("SPY", "QQQ", "SOXX", "RSP", "VIX")
 _XNYS = xcals.get_calendar("XNYS")
 _NY_TZ = ZoneInfo("America/New_York")
-
-
-class PreWallViolationError(ValueError):
-    """Raised when a caller attempts to use post-wall (> 2026-10-15) data."""
 
 
 _BS: dict[str, pa.Column] = {
@@ -575,6 +583,7 @@ def load_causal_fred_vintages(
     snapshot_path: Path | None = None,
     allow_network: bool = False,
     api_key: str | None = None,
+    keep_all_vintages: bool = False,
 ) -> pl.DataFrame:
     """Load offline-first causal ALFRED/FRED macro vintages strictly <= cutoff_date (PIT)."""
     wall = assert_pre_wall_date(cutoff_date)
@@ -599,18 +608,22 @@ def load_causal_fred_vintages(
         fred_client = Fred(api_key=resolved_key)
         rows: list[dict[str, Any]] = []
         for sid in want_ids:
-            ser = fred_client.get_series_as_of_date(sid, wall.isoformat())
+            if hasattr(fred_client, "get_series_all_releases"):
+                ser = fred_client.get_series_all_releases(sid)
+            else:
+                ser = fred_client.get_series_as_of_date(sid, wall.isoformat())
             for _, rec in ser.dropna().iterrows():
                 obs_d = parse_iso_date(rec["date"])
                 vin_d = parse_iso_date(rec["realtime_start"])
-                rows.append(
-                    {
-                        "series_id": sid,
-                        "observation_date": obs_d,
-                        "vintage_date": vin_d,
-                        "value": float(rec["value"]),
-                    }
-                )
+                if vin_d <= wall and obs_d <= wall:
+                    rows.append(
+                        {
+                            "series_id": sid,
+                            "observation_date": obs_d,
+                            "vintage_date": vin_d,
+                            "value": float(rec["value"]),
+                        }
+                    )
         raw_df = pl.DataFrame(rows)
     else:
         raise FileNotFoundError(
@@ -631,13 +644,53 @@ def load_causal_fred_vintages(
     if want_ids is not None:
         df = df.filter(c("series_id").is_in(want_ids))
 
-    # Strict PIT: keep only observations published on or before wall, selecting latest pre-wall
+    # Strict PIT: keep only releases published on or before wall
     df = df.filter((c("vintage_date") <= wall) & (c("observation_date") <= wall))
     if df.height == 0:
         return df
+    ordered = df.sort(["series_id", "observation_date", "vintage_date"]).select(
+        ["series_id", "observation_date", "vintage_date", "value"]
+    )
+    if keep_all_vintages:
+        return ordered
     return (
-        df.sort(["series_id", "observation_date", "vintage_date"])
-        .group_by(["series_id", "observation_date"], maintain_order=True)
+        ordered.group_by(["series_id", "observation_date"], maintain_order=True)
         .last()
         .select(["series_id", "observation_date", "vintage_date", "value"])
+    )
+
+
+def join_causal_fred_asof(
+    target_df: pl.DataFrame,
+    vintages_df: pl.DataFrame,
+    *,
+    series_id: str,
+    date_col: str = "trade_date",
+    output_col: str | None = None,
+) -> pl.DataFrame:
+    """Attach strictly causal ALFRED values known on or before each decision `date_col`."""
+    sid = series_id.strip().upper()
+    out_name = output_col or f"fred_{sid.lower()}"
+    c = pl.col
+    sub = (
+        vintages_df.filter(c("series_id").cast(pl.String).str.to_uppercase() == sid)
+        .with_columns(
+            c("vintage_date").cast(pl.Date),
+            c("observation_date").cast(pl.Date),
+            c("value").cast(pl.Float64),
+        )
+        .filter(
+            (c("vintage_date") <= DISCOVERY_WALL_DATE)
+            & (c("observation_date") <= c("vintage_date"))
+        )
+        .sort(["vintage_date", "observation_date"])
+        .group_by("vintage_date", maintain_order=True)
+        .last()
+        .select(c("vintage_date"), c("value").alias(out_name))
+    )
+    left = target_df.with_columns(c(date_col).cast(pl.Date)).sort(date_col)
+    if sub.height == 0:
+        return left.with_columns(pl.lit(None, dtype=pl.Float64).alias(out_name))
+    return left.join_asof(sub, left_on=date_col, right_on="vintage_date", strategy="backward").drop(
+        "vintage_date"
     )

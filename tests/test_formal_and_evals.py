@@ -353,3 +353,38 @@ def test_skfolio_clarabel_portfolio_optimization_and_causal_ml_discovery(tmp_pat
 
     with pytest.raises(PreWallViolationError):
         load_causal_fred_vintages(cutoff_date="2026-10-20", snapshot_path=snap_path)
+
+    # Full vintage history + backward as-of join must exclude post-decision revisions.
+    from tier0_sota.discovery import join_causal_fred_asof
+
+    all_v = load_causal_fred_vintages(
+        series_ids=["VIXCLS"], snapshot_path=snap_path, keep_all_vintages=True
+    )
+    assert all_v.height == 2
+    decisions = pl.DataFrame({"trade_date": [date(2026, 10, 12), date(2026, 10, 15)]})
+    joined = join_causal_fred_asof(decisions, all_v, series_id="VIXCLS")
+    assert joined["fred_vixcls"].to_list() == [18.0, 18.4]
+
+    # TIER0_PREWALL_CUTOFF > 2026-10-15 must fail closed on import.
+    bad_env = dict(os.environ)
+    bad_env["TIER0_PREWALL_CUTOFF"] = "2026-10-16"
+    bad_proc = subprocess.run(
+        [sys.executable, "-c", "import tier0_sota.discovery"],
+        cwd=str(REPO_ROOT),
+        env=bad_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad_proc.returncode != 0
+    assert "PreWallViolationError" in bad_proc.stderr
+
+    # mode="lake" with missing lake root must raise instead of silent fixture fallback.
+    from scripts.run_compounding_reflection import run_compounding_reflection
+
+    with pytest.raises(FileNotFoundError):
+        run_compounding_reflection(
+            mode="lake",
+            manifest_dir=tmp_path / "manifests",
+            lake_root=tmp_path / "missing-lake",
+        )

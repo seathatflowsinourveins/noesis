@@ -11,6 +11,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import alpaca.data as ad
 import alpaca.trading as at
@@ -28,6 +29,23 @@ from tier0_sota import risk as rk
 PAPER_ALPACA_ENDPOINT = "https://paper-api.alpaca.markets"
 IBKR_PAPER_ACCOUNT = "IBKR_DU_4002"
 IBKR_PAPER_MAX_RPM = 3000
+_NY_TZ = ZoneInfo("America/New_York")
+
+
+def _assert_paper_trading_client(client: Any) -> None:
+    """Fail closed if an injected Alpaca client is non-paper or points off PAPER_ALPACA_ENDPOINT."""
+    if getattr(client, "_sandbox", None) is False or getattr(client, "paper", None) is False:
+        raise PermissionError("Refused non-paper trading client; paper=True required.")
+    for attr in ("_base_url", "base_url", "_url_override", "url_override"):
+        val = getattr(client, attr, None)
+        if val is None:
+            continue
+        raw = str(getattr(val, "value", val)).strip().rstrip("/").lower()
+        if raw and raw != PAPER_ALPACA_ENDPOINT:
+            raise PermissionError(
+                f"Refused non-paper trading endpoint; expected {PAPER_ALPACA_ENDPOINT}."
+            )
+
 
 _DEC_ZERO = Decimal("0")
 _DEC_ONE = Decimal("1")
@@ -578,6 +596,7 @@ class AlpacaPaperLane:
         default_factory=lambda: rk.ProtectiveExitRateBudget(200, Decimal("0.10"))
     )
     breaker: rk.DailyDrawdownBreaker = field(init=False)
+    _breaker_day_et: date | None = field(default=None, init=False)
     supervised_stops: dict[str, ExtendedHoursStopSupervision] = field(default_factory=dict)
     counters: dict[str, int] = field(
         default_factory=lambda: {
@@ -597,6 +616,7 @@ class AlpacaPaperLane:
             raise ValueError(f"Unsupported Alpaca Paper lane: {self.account!r}")
         if not self.paper_only or self.live_execution_enabled:
             raise PermissionError("Refused non-paper execution; paper_only=True required.")
+        _assert_paper_trading_client(self.trading_client)
         eng.validate_venue_order_capability("ALPACA_PAPER_200")
         self.breaker = rk.DailyDrawdownBreaker(start_equity=self.start_equity)
 
@@ -995,6 +1015,22 @@ class AlpacaPaperLane:
         except (OSError, duckdb.Error):
             return set()
 
+    def _persisted_daily_fuse_tripped(self, day_et: date) -> bool:
+        if not self.duckdb_path.is_file():
+            return False
+        try:
+            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
+                tables = {str(r[0]).lower() for r in conn.execute("SHOW TABLES").fetchall()}
+                if "paper_daily_fuse" not in tables:
+                    return False
+                row = conn.execute(
+                    "SELECT tripped FROM paper_daily_fuse WHERE day = ? LIMIT 1",
+                    (day_et.isoformat(),),
+                ).fetchone()
+                return bool(row and row[0])
+        except (OSError, duckdb.Error):
+            return False
+
     def sync_broker_fills_and_status(
         self,
         *,
@@ -1009,7 +1045,18 @@ class AlpacaPaperLane:
         live_equity = float(getattr(acct_obj, "equity", self.start_equity) or self.start_equity)
         last_equity = float(getattr(acct_obj, "last_equity", live_equity) or live_equity)
         if last_equity > 0.0:
-            self.breaker = rk.DailyDrawdownBreaker(start_equity=Decimal(f"{last_equity:.2f}"))
+            today_et = datetime.now(_NY_TZ).date()
+            db_tripped = self._persisted_daily_fuse_tripped(today_et)
+            if self._breaker_day_et != today_et:
+                prior_tripped = (
+                    bool(self.breaker.tripped) if self._breaker_day_et is None else False
+                )
+                self.breaker = rk.DailyDrawdownBreaker(start_equity=Decimal(f"{last_equity:.2f}"))
+                if prior_tripped or db_tripped:
+                    self.breaker.tripped = True
+                self._breaker_day_et = today_et
+            elif db_tripped:
+                self.breaker.tripped = True
             self.breaker.update(
                 realized_pnl=Decimal(f"{live_equity - last_equity:.2f}"),
                 unrealized_pnl=_DEC_ZERO,
@@ -1377,6 +1424,7 @@ class PaperFarmCoordinator:
                     if self.data_client is None:
                         self.data_client = ad.StockHistoricalDataClient(k, s)
             if client is not None:
+                _assert_paper_trading_client(client)
                 self.lanes[acct] = AlpacaPaperLane(
                     account=acct,
                     manifest_dir=manifest_dir,

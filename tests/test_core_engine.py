@@ -480,3 +480,63 @@ def test_outside_rth_entry_uses_collared_limit_not_market() -> None:
     assert rth_res.rth_market_entries == 1
     assert rth_res.outside_rth_limit_entries == 0
     assert rth_res.outside_rth_market_entries == 0
+
+
+def test_position_changed_reanchors_stop_and_unfilled_l1_fails_gate1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    from tier0_sota.engine import SignalExecutionConfig, SignalExecutionStrategy
+
+    df = _synth_bars("NVDA", [100.0, 102.0, 103.0], start_et=(10, 0), wick=0.0)
+    ts_l = df["t_close_ns"].to_list()
+    usd = Currency.from_str("USD")
+    _, btype, _, prec = df_to_equity_and_bars(df, "NVDA", usd)
+    strat = SignalExecutionStrategy(
+        SignalExecutionConfig(btype, {}, Decimal("100000"), prec, fixed_qty=10)
+    )
+    strat._last_close_px = Decimal("104.00")
+    pos_scaled = SimpleNamespace(
+        instrument_id=btype.instrument_id,
+        is_long=True,
+        avg_px_open=Decimal("104.00"),
+        quantity=15,
+    )
+    captured: list[tuple[object, str, int, bool]] = []
+    monkeypatch.setattr(strat, "_open_pos", lambda iid: pos_scaled)
+    monkeypatch.setattr(strat, "_sync_session", lambda ts_ns, iid, *, delta=Decimal("0"): None)
+    monkeypatch.setattr(
+        strat,
+        "_replace_stop",
+        lambda pos, sess, ts_ns, *, trailing: captured.append((pos, sess, ts_ns, trailing)),
+    )
+    fake_event = cast(Any, SimpleNamespace(instrument_id=btype.instrument_id, ts_event=ts_l[1]))
+    strat.on_position_changed(fake_event)
+    assert len(captured) == 1
+    assert strat._init_stop_px is not None
+    assert (Decimal("104.00") - strat._init_stop_px) / Decimal("104.00") <= Decimal("0.02")
+
+    # Unfilled L1 order must NOT auto-pass Gate 1 even with default markout_bps == 0.0.
+    q_df = pl.DataFrame(
+        {
+            "t_ns": [ts_l[0], ts_l[1]],
+            "bp": [100.0, 101.0],
+            "bs": [100.0, 100.0],
+            "ap": [100.05, 101.05],
+            "as": [100.0, 100.0],
+        }
+    )
+    t_df = pl.DataFrame({"t_ns": [ts_l[0] + 1_000], "p": [100.05], "s": [10.0]})
+    rep = evaluate_six_gate_falsification(
+        bars_df=df,
+        signals_by_ts={ts_l[0]: 1},
+        n_trials_total=5,
+        pbo=0.2,
+        l1_quotes_df=q_df,
+        l1_trades_df=t_df,
+    )
+    assert rep["l1_markout"] is not None
+    assert rep["l1_markout"]["passive_filled"] is False
+    assert rep["gates"]["1_hftbacktest_l1_markout"] is False

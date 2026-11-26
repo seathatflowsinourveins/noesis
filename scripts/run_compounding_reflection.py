@@ -399,13 +399,16 @@ def run_compounding_reflection(
     resolved_inspect_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_lake = lake_root if lake_root is not None else (data_root / "prewall-lake")
-    loaded_lake = None if resolved_mode == "offline" else _load_lake_prewall_dataset(resolved_lake)
-    if loaded_lake is not None:
-        bars_df, signals_by_ts, quotes_df, trades_df, data_meta = loaded_lake
-    else:
+    if resolved_mode == "offline":
         bars_df, signals_by_ts, quotes_df, trades_df, data_meta = _build_offline_prewall_dataset()
-        if resolved_mode == "lake":
-            data_meta["fallback_reason"] = f"prewall-lake unavailable at {resolved_lake}"
+    else:
+        loaded_lake = _load_lake_prewall_dataset(resolved_lake)
+        if loaded_lake is None:
+            raise FileNotFoundError(
+                f"Pre-wall lake dataset unavailable at {resolved_lake}; "
+                "refused silent offline fixture fallback (pass --offline explicitly)."
+            )
+        bars_df, signals_by_ts, quotes_df, trades_df, data_meta = loaded_lake
 
     sym = str(data_meta["symbol"])
     hft_markout = evaluate_hftbacktest_queue_markout(quotes_df, trades_df, symbol=sym, side="BUY")

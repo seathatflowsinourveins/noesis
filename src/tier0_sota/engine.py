@@ -958,6 +958,21 @@ class SignalExecutionStrategy(Strategy):
             _, self._init_stop_px = _hard_stop(self._fav_ext, sd, prof)
             self._replace_stop(pos, sess, ts, trailing=False)
 
+    def on_position_changed(self, event: nm.PositionChanged) -> None:
+        ts = int(event.ts_event)
+        if self._halt_triggered or self._closing:
+            self._flatten(event.instrument_id, self._sess_prof(ts)[0])
+            return
+        self._sync_session(ts, event.instrument_id)
+        if pos := self._open_pos(event.instrument_id):
+            sess = self._sess_prof(ts)[0]
+            prof = get_session_protection_profile(sess, self.session_protection)
+            entry = Decimal(str(pos.avg_px_open))
+            sd: Side = "LONG" if pos.is_long else "SHORT"
+            self._fav_ext = (max if pos.is_long else min)(self._fav_ext or entry, entry)
+            _, self._init_stop_px = _hard_stop(entry, sd, prof)
+            self._replace_stop(pos, sess, ts, trailing=False)
+
     def on_position_closed(self, event: nm.PositionClosed) -> None:
         iid, ts = event.instrument_id, int(event.ts_event)
         notl = float(event.avg_px_open) * float(event.peak_qty.as_double())

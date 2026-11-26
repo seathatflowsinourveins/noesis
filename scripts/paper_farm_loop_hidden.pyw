@@ -52,6 +52,76 @@ def _port_open(port: int, timeout: float = 0.6) -> bool:
         return False
 
 
+def _extract_tcp_port(endpoint: str) -> int | None:
+    cleaned = endpoint.strip()
+    if not cleaned or ":" not in cleaned:
+        return None
+    port_part = cleaned.rsplit(":", 1)[-1]
+    if not port_part.isdigit():
+        return None
+    return int(port_part)
+
+
+def _parse_windows_netstat_ports(output: str) -> set[int]:
+    ports: set[int] = set()
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[0].upper() != "TCP":
+            continue
+        for endpoint in (parts[1], parts[2]):
+            port = _extract_tcp_port(endpoint)
+            if port is not None:
+                ports.add(port)
+    return ports
+
+
+def _parse_proc_net_tcp_ports(content: str) -> set[int]:
+    ports: set[int] = set()
+    for line in content.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        for endpoint in (parts[1], parts[2]):
+            if ":" in endpoint:
+                with contextlib.suppress(ValueError):
+                    ports.add(int(endpoint.rsplit(":", 1)[-1], 16))
+    return ports
+
+
+def _active_forbidden_tcp_ports() -> tuple[list[int], str | None]:
+    """Return active forbidden local OR remote TCP ports (fail-closed on probe error)."""
+    observed: set[int] = set()
+    if sys.platform == "win32":
+        netstat_bin = shutil.which("netstat")
+        if not netstat_bin:
+            return [], "netstat executable not found for TCP port guard"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [netstat_bin, "-ano", "-p", "TCP"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+                creationflags=CREATE_NO_WINDOW,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return [], f"TCP port guard failed: {_sanitize(str(exc))}"
+        if proc.returncode != 0:
+            return [], f"TCP port guard exited {proc.returncode}"
+        observed |= _parse_windows_netstat_ports(proc.stdout)
+    else:
+        for proc_path in (pathlib.Path("/proc/net/tcp"), pathlib.Path("/proc/net/tcp6")):
+            if proc_path.is_file():
+                with contextlib.suppress(OSError):
+                    observed |= _parse_proc_net_tcp_ports(proc_path.read_text(encoding="utf-8"))
+    for port in FORBIDDEN_LIVE_PORTS:
+        if _port_open(port, timeout=0.35):
+            observed.add(port)
+    hits = sorted(port for port in FORBIDDEN_LIVE_PORTS if port in observed)
+    return hits, None
+
+
 def _resolve_fnox_bin() -> str | None:
     found = shutil.which("fnox")
     if found:
@@ -118,9 +188,11 @@ def _verify_safety_invariants(repo_root: pathlib.Path) -> str | None:
     digest = hashlib.sha256(risk_path.read_bytes()).hexdigest().lower()
     if digest != EXPECTED_RISK_SHA256:
         return f"risk.py sha256 mismatch: {digest}"
-    for port in FORBIDDEN_LIVE_PORTS:
-        if _port_open(port, timeout=0.35):
-            return f"forbidden live broker port active: {port}"
+    hits, probe_err = _active_forbidden_tcp_ports()
+    if probe_err:
+        return probe_err
+    if hits:
+        return f"forbidden live broker port active (local or remote): {hits[0]}"
     return None
 
 

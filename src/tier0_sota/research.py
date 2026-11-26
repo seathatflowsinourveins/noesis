@@ -394,7 +394,9 @@ def evaluate_six_gate_falsification(
         l1 = evaluate_hftbacktest_queue_markout(
             l1_quotes_df, l1_trades_df, symbol=sym, side=l1_side
         )
-    g1 = l1 is None or (l1["passive_order_submitted"] and l1["markout_bps"] >= -20.0)
+    g1 = l1 is None or (
+        l1["passive_order_submitted"] and l1["passive_filled"] and l1["markout_bps"] >= -20.0
+    )
     g2 = (
         bt1.total_return_pct > 0.0
         and bt2.total_return_pct > 0.0

@@ -1325,3 +1325,67 @@ def test_paper_farm_start_loop_uses_zero_window_pythonw() -> None:
     assert "paper-farm-observe.lock" in pyw_text
     assert "paper-farm-execution.lock" in pyw_text
     assert "paper-farm-execution-health.json" in pyw_text
+    assert "_active_forbidden_tcp_ports" in pyw_text
+
+
+def test_hidden_launcher_detects_remote_forbidden_ports() -> None:
+    import importlib.util
+
+    pyw_path = Path(__file__).resolve().parents[1] / "scripts" / "paper_farm_loop_hidden.pyw"
+    spec = importlib.util.spec_from_file_location("paper_farm_loop_hidden", pyw_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    sample_netstat = (
+        "  Proto  Local Address          Foreign Address        State           PID\n"
+        "  TCP    10.0.0.5:51234         203.0.113.10:4001      ESTABLISHED     1234\n"
+        "  TCP    127.0.0.1:4002         0.0.0.0:0              LISTENING       5678\n"
+    )
+    ports = mod._parse_windows_netstat_ports(sample_netstat)
+    assert 4001 in ports and 4002 in ports
+
+    proc_tcp = (
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt uid\n"
+        "   0: 0100007F:C350 0A000002:1D48 01 00000000:00000000 00:00000000 00000000 1000\n"
+    )
+    assert 7496 in mod._parse_proc_net_tcp_ports(proc_tcp)
+
+
+def test_paper_lane_preserves_intraday_drawdown_latch_and_rejects_non_paper_client(
+    tmp_path: Path,
+) -> None:
+    class _EquityClient(_FakeTradingClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.equity = "98000.00"
+            self.last_equity = "100000.00"
+
+        def get_account(self) -> SimpleNamespace:
+            return SimpleNamespace(equity=self.equity, last_equity=self.last_equity)
+
+        def get_all_positions(self) -> list[object]:
+            return []
+
+        def get_orders(self, _req: object) -> list[object]:
+            return []
+
+    client = _EquityClient()
+    lane = AlpacaPaperLane("ALPACA_PA1", tmp_path, client, CrossLaneSymbolLock())
+    lane.sync_broker_fills_and_status()
+    assert lane.breaker.tripped is True
+
+    # Equity rebounds intra-day: latch MUST remain tripped on subsequent syncs today.
+    client.equity = "101000.00"
+    lane.sync_broker_fills_and_status()
+    assert lane.breaker.tripped is True
+    assert lane.breaker.allow_entry() is False
+
+    # Non-paper injected clients must be refused fail-closed in both coordinator and lane.
+    non_paper_flag = SimpleNamespace(_sandbox=False)
+    non_paper_url = SimpleNamespace(_base_url="https://not-paper.example.com")
+    for bad in (non_paper_flag, non_paper_url):
+        with pytest.raises(PermissionError):
+            AlpacaPaperLane("ALPACA_PA1", tmp_path, bad, CrossLaneSymbolLock())
+        with pytest.raises(PermissionError):
+            PaperFarmCoordinator(tmp_path, alpaca_clients={"ALPACA_PA1": bad})
