@@ -1,0 +1,37 @@
+# noesis — Tier-0 SOTA — Declarative Encrypted Secret Profiles (jdx/fnox + FiloSottile/age)
+# Zero plaintext secrets in git; private age key lives outside the repository
+# (~/.config/fnox/age.txt or $FNOX_AGE_KEY_FILE). Stage-5 live profile stays physically isolated.
+
+default_provider = "age"
+
+[providers.age]
+type = "age"
+recipients = ["age18p7ze4w2qge89gcd8cdk25ym6upg0fmyy9azz4hhys8a4kpmwsvqqp7p7z"]
+
+[secrets]
+FRED_API_KEY = { provider = "age", description = "Optional FRED macro API key", if_missing = "ignore" }
+APCA_API_KEY_ID= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA5MHBBVkV5S1dsUzhUaEF6WDNvT3ZvWERBUTdjSjBudDFjUXZicHFGK2k0CkRkd2s4aGlnVW51akFQVC9yN21MNHY2MFNocHZwWHluWDVlK1IvV0FqL1kKLT4gKmh2ZjlAdy1ncmVhc2UgJTR7MiAmanJHLDQgbj0KbGMyb0EvMVEwWjdRSUt1ZmRtL09KdUZMQWZqOW42UEhuaTZqa1Q4cjduRHRsenZwVmRwZkg0eGcySDZmemUyUQpMMlh5WjdSWE9kNHJKRUpscWRZCi0tLSA0Y2RJL3M2T2xoRTBuMk9YUTdpeTBjRUlwNjVCR0JpNEx2bGZiTm1pbTh3Cm9S+01ob0pfSYzlxLp4X7ffOJnJivacf20H5xss8Dmq7pQB/4Pr8Y+Cvpca9OzBaIdPMm6TraWpGPs=", description = "Alpaca Paper SIP market data API key ID" }
+APCA_API_SECRET_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBwUUlKUlRvMnYwY25EN2pYUGFyYVFObWpZelVYak1BaXVpWGcrbVh4M0NzCk9KVEY2TWxLaDZ6UjR0TmtFenB2d211Z0ZZMWpEbzRSTFFrclNVdDdnWUEKLT4geV5XcnVVUS1ncmVhc2UgLwpIUkNGSVNRdFlBczl6RXNOY0JWUE41T2MyZnlYZlBWYXNBbwotLS0gSXNITnord1BNVDhpaHdtU3VIcXRUY3NzS2VvWlkyNSszbDFMZzZ2ZnJmdwoN7GsKZBMigzhBuGNEIb9nZh9RnYnyzg3D8GAtj6YQiWJ/8bbQBGj+G4DHIOEjXVyDHNUrefGFEQyksIwdND3eV82DLZZW+hoMh8TJ", description = "Alpaca Paper SIP market data API secret key" }
+EDGAR_IDENTITY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB1MWFBb1dIL3dibXh0ZkUyV0lEVm9aMENaMGlOd3BHcVIyM3JBa3hHNEZvCmtVeDQ5Zk55T08vYjJwRVd5T2FDRm9yUG0zQXRzM3ZOSjc4SWRaZVRIblEKLT4gPUgtZ3JlYXNlICx8XjhkJCN7IFg9Cmw0WkZRaFo4b1oxaHpmVUpPRFdGbWVlMWpCOENEZndVWEtPZEhUbWg5VWZVZVl6OGlNdW5WU1U2UC8zaGx6LzIKUzRkcTV0MnMwYlk5bE11bjFYVENlbkVMQTVrdThnCi0tLSBMYTJFRm1rNWhSbnUrQURqVnF3MXU3OW8yc29GaXNyeldIUElMTUtydXFvCm18Bo8/p+pZpYR/j+4dZGjUDPbwtTOP1F0PkQ2QBYtPEINdRn/qYRPupt/wjzZO/sdG7yHJ3xLYsCLN", description = "SEC EDGAR User-Agent identity for EdgarTools" }
+
+[profiles.data]
+
+[profiles.paper.secrets]
+ALPACA_PAPER = { default = "true", description = "Fail-closed Alpaca paper mode flag" }
+IBKR_HOST = { default = "127.0.0.1", description = "Local IBKR paper gateway loopback host" }
+IBKR_PORT = { default = "4002", description = "Fail-closed IBKR paper gateway port (never live 4001/7496)" }
+ALPACA_PA1_API_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBrQ09CVUMxM3FiUkRlaGVXZnlGcDVNLzZidGxvU2hWc3dpV1NrR2RvRjNnClZldFpYYzdLdi9waHdMNHBYYkRaRnVGbkI2ODJpcTRmYThuTjRxYzF0UVUKLT4gQlxmLWdyZWFzZSAnPnMgeVYKREduVG9ManErSFZWTlg1OXd0RExNQWJKMGxCai9uRXFhNGpZQ2dlR1pLRlEKLS0tIFdZeTlJQVkyWHRFMUpJRVp6WU9XSkM3UEJBYnN4alZncW9vQVczeWVUZjgKUyOt6lIVv+OlOPAMVIcChnwgG16YT4GvY3sPe01FsPsn3XLRIB4Ht+kfcHFraLjTDjAjqaokrV9P9g==", description = "Alpaca Paper Lane PA1 API key" }
+ALPACA_PA1_SECRET= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBJdVk1b0hrTlBKbHhIVE5yWCtFaFVKbDJKUVBtc2FoeUNYUy8zWnV6OERzCmtZTnNNR0pFODVTWEZrZEd5RHNKNHZjK2hkMEdHN3pJWFR4dWV3NXpQMlUKLT4ge2otZ3JlYXNlIFsKUXVySUgybEcrbDRrQkV2VkE0ZVpUK1RyaldpQkpSWUJsSW10ZUJxYWlNdGxSNHpKZ3pBOWpJV0MvYUFlUDhLMgpCQ2trUWhEVldSMUozS1NMNWU4SkZpTQotLS0galBHNEUzaGJPVit0Y1RDQzlmc25zRWJvdWFzdlNxVEJtMXplUTNNZUVMZwreMKhG5KG2MxlO/lPrm3N12DPSvUzg8XCz2hfe/9MXpeEl/VPipKsJFhKl/5SHpdTIMcTleHpNlUqMpp6oRDbpdPLade5djzxze7sA", description = "Alpaca Paper Lane PA1 API secret" }
+ALPACA_PA2_API_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBtZWpvWE8xZm56ejNWQ2lLM0JxVDZ0SXBtNDhQQklYTERDUldLclQrWlU0CnpCQTN6aS9RcFZLMk9sRVZET2V3VXVtQUZLWHpkWHJaSkx6b3ducHp1MG8KLT4gYjlwbThOLWdyZWFzZQowTzJCMmRmZkMwbm1iZnFPeW15YklQOEd0OEtRR3lyT2FLbG0yemlOaHVPUUJBcWtCUmRZeU5MNGF0NlY3U3lBCk5CK2V2bC9HZFlvaWpUbWtRWSs4aFdua1dwbWgwZHN1NWZaR0tYY3duMDdXS3RyYnRqclNwL0dIeFUrdFhwNjkKTmY2bQotLS0gSis2eGtYN2dvckxzcVpYNWtDblJyNWZyaDAydWVGQ0NoWEx3VDF1WDdtawoasWaWLKeHbhsCYWAGXwQiucr3NdcxGUP3KZ4VYKUgPc1b8Q8l6NnjqT6EToc7lIMZR1FmM1l796MI", description = "Alpaca Paper Lane PA2 API key" }
+ALPACA_PA2_SECRET_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBTSk9Od0tJK1ZuMUQ0MmNITkdqc2Fobm55bDAvNG9UU1hZUGZucG1uNHdRCmpBbjJIUFFBTUpXOE1FalVLcCtTRTVLbGJBRVBrb1FvMDRuNTRlVi9XMDQKLT4gYS1ncmVhc2UgKSBoK0x8PXxAIHhFP2BwYCUgRSpgW1sKVWExRmxKclBxYWpoa2J0VVlNZ05uak1POEk1M2lyODRjUWlTdWpKV3loTVJhN3NoWndvCi0tLSBFYXlNdDlxeWExQTZjdVJ5TWVXK2hIYnZCR0J3b3hkZ2daRDdCMlJtaVVBCtaz3CP1qlo61eRsaUE071HIlGbDe91Civd93C3RFhi7x7/uwi2r4p2XiGW5sF8TuHR19oV94fnptpuLAKK+PKyvmjnMXSwzHidSRoc=", description = "Alpaca Paper Lane PA2 API secret" }
+ALPACA_PA3_API_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBGWTBiTDJDTHc5c3RsVnUxZC9rNXZjRHdvOTV1M25sNmZZUUNxYithcVNrClAwdURkYjNSQjN2QnBCMkQxZG1Ub2pRem1EOWRrcG80VVFqbllMRXRUL1EKLT4gJC1ncmVhc2UKRU8wczJzTmt3MklsV2p5V2dSeW9WcUVvNHpaOXVhL2xpZ1h1bGVWclpOQTRMSzQxUXBjCi0tLSB4ZVd1ZlVIaEdTMHdvRnpENzF4R01SNmw0R3dlMnF0aFlwazFwY0wzS05ZChrjpNJadmD39/Z9UjNDvr3/jcY3pZMbc3vnlqBg1cIBaFkw1k1kw234XrBmVFl7d4QY4YUpzk7sE04=", description = "Alpaca Paper Lane PA3 API key" }
+ALPACA_PA3_SECRET_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBwM1VGa0JERWxGWWFOREJabGxqcFV0M2Q0bzIwYnQ3UjBMbXorZGY4dzM4CmxRYk1hTi9ITjBiMEM0VU5JaVdMbkJIN1NOWCtzZk94My9heStaanlsMUEKLT4gVTUnJi1ncmVhc2Ugb1l3OkFoICdNPUFVCjlYZTNZejV3cEdJUlAyL2NOZThDYXhqM1RmNWJmT0thU0pqdUgwV1dLR21lSUJ5SnZOT21iYnI4VHpUTDd3ZXQKVlhoRUNCUk9KRW5wMzVMSFYwQUpnNjN1V3NiOW9acFpydVdZc3A0elVrTkpnQU5iM3hOYWR3Ci0tLSAyMFY2SzBKNTQ1aTl2RjZrT3lEd0lJVFhJY1BuOFZMeXExbXBiVkNFOXZFCnSuH9gD2pU3jr8xdoIJdrEDhji0OmHkte/J29AGjMTnC5bSgXLCY4ZQekGNV5a3hsmimhvYit/v0hUQZ0mL2H7nZEV0Ue8LT1rIv1w=", description = "Alpaca Paper Lane PA3 API secret" }
+
+[profiles.live.providers.age_live]
+type = "age"
+recipients = ["age18p7ze4w2qge89gcd8cdk25ym6upg0fmyy9azz4hhys8a4kpmwsvqqp7p7z"]
+key_file = "~/.config/fnox/live-age.txt"
+
+[profiles.live.secrets]
+LIVE_EXECUTION_ENABLED = { default = "false", description = "Fail-closed live execution lock until full Stage-5 promotion" }
+ALPACA_LIVE_API_KEY = { provider = "age_live", description = "Dormant Stage-5 live broker API key (isolated key_file)", if_missing = "ignore" }

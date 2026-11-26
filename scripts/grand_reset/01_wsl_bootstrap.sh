@@ -5,7 +5,7 @@ REPO_ROOT="${1:-${TIER0_REPO_ROOT:-/mnt/z/noesis}}"
 DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"
 WSL_DISTRO="${TIER0_WSL_DISTRO:-Noesis-SOTA}"
 DRY_RUN="${DRY_RUN:-0}"
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 export PYTHONDONTWRITEBYTECODE=1
 
 for port in 4001 7496 8798 8796; do
@@ -15,65 +15,23 @@ for port in 4001 7496 8798 8796; do
   fi
 done
 
-mkdir -p "$HOME/.config/tier0"
-chmod 700 "$HOME/.config/tier0"
-
-create_placeholder_env() {
-  local target="$1"
-  local kind="$2"
-  if [[ -f "$target" ]]; then
-    chmod 600 "$target"
-    return 0
-  fi
-  if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[DRY-RUN] Would create placeholder $target ($kind)"
-    return 0
-  fi
-  if [[ "$kind" == "data" ]]; then
-    cat >"$target" <<EOF
-# Owner-managed Tier-0 data env placeholders (fill offline; chmod 600)
-TIER0_MARKET_DATA_ROOT=${DATA_ROOT}/prewall-lake
-FRED_API_KEY=
-ALPACA_PA1_API_KEY=
-ALPACA_PA1_SECRET=
-EOF
-  else
-    cat >"$target" <<'EOF'
-# Owner-managed Tier-0 Paper-Only broker env placeholders (chmod 600)
-ALPACA_PAPER=true
-ALPACA_PA1_API_KEY=
-ALPACA_PA1_SECRET=
-ALPACA_PA2_API_KEY=
-ALPACA_PA2_SECRET=
-ALPACA_PA3_API_KEY=
-ALPACA_PA3_SECRET=
-IBKR_HOST=127.0.0.1
-IBKR_PORT=4002
-EOF
-  fi
-  chmod 600 "$target"
-}
-
-create_placeholder_env "$HOME/.config/tier0/.env.data" "data"
-create_placeholder_env "$HOME/.config/tier0/.env.paper" "paper"
-
-LANE_ENV="$HOME/.config/tier0/with_lane_env.sh"
-if [[ "$DRY_RUN" != "1" ]]; then
-  cat >"$LANE_ENV" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-ENV_FILE="$1"
-shift
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "[DRY-RUN] Would ensure $HOME/.config/fnox (chmod 700), retire legacy lane env wrapper, sync zero-copy WSL2 ~/.gemini/config/skills.json, and sync uv Python 3.13 venv at ${UV_PROJECT_ENVIRONMENT:-$HOME/noesis/.venv} from $REPO_ROOT"
+  exit 0
 fi
-exec "$@"
-EOF
-  chmod 700 "$LANE_ENV"
-fi
+
+mkdir -p "$HOME/.config/fnox"
+chmod 700 "$HOME/.config/fnox"
+
+# Retire legacy custom shell wrapper (replaced by upstream jdx/fnox + age profiles per ADR-0023)
+rm -f "$HOME/.config/tier0/with_lane_env.sh"
+
+# Idempotently ensure WSL2 AGY zero-copy Disk-Z skills pointer
+mkdir -p "$HOME/.gemini/config"
+SKILLS_JSON="$HOME/.gemini/config/skills.json"
+SKILLS_TMP="$(mktemp "${SKILLS_JSON}.tmp.XXXXXX")"
+printf '{"entries":[{"path":"%s/.claude/skills"}]}\n' "${REPO_ROOT%/}" >"$SKILLS_TMP"
+mv -f "$SKILLS_TMP" "$SKILLS_JSON"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is required inside WSL2 ${WSL_DISTRO}." >&2
@@ -81,10 +39,6 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 WSL_VENV="${UV_PROJECT_ENVIRONMENT:-$HOME/noesis/.venv}"
-if [[ "$DRY_RUN" == "1" ]]; then
-  echo "[DRY-RUN] Would sync uv Python 3.13 venv at $WSL_VENV from $REPO_ROOT"
-  exit 0
-fi
 
 mkdir -p "$(dirname "$WSL_VENV")"
 export UV_PROJECT_ENVIRONMENT="$WSL_VENV"
@@ -126,7 +80,8 @@ block = (
     f'export TIER0_REPO_ROOT="{repo_root}"\n'
     f'export TIER0_DATA_ROOT="{data_root}"\n'
     f'export TIER0_STATE_ROOT="{state_root}"\n'
-    f'export PATH="$HOME/noesis/.venv/bin:$PATH"\n'
+    'export FNOX_AGE_KEY_FILE="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"\n'
+    'export PATH="$HOME/.local/share/mise/shims:$HOME/noesis/.venv/bin:$HOME/.local/bin:$PATH"\n'
     f"{end_marker}\n"
 )
 
@@ -150,4 +105,4 @@ for name in (".bashrc", ".profile"):
     os.replace(tmp_path, rc_path)
 PYEOF
 
-echo "[WSL-BOOTSTRAP-OK] repo=$REPO_ROOT venv=$WSL_VENV env_dir=$HOME/.config/tier0"
+echo "[WSL-BOOTSTRAP-OK] repo=$REPO_ROOT venv=$WSL_VENV fnox_dir=$HOME/.config/fnox skills_json=$SKILLS_JSON"

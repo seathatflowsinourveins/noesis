@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 143,
+    "repository_files_count": 145,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -162,13 +162,16 @@
       "winners": [
         "uv",
         "mise",
-        "just"
+        "just",
+        "fnox",
+        "age"
       ],
       "rejected_overlaps": [
         "poetry",
         "pipenv",
         "conda",
-        "pip-tools"
+        "pip-tools",
+        "custom-env-shell-wrappers"
       ],
       "repo_artifacts": [
         "pyproject.toml",
@@ -176,6 +179,7 @@
         ".python-version",
         "mise.toml",
         "justfile",
+        "fnox.toml",
         "scripts/bootstrap_env.ps1",
         "scripts/bootstrap_env.sh",
         "scripts/preflight_resume.ps1",
@@ -354,7 +358,8 @@
         "docs/adr/ADR-0019.md",
         "docs/adr/ADR-0020.md",
         "docs/adr/ADR-0021.md",
-        "docs/adr/ADR-0022.md"
+        "docs/adr/ADR-0022.md",
+        "docs/adr/ADR-0023.md"
       ]
     },
     "L7": {
@@ -520,6 +525,7 @@
   "entrypoints": {
     "justfile": "justfile",
     "mise_toml": "mise.toml",
+    "fnox_toml": "fnox.toml",
     "sync_manifest": "scripts/sync_manifest.py",
     "philosophy_manifest": "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
     "llm_harness_manifest": "LLM_HARNESS_MANIFEST.json",
@@ -637,12 +643,14 @@
     "docs/adr/ADR-0020.md",
     "docs/adr/ADR-0021.md",
     "docs/adr/ADR-0022.md",
+    "docs/adr/ADR-0023.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
     "evals/dspy_self_reflect.py",
     "evals/formal_risk_z3.py",
     "evals/tier0_inspect_eval.py",
+    "fnox.toml",
     "justfile",
     "mise.toml",
     "opencode.json",

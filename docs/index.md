@@ -30,4 +30,4 @@ flowchart LR
 - [Grand-Reset Disk-Z & WSL2 Runbook](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md)
 - [Post-Restart Seamless Resume Playbook](POST_RESTART_RESUME_PLAYBOOK.md)
 - [TradingView Automation Playbook](TV_AUTOMATION_PLAYBOOK.md)
-- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0022+`)](adr/CATALOG.md)
+- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0023+`)](adr/CATALOG.md)

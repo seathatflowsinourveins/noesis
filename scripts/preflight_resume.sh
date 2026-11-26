@@ -380,6 +380,25 @@ elif [[ "$MNT_C_MOUNTED" != "true" ]]; then
 else
   AGY_MCP_DETAIL="missing ${AGY_MCP_PATH}"
 fi
+WSL_SKILLS_JSON="${HOME}/.gemini/config/skills.json"
+WSL_SKILLS_STATUS="absent"
+if [[ -f "$WSL_SKILLS_JSON" ]]; then
+  if jq -e '(.entries // []) | any(.path | tostring | test("\\.claude/skills") and test("noesis"))' "$WSL_SKILLS_JSON" >/dev/null 2>&1; then
+    WSL_SKILLS_STATUS="ok"
+  else
+    WSL_SKILLS_STATUS="missing_noesis_entry"
+  fi
+fi
+FNOX_KEY_FILE="${FNOX_AGE_KEY_FILE:-${HOME}/.config/fnox/age.txt}"
+FNOX_STATUS="absent"
+if [[ -f "${REPO_ROOT}/fnox.toml" ]]; then
+  if command -v fnox >/dev/null 2>&1 && [[ -f "$FNOX_KEY_FILE" ]]; then
+    FNOX_STATUS="ready"
+  else
+    FNOX_STATUS="config_only"
+  fi
+fi
+AGY_MCP_DETAIL="${AGY_MCP_DETAIL} skills_json=${WSL_SKILLS_STATUS} fnox=${FNOX_STATUS}"
 record_gate "agy_native_mcp_config" "$AGY_MCP_OK" "$AGY_MCP_DETAIL"
 
 # 9. Global Charter SHA-256 (8/8 when /mnt/c mounted; 4/4 WSL2 when /mnt/c unmounted per /etc/wsl.conf)

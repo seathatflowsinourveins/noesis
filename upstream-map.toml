@@ -89,8 +89,8 @@ convergence_principle = "SOTA upstream convergence directed by Core Trading Phil
 
 [layers.L0]
 name = "Runtime, Lockfile & Provenance"
-winners = ["uv", "mise", "just"]
-rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools"]
+winners = ["uv", "mise", "just", "fnox", "age"]
+rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools", "custom-env-shell-wrappers"]
 
 [layers.L1]
 name = "Data, Schema Validation, Calendars & Causal PIT"

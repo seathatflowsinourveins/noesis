@@ -33,8 +33,8 @@
   "active_winners_by_layer": {
     "L0": {
       "name": "Runtime, Lockfile & Provenance",
-      "winners": ["astral-sh/uv", "jdx/mise", "casey/just"],
-      "artifacts": ["pyproject.toml", "uv.lock", ".python-version", "mise.toml", "justfile"]
+      "winners": ["astral-sh/uv", "jdx/mise", "casey/just", "jdx/fnox", "FiloSottile/age"],
+      "artifacts": ["pyproject.toml", "uv.lock", ".python-version", "mise.toml", "justfile", "fnox.toml"]
     },
     "L1": {
       "name": "Data, Schema Validation, Calendars & Causal PIT",

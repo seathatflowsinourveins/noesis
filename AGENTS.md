@@ -26,7 +26,7 @@ Canonical AAIF agent SSOT for `Z:\noesis` (`CLAUDE.md` -> `@AGENTS.md`, Codex, G
 
 | Layers | Pinned OSI Upstream Winners | Anchors |
 |---|---|---|
-| **L0–L2** | `uv`, `mise`, `just`, `Polars`, `DuckDB`, `Pandera`, `Pydantic` v2, `XNYS`, `EdgarTools`, `FRED`, `dvc`, `ml4t-engineer`, `River`, `Ruptures`, `stumpy`, `LightGBM`, `CatBoost`, `SHAP` | `pyproject.toml`, `uv.lock`, `mise.toml`, `justfile`, `src/tier0_sota/discovery.py` |
+| **L0–L2** | `uv`, `mise`, `just`, `fnox`, `age`, `Polars`, `DuckDB`, `Pandera`, `Pydantic` v2, `XNYS`, `EdgarTools`, `FRED`, `dvc`, `ml4t-engineer`, `River`, `Ruptures`, `stumpy`, `LightGBM`, `CatBoost`, `SHAP` | `pyproject.toml`, `uv.lock`, `mise.toml`, `justfile`, `fnox.toml`, `src/tier0_sota/discovery.py` |
 | **L3–L5** | `NautilusTrader v2`, Rust `hftbacktest`, `alpaca-py`, `skfolio`, `ml4t-diagnostic`, `arch`, `statsmodels` | `src/tier0_sota/{engine,risk,research}.py`, `src/tier0_sota/{live,tv}/` |
 | **L6 & L10** | `MLflow` (`:5000`), `Dagster` (`:3000`), `Optuna` (`:8080`), `Inspect` (`:7575`), `Zensical` (`:8010`), `Prometheus` (`:9090`), `Grafana` (`:3001`), `otel-collector-contrib` (`:9464`/`:13133`), `Caddy` (`:8793`), `FINOS` (`:1420`/`:8000`), `OpenBB` (`:6900`), `DuckDB UI` (`:4213`) | `docker/compose.sota.yml`, `docker/otel-collector-config.yaml`, `zensical.toml`, `docs/adr/CATALOG.md`, `docs/adr/ADR-*.md` |
 | **L7–L9** | `ruff`, `ty`, `deptry`, `ast-grep`, `prek`, `gitleaks`, `zizmor`, `trivy`, `syft`, `CodeQL`, `Dependabot`, `shellcheck`, `z3-solver`, `Hypothesis`, `pytest`, `Inspect AI`, `DSPy`, `Orca`, `OmniRoute`, `codebase-memory`, `XERJ` (`:9200`), `FastMCP` | `.github/workflows/*.yml`, `rules/zero_self_invention.yml`, `.pre-commit-config.yaml`, `orca.yaml`, `.mcp.json`, `scripts/nautilus_mcp_server.py` |
@@ -35,10 +35,12 @@ Canonical AAIF agent SSOT for `Z:\noesis` (`CLAUDE.md` -> `@AGENTS.md`, Codex, G
 
 ```bash
 just check                                     # fmt-check, lint, typecheck, deptry, ast, manifest-check, z3, mcp-smoke, pytest, gitleaks
+just fnox-check                                # validate encrypted fnox + age profiles (default, data, paper, live)
 just docs-build                                # uv run --no-sync zensical build --clean --strict
 just security                                  # gitleaks, zizmor --offline, trivy fs (HIGH/CRITICAL)
 just preflight                                 # 13/13 workstation & 15/15 portal preflight (just resume to reconcile post-restart)
 just reflect                                   # Dual-Flywheel Optuna/Inspect/DSPy/MLflow compounding reflection loop
+just open-agy-wsl                              # launch WSL2 Linux AGY Desktop (2.35.2 via WSLg) alongside Windows `just open-agy`
 prek run --all-files                           # upstream pre-commit hooks
 uv run --no-sync python scripts/sync_manifest.py --check
 pwsh -NoProfile -File scripts/check.ps1        # WSL2: bash scripts/check.sh

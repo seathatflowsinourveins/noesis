@@ -53,6 +53,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         ".python-version",
         "mise.toml",
         "justfile",
+        "fnox.toml",
         "scripts/bootstrap_env.ps1",
         "scripts/bootstrap_env.sh",
         "scripts/preflight_resume.ps1",
@@ -181,6 +182,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
 ENTRYPOINT_CANDIDATES: dict[str, str] = {
     "justfile": "justfile",
     "mise_toml": "mise.toml",
+    "fnox_toml": "fnox.toml",
     "sync_manifest": "scripts/sync_manifest.py",
     "philosophy_manifest": "PHILOSOPHY_COMPOUNDING_MANIFEST.json",
     "llm_harness_manifest": "LLM_HARNESS_MANIFEST.json",

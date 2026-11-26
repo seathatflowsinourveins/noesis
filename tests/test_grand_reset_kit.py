@@ -146,10 +146,12 @@ def test_madr_adrs_catalog_and_zensical_toml() -> None:
     assert "superseded by adr-" in catalog.lower()
 
     adr_paths = sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
-    assert len(adr_paths) >= 22
+    assert len(adr_paths) >= 23
     assert (REPO_ROOT / "docs" / "adr" / "ADR-0022.md").is_file()
+    assert (REPO_ROOT / "docs" / "adr" / "ADR-0023.md").is_file()
     nav_targets = [next(iter(item.values())) for item in z_cfg["project"]["nav"]]
     assert "adr/ADR-0022.md" in nav_targets
+    assert "adr/ADR-0023.md" in nav_targets
     for adr_path in adr_paths:
         assert adr_path.name in catalog, f"{adr_path.name} missing from CATALOG.md"
         body = adr_path.read_text(encoding="utf-8")
@@ -474,3 +476,38 @@ def test_compounding_reflection_script_cli_and_docs(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, f"Reflection CLI failed:\n{proc.stderr}\n{proc.stdout}"
     assert (tmp_path / "compounding_self_reflection_manifest.json").is_file()
+
+
+def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
+    fnox_path = REPO_ROOT / "fnox.toml"
+    assert fnox_path.is_file(), "Missing fnox.toml"
+    fnox_raw = fnox_path.read_text(encoding="utf-8")
+    assert "AGE-SECRET-KEY-" not in fnox_raw, "Private age secret key must never be in fnox.toml"
+    assert not re.search(r"\b(?:PK|AK)[0-9A-Z]{16,28}\b", fnox_raw), (
+        "Plaintext Alpaca API key must never be in fnox.toml"
+    )
+    fnox_doc = tomllib.loads(fnox_raw)
+    assert fnox_doc.get("default_provider") == "age"
+    assert fnox_doc["providers"]["age"]["type"] == "age"
+    assert "paper" in fnox_doc.get("profiles", {})
+    assert fnox_doc["profiles"]["paper"]["secrets"]["ALPACA_PAPER"]["default"] == "true"
+    assert fnox_doc["profiles"]["paper"]["secrets"]["IBKR_PORT"]["default"] == "4002"
+    live_prof = fnox_doc["profiles"]["live"]
+    assert live_prof["providers"]["age_live"]["type"] == "age"
+    assert live_prof["providers"]["age_live"]["key_file"] == "~/.config/fnox/live-age.txt"
+    assert live_prof["secrets"]["LIVE_EXECUTION_ENABLED"]["default"] == "false"
+
+    mise_doc = tomllib.loads((REPO_ROOT / "mise.toml").read_text(encoding="utf-8"))
+    assert "fnox" in mise_doc["tools"] and "age" in mise_doc["tools"]
+
+    wsl_sh_path = REPO_ROOT / "scripts" / "grand_reset" / "01_wsl_bootstrap.sh"
+    wsl_sh_bytes = wsl_sh_path.read_bytes()
+    assert b"\r\n" not in wsl_sh_bytes, "01_wsl_bootstrap.sh must use LF line endings"
+    wsl_sh = wsl_sh_bytes.decode("utf-8")
+    assert 'cat >"$LANE_ENV"' not in wsl_sh and "create_placeholder_env" not in wsl_sh
+    assert "FNOX_AGE_KEY_FILE" in wsl_sh and ".config/fnox" in wsl_sh
+    assert ".gemini/config/skills.json" in wsl_sh
+
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    for token in ("fnox-check:", "scan", "paper-farm", "open-agy-wsl:"):
+        assert token in just_txt, f"justfile missing {token!r}"

@@ -135,18 +135,45 @@ account-switch:
 reflect *args:
     {{uv_run}} python scripts/run_compounding_reflection.py {{args}}
 
+# Validate declarative fnox + age encrypted secret profiles (default, data, paper, live)
+fnox-check:
+    fnox check
+    fnox check --profile data
+    fnox check --profile paper
+    fnox check --profile live
+
+# Run whole-market Alpaca SIP extreme-mover scanner via fnox paper profile (graceful CI skip if unauthenticated)
+[windows]
+scan *args:
+    $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { [Environment]::GetEnvironmentVariable('FNOX_AGE_KEY_FILE', 'User') }; if (-not $keyFile) { $keyFile = Join-Path $HOME '.config\fnox\age.txt' }; if ((Get-Command fnox -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $keyFile)) { $env:FNOX_AGE_KEY_FILE = $keyFile; fnox exec --profile paper -- pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode scan {{args}}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } elseif ($env:ALPACA_PA1_API_KEY -or $env:APCA_API_KEY_ID) { pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode scan {{args}}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { Write-Host '[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID' -ForegroundColor Yellow }
+
+# Run whole-market Alpaca SIP extreme-mover scanner via fnox paper profile (graceful CI skip if unauthenticated)
+[unix]
+scan:
+    if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; out = Path('${data_root}') / 'manifests' / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=15, pin_symbols=('SOXL','SOXS'), output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; elif [[ -n "${ALPACA_PA1_API_KEY:-}" || -n "${APCA_API_KEY_ID:-}" ]]; then uv run --no-sync python -c "$py_code"; else echo "[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID"; fi
+
+# Run fail-closed 4-account Paper Farm cycle via fnox paper profile (paper_only=True)
+[windows]
+paper-farm *args:
+    $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { [Environment]::GetEnvironmentVariable('FNOX_AGE_KEY_FILE', 'User') }; if (-not $keyFile) { $keyFile = Join-Path $HOME '.config\fnox\age.txt' }; if ((Get-Command fnox -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $keyFile)) { $env:FNOX_AGE_KEY_FILE = $keyFile; fnox exec --profile paper -- pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode paper-farm -ConfirmPaper {{args}}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode paper-farm -ConfirmPaper {{args}}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+
+# Run fail-closed 4-account Paper Farm cycle via fnox paper profile (paper_only=True)
+[unix]
+paper-farm:
+    if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.paper_farm import PaperFarmCoordinator; from tier0_sota.live.performance import aggregate_paper_farm_performance; mdir = Path('${data_root}') / 'manifests'; coord = PaperFarmCoordinator(mdir); [lane.write_status() for lane in coord.lanes.values()]; coord.ibkr.write_status(); perf = aggregate_paper_farm_performance(mdir); print('PAPER_FARM_OK', list(coord.lanes.keys()), perf['summary'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; else uv run --no-sync python -c "$py_code"; fi
+
 # Run full fail-closed ecosystem automation cycle (reconcile -> portals/TV -> scan -> paper-farm -> reflect -> verify)
 [windows]
 automate: resume
     pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/03_hosted_stack_tv_paper.ps1
-    if ($env:ALPACA_PA1_API_KEY -or $env:APCA_API_KEY_ID) { pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode scan; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { Write-Host '[SKIP] live SIP scan: set ALPACA_PA1_API_KEY or APCA_API_KEY_ID to enable live scan' -ForegroundColor Yellow }
-    pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode paper-farm -ConfirmPaper
+    just scan
+    just paper-farm
     just reflect
     pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/verify_grand_reset.ps1
 
-# Run full fail-closed ecosystem automation cycle (reconcile -> reflect -> check -> docs-build)
+# Run full fail-closed ecosystem automation cycle (reconcile -> scan -> paper-farm -> reflect -> check -> docs-build)
 [unix]
-automate: resume reflect check docs-build
+automate: resume scan paper-farm reflect check docs-build
 
 # Launch a fresh Antigravity window attached to Z:\noesis (without killing running instances)
 [windows]
@@ -157,6 +184,16 @@ open-agy:
 [unix]
 open-agy:
     @echo "open-agy is Windows-only; run 'just open-agy' from Windows pwsh."
+
+# Launch WSL2 Linux Antigravity Desktop (2.35.2 via WSLg) attached to /mnt/z/noesis
+[windows]
+open-agy-wsl:
+    Start-Process wsl.exe -ArgumentList @('-d', 'Noesis-SOTA', '--', 'bash', '-lc', 'nohup "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis >/dev/null 2>&1 &') -WindowStyle Hidden
+
+# Launch WSL2 Linux Antigravity Desktop (2.35.2 via WSLg) attached to /mnt/z/noesis
+[unix]
+open-agy-wsl:
+    nohup "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis >/dev/null 2>&1 &
 
 # Run complete local SOTA verification suite
 check: fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke test gitleaks

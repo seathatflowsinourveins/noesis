@@ -12,8 +12,9 @@
 
 | Script / Config | Role | Notes |
 |---|---|---|
-| `justfile` | Cross-platform declarative task runner | Official upstream `just` wrapping `uv`, `ruff`, `ty`, `deptry`, `ast-grep`, `sync_manifest.py`, `pytest`, `zensical`, `prek`, `gitleaks`, `zizmor`, `trivy`, `preflight`, `resume`, `reflect`, `account-status`, and `docker compose` |
-| `mise.toml` | Declarative upstream CLI registry | Pins 10 official upstream CLIs (`python`, `uv`, `just`, `ruff`, `gitleaks`, `trivy`, `zizmor`, `syft`, `prek`, `ast-grep`) |
+| `justfile` | Cross-platform declarative task runner | Official upstream `just` wrapping `uv`, `fnox-check`, `scan`, `paper-farm`, `ruff`, `ty`, `deptry`, `ast-grep`, `sync_manifest.py`, `pytest`, `zensical`, `prek`, `gitleaks`, `zizmor`, `trivy`, `preflight`, `resume`, `reflect`, `account-status`, `open-agy`, `open-agy-wsl`, and `docker compose` |
+| `mise.toml` | Declarative upstream CLI registry | Pins 12 official upstream CLIs (`python`, `uv`, `just`, `ruff`, `gitleaks`, `trivy`, `zizmor`, `syft`, `prek`, `ast-grep`, `fnox`, `age`) |
+| `fnox.toml` | Encrypted secret profiles (`jdx/fnox` + `age`) | Zero-plaintext `age` ciphertexts (`default`/`data`, `paper`, isolated dormant `live` per [ADR-0023](adr/ADR-0023.md)) with out-of-repo private key (`~/.config/fnox/age.txt`) |
 | `scripts/sync_manifest.py` | Programmatic SSOT manifest sync | Derives `ARCHITECTURE_MANIFEST.json` & `LLM_HARNESS_MANIFEST.json` deterministically from `upstream-map.toml`, git metadata, real repo files, and `risk.py` SHA-256 (`--write` / `--check`) |
 | `.pre-commit-config.yaml` | Upstream pre-commit hooks (`prek`) | Installed locally via `prek install` (`check-merge-conflict`, `check-toml`, `check-json`, `ruff-check`, `ruff-format`, `gitleaks`, `shellcheck`, `zizmor`, `ty`, `ast-grep`) |
 | `.github/workflows/{ci,security,docs,release,multi-model-sota}.yml` | Hardened upstream GitHub Actions suite | Full 40-char commit SHA pins, least-privilege `permissions`, `persist-credentials: false`, `zizmor --offline --persona=pedantic` (`0` findings), CycloneDX SBOM via `syft` on release, `trivy`, `gitleaks`, native `CodeQL`/`Dependabot`, and OmniRoute/Anthropic/OpenAI workflow |
@@ -24,7 +25,7 @@
 | `scripts/launch_clean_lanes.ps1` | Non-overlapping lane launcher | Supports `-DryRun`; orchestrates Pre-Wall Sim Lab (`<= 2026-10-15`), 3-Lane Paper Farm (`ALPACA_PA1..PA3` + `IBKR_DU_4002`), TV Half-Auto Cockpit, and Verifier Gate |
 | `scripts/run_live_paper_farm.ps1` | Paper Farm controller | Supports `preflight`, `scan`, `paper-farm` (requires `-ConfirmPaper`), and `performance` |
 | `scripts/tv_console.ps1` | TradingView Half-Auto console | Display-only Pine v6 + Pydantic v2 (`TvAlertV1`) staging (`qty=1`, `semi_auto_confirmed=false`, zero CDP `:9223`) |
-| `scripts/grand_reset/verify_grand_reset.ps1` | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, dynamic living ADRs `ADR-0001..ADR-0022+`, `zensical`, `risk.py`, MCP smoke, portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
+| `scripts/grand_reset/verify_grand_reset.ps1` | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, dynamic living ADRs `ADR-0001..ADR-0023+`, `zensical`, `risk.py`, MCP smoke, portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
 | [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) | Grand-Reset Operator Runbook | Step-by-step zero-hook Disk-Z + WSL2 + fresh AGY + TV + 4-Runtime + Orca reset guide |
 | [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](ARCHITECTURE_LAYER_MANIFEST.md) | Architecture Layer Manifest | Complete `L0`–`L10` upstream stack map, Mermaid flow diagram, and `L11`–`L15` earned-trigger frontier |
 
@@ -71,7 +72,7 @@
 | Directory | Role | Handling |
 |---|---|---|
 | `Z:\noesis` (`$env:TIER0_REPO_ROOT`) | Standalone Tier-0 SOTA clean repository (`L0..L10`, `46/46` skills, `0` legacy refs, `0` `yfinance`) | **ACTIVE CANONICAL REPO** |
-| WSL2 `Noesis-SOTA` (`~/noesis/.venv`) | Isolated Linux `.venv` synced via `UV_PROJECT_ENVIRONMENT=~/noesis/.venv uv sync --frozen` | **ACTIVE WSL2 PARITY VENV** (preserves `~/.config/tier0/.env.*` with `chmod 600`) |
+| WSL2 `Noesis-SOTA` (`~/noesis/.venv`) | Isolated Linux `.venv` synced via `UV_PROJECT_ENVIRONMENT=~/noesis/.venv uv sync --frozen` | **ACTIVE WSL2 PARITY VENV** (`fnox` + `age` key at `~/.config/fnox/age.txt` with `chmod 600`; zero-copy `~/.gemini/config/skills.json`) |
 | `Z:\workspaces` (`$env:ORCA_WORKSPACES_DIR`) | Clean Orca worktree root | **ACTIVE WORKSPACE ROOT** |
 | `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT\manifests`) | Active live Paper Farm & TV manifests/DuckDB ledgers | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-data\prewall-lake` (`$env:TIER0_DATA_ROOT\prewall-lake`) | Pre-wall (`<= 2026-10-15`) immutable market data lake | **PRESERVED SHARED DATA ROOT** (never delete) |
