@@ -24,6 +24,9 @@
 | [`scripts/grand_reset/03_hosted_stack_tv_paper.ps1`](../scripts/grand_reset/03_hosted_stack_tv_paper.ps1) | Grand-Reset Step 03 | Verifies `13/13` Docker portals, syncs TV Pine v6 + Paper Farm manifests (`-DryRun` supported) |
 | [`scripts/grand_reset/verify_grand_reset.ps1`](../scripts/grand_reset/verify_grand_reset.ps1) | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, `12/12` ADRs, `zensical`, `risk.py`, MCP smoke, `13/13` portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
 | [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) | Grand-Reset Operator Runbook | Step-by-step zero-hook Disk-Z + WSL2 + fresh AGY + TV + 4-Runtime + Orca reset guide |
+| **WSL2 Docker Cutover** (`Noesis-SOTA`) | Compose project `docker` runs exclusively from `/mnt/z/tier0-sota-clean/docker/compose.sota.yml` (`tier0-sota-research:latest`, `tier0-sota-xerj:latest`, ext4 `${TIER0_STATE_ROOT}` = `~/tier0-sota-state`); Dagster `:3000` serves `tier0_sota.definitions`; Zensical `:8010` serves canonical `tier0-sota-clean` docs |
+| `trivy` & `zizmor` Security | `trivy fs --scanners misconfig,secret` (`0` findings across `Dockerfile.{research,sandbox,xerj}` & `uv.lock`); `zizmor --offline .github/workflows/ci.yml` (`0` findings) |
+| **MCP Code-Graph Index** | `codebase-memory` project `Z-tier0-sota-clean` indexed cleanly (`0` skipped files, `1,045` nodes, `2,564` edges); `xerj_status` cluster `green` with `.xerj-memory-tier0-compounding-lessons` preserved |
 
 ### 4-Runtime MCP Parity & Zero Self-Invented Hooks
 

@@ -12,9 +12,9 @@ services:
       - mlflow
       - server
       - --backend-store-uri
-      - sqlite:////mnt/z/sota-data/mlflow/mlflow.db
+      - sqlite:////state/mlflow/mlflow.db
       - --default-artifact-root
-      - /mnt/z/sota-data/mlflow/mlartifacts
+      - /state/mlflow/mlartifacts
       - --host
       - 0.0.0.0
       - --port
@@ -29,12 +29,16 @@ services:
       - "127.0.0.1:5000:5000"
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
-      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/mlflow:/state/mlflow
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/mlflow-assistant:/tmp/.mlflow/assistant
     environment:
       - HOME=/tmp
       - USER=sota
       - LOGNAME=sota
       - MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false
+      - MLFLOW_GATEWAY_API_BASE_ALLOW_PRIVATE_IPS=true
+      - MLFLOW_ENABLE_REMOTE_ASSISTANT=true
+      - MLFLOW_ENABLE_ASSISTANT_SANDBOX=true
       - OMP_NUM_THREADS=2
       - POLARS_MAX_THREADS=4
     restart: unless-stopped
@@ -48,7 +52,7 @@ services:
     working_dir: /workspace
     command:
       - optuna-dashboard
-      - sqlite:////mnt/z/sota-data/mlflow/optuna.db
+      - sqlite:////state/mlflow/optuna.db
       - --host
       - 0.0.0.0
       - --port
@@ -57,7 +61,8 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
-      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/mlflow:/mnt/z/sota-data/mlflow
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/mlflow:/state/mlflow
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/mlflow-assistant:/tmp/.mlflow/assistant
     environment:
       - HOME=/tmp
       - USER=sota
@@ -75,8 +80,8 @@ services:
     working_dir: /workspace
     command:
       - dagster-webserver
-      - -f
-      - src/tier0_sota/research.py
+      - -m
+      - tier0_sota.definitions
       - -h
       - 0.0.0.0
       - -p
@@ -85,7 +90,8 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
-      - ./dagster.yaml:/workspace/dagster_home/dagster.yaml:ro
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/dagster_home:/var/dagster_home
+      - ./dagster.yaml:/var/dagster_home/dagster.yaml:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
@@ -93,7 +99,7 @@ services:
       - HOME=/tmp
       - USER=sota
       - LOGNAME=sota
-      - DAGSTER_HOME=/workspace/dagster_home
+      - DAGSTER_HOME=/var/dagster_home
       - TIER0_MARKET_DATA_ROOT=/mnt/z/sota-data/prewall-lake
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - XERJ_URL=http://xerj:9200
@@ -113,11 +119,12 @@ services:
     command:
       - dagster-daemon
       - run
-      - -f
-      - src/tier0_sota/research.py
+      - -m
+      - tier0_sota.definitions
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
-      - ./dagster.yaml:/workspace/dagster_home/dagster.yaml:ro
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/dagster_home:/var/dagster_home
+      - ./dagster.yaml:/var/dagster_home/dagster.yaml:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
@@ -125,7 +132,7 @@ services:
       - HOME=/tmp
       - USER=sota
       - LOGNAME=sota
-      - DAGSTER_HOME=/workspace/dagster_home
+      - DAGSTER_HOME=/var/dagster_home
       - TIER0_MARKET_DATA_ROOT=/mnt/z/sota-data/prewall-lake
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - XERJ_URL=http://xerj:9200
@@ -151,13 +158,21 @@ services:
       - --port
       - "7575"
       - --unsafe-allow-unauthenticated
+      - --trusted-origin
+      - http://127.0.0.1:7575
+      - --trusted-origin
+      - http://localhost:7575
+      - --trusted-host
+      - 127.0.0.1:7575
+      - --trusted-host
+      - localhost:7575
       - --log-dir
-      - /mnt/z/sota-data/logs/inspect-logs
+      - /state/inspect-logs
     ports:
       - "127.0.0.1:7575:7575"
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
-      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/logs:/mnt/z/sota-data/logs
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/inspect-logs:/state/inspect-logs
     environment:
       - HOME=/tmp
       - USER=sota
@@ -258,7 +273,7 @@ services:
     ports:
       - "127.0.0.1:9200:9200"
     volumes:
-      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/logs/xerj-data:/data
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/xerj-data:/data
     environment:
       - HOME=/tmp
       - XERJ_LOG=info
@@ -273,6 +288,8 @@ services:
 
   tearsheets:
     image: tier0-sota-research:latest
+    profiles:
+      - portals
     cpus: "1.0"
     mem_limit: 512m
     pull_policy: never

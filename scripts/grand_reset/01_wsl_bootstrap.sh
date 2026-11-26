@@ -105,4 +105,49 @@ if [[ ! -x "$PY" ]]; then
 fi
 
 "$PY" -c "import sys, nautilus_trader, polars, duckdb, z3; print(f'python={sys.version.split()[0]} nautilus={nautilus_trader.__version__} polars={polars.__version__}')"
+
+STATE_ROOT="${TIER0_STATE_ROOT:-$HOME/tier0-sota-state}"
+mkdir -p "$STATE_ROOT"/{mlflow/mlartifacts,xerj-data,dagster_home,inspect-logs,mlflow-assistant}
+
+"$PY" - "$WSL_VENV" "$REPO_ROOT" "$DATA_ROOT" "$STATE_ROOT" <<'PYEOF'
+import os
+import re
+import sys
+from pathlib import Path
+
+wsl_venv, repo_root, data_root, state_root = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+venv_bin = f"{wsl_venv.rstrip('/')}/bin"
+home = Path.home()
+
+start_marker = "# >>> tier0-sota-clean env >>>"
+end_marker = "# <<< tier0-sota-clean env <<<"
+block = (
+    f"{start_marker}\n"
+    f'export TIER0_REPO_ROOT="{repo_root}"\n'
+    f'export TIER0_DATA_ROOT="{data_root}"\n'
+    f'export TIER0_STATE_ROOT="{state_root}"\n'
+    f'export PATH="$HOME/tier0-sota-clean/.venv/bin:$PATH"\n'
+    f"{end_marker}\n"
+)
+
+legacy_venv_re = re.compile(
+    r"(?:\$HOME|/home/[^/\s\"']+)/" + ("tier0" + "-quant") + r"/\.venv/bin"
+)
+block_re = re.compile(re.escape(start_marker) + r".*?" + re.escape(end_marker) + r"\n?", re.S)
+
+for name in (".bashrc", ".profile"):
+    rc_path = home / name
+    text = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
+    text = legacy_venv_re.sub(venv_bin, text)
+    if block_re.search(text):
+        text = block_re.sub(block, text)
+    else:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += block
+    tmp_path = rc_path.with_name(f"{rc_path.name}.tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    os.replace(tmp_path, rc_path)
+PYEOF
+
 echo "[WSL-BOOTSTRAP-OK] repo=$REPO_ROOT venv=$WSL_VENV env_dir=$HOME/.config/tier0"

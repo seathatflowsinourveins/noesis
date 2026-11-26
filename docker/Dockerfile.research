@@ -24,4 +24,6 @@ ENV OMP_NUM_THREADS=4 \
     TOKENIZERS_PARALLELISM=false \
     MLFLOW_DISABLE_AGENT_HINT=1
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import tier0_sota" || exit 1
+
 USER sota

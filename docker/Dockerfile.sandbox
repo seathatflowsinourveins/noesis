@@ -16,4 +16,5 @@ ENV PATH="/opt/sandbox-venv/bin:$PATH" \
     TOKENIZERS_PARALLELISM=false
 
 WORKDIR /tmp
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import aide" || exit 1
 USER 1000:1000

@@ -134,6 +134,7 @@
       "winners": ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus-client", "opentelemetry-sdk", "grafana"],
       "rejected_overlaps": ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"],
       "repo_artifacts": [
+        "src/tier0_sota/definitions.py",
         "src/tier0_sota/research.py",
         "src/tier0_sota/live/performance.py",
         "zensical.toml",
@@ -242,6 +243,7 @@
   },
   "advisory_loc_telemetry": {
     "src/tier0_sota/__init__.py": 6,
+    "src/tier0_sota/definitions.py": 63,
     "src/tier0_sota/risk.py": 361,
     "src/tier0_sota/engine.py": 975,
     "src/tier0_sota/discovery.py": 448,
@@ -253,7 +255,7 @@
     "src/tier0_sota/tv/__init__.py": 29,
     "src/tier0_sota/tv/bridge.py": 339,
     "src/tier0_sota/tv/tickets.py": 418,
-    "total_production_loc": 3700
+    "total_production_loc": 3763
   },
   "repository_files": [
     ".claude/agents/code-intel-redteam.md",
@@ -343,6 +345,7 @@
     "scripts/tv_console.ps1",
     "sgconfig.yml",
     "src/tier0_sota/__init__.py",
+    "src/tier0_sota/definitions.py",
     "src/tier0_sota/discovery.py",
     "src/tier0_sota/engine.py",
     "src/tier0_sota/live/__init__.py",

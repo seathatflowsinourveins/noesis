@@ -182,15 +182,26 @@ $PortalUrls = @(
     "http://127.0.0.1:6900/"
 )
 $PortalsUp = 0
+$ZensicalCanonicalOk = $false
 foreach ($u in $PortalUrls) {
     try {
         $resp = Invoke-WebRequest -Uri $u -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
-        if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) { $PortalsUp++ }
+        if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) {
+            $PortalsUp++
+            if ($u -eq "http://127.0.0.1:8010/") {
+                $body = [string]$resp.Content
+                $ZensicalCanonicalOk = (
+                    ($body -match "tier0-sota-clean") -and
+                    ($body -notmatch "UNIFIED_ECOSYSTEM_INVENTORY") -and
+                    ($body -notmatch "643\+48 Starred Atlas")
+                )
+            }
+        }
     } catch {
         # Count stays unchanged
     }
 }
-Record-Gate -Name "hosted_portals_13" -Passed ($PortalsUp -eq 13) -Detail "$PortalsUp/13 HTTP 200"
+Record-Gate -Name "hosted_portals_13" -Passed ($PortalsUp -eq 13 -and $ZensicalCanonicalOk) -Detail "$PortalsUp/13 HTTP 200 zensical_canonical=$ZensicalCanonicalOk"
 
 # 7. TradingView Pine v6 balance + schema bridge
 $PineFiles = @(

@@ -330,3 +330,17 @@ def test_six_gate_falsification_and_hftbacktest(tmp_path: Path) -> None:
         "6_hac_t_stat_significant",
     }
     assert "mlflow_run_id" in rep
+
+
+def test_dagster_definitions_load_cleanly() -> None:
+    from dagster import Definitions
+
+    from tier0_sota.definitions import defs
+
+    assert isinstance(defs, Definitions)
+    asset_keys = {key.to_user_string() for key in defs.resolve_asset_graph().get_all_asset_keys()}
+    assert {
+        "prewall_pit_audit",
+        "risk_kernel_sha256_attestation",
+        "paper_farm_performance_snapshot",
+    } <= asset_keys

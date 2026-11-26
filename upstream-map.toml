@@ -69,6 +69,7 @@ default_advisory_module_loc = 400
 "src/tier0_sota/engine.py" = 650
 "src/tier0_sota/discovery.py" = 400
 "src/tier0_sota/research.py" = 350
+"src/tier0_sota/definitions.py" = 120
 "src/tier0_sota/live/scanner.py" = 320
 "src/tier0_sota/live/paper_farm.py" = 380
 "src/tier0_sota/live/performance.py" = 220
@@ -163,6 +164,12 @@ upstream = "skfolio"
 secondary_upstreams = ["hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"]
 feature = "6-gate statistical falsification adapter (hftbacktest markout, 1x/2x costs, CPCV >= 16, DSR/PBO, Hansen SPA, HAC, MLflow logging)"
 why = "Delegates validation gates and experiment ledger strictly to pinned upstreams"
+
+[files."src/tier0_sota/definitions.py"]
+how = "integrate"
+upstream = "dagster"
+feature = "Upstream-native Dagster Definitions & asset graph (pre-wall PIT, risk SHA-256, Paper Farm snapshot)"
+why = "Exposes a clean Dagster Definitions entrypoint without duplicating scheduler/UI scaffolding"
 
 [files."src/tier0_sota/live/scanner.py"]
 how = "integrate"

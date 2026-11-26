@@ -78,9 +78,24 @@ if ($DryRun) {
 }
 
 if ($StartDocker) {
-    & docker compose -f $ComposeFile up -d
-    if ($LASTEXITCODE -ne 0) {
-        throw "docker compose up -d failed with exit code $LASTEXITCODE"
+    $useNativeDocker = $false
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        docker info *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $useNativeDocker = $true
+        }
+    }
+    if ($useNativeDocker) {
+        & docker compose -p docker -f $ComposeFile up -d --remove-orphans
+        if ($LASTEXITCODE -ne 0) {
+            throw "docker compose up -d failed with exit code $LASTEXITCODE"
+        }
+    } else {
+        $wslComposeCmd = 'TIER0_REPO_ROOT=/mnt/z/tier0-sota-clean TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT="$HOME/tier0-sota-state" docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d --remove-orphans'
+        & wsl.exe -d Noesis-SOTA -- bash -lc $wslComposeCmd
+        if ($LASTEXITCODE -ne 0) {
+            throw "WSL2 Noesis-SOTA docker compose up -d failed with exit code $LASTEXITCODE"
+        }
     }
 }
 

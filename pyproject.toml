@@ -94,12 +94,16 @@ known_first_party = ["tier0_sota"]
 ignore_notebooks = true
 extend_exclude = ["\\.claude/skills", "site"]
 
+[tool.deptry.package_module_name_map]
+anthropic = "anthropic"
+google-genai = "google_genai"
+openai = "openai"
+
 [tool.deptry.per_rule_ignores]
 DEP002 = [
   "anthropic",
   "ast-grep-cli",
   "catboost",
-  "dagster",
   "dagster-webserver",
   "deptry",
   "dspy",
