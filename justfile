@@ -156,15 +156,15 @@ scan *args:
 scan:
     if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; out = Path('${data_root}') / 'manifests' / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=15, pin_symbols=('SOXL','SOXS'), output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; elif [[ -n "${ALPACA_PA1_API_KEY:-}" || -n "${APCA_API_KEY_ID:-}" ]]; then uv run --no-sync python -c "$py_code"; else echo "[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID"; fi
 
-# Run fail-closed 4-account Paper Farm cycle via fnox paper profile (paper_only=True)
+# Authenticate every Paper Farm observation with the encrypted paper profile.
 [windows]
 paper-farm *args:
-    $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { [Environment]::GetEnvironmentVariable('FNOX_AGE_KEY_FILE', 'User') }; if (-not $keyFile) { $keyFile = Join-Path $HOME '.config\fnox\age.txt' }; if ((Get-Command fnox -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $keyFile)) { $env:FNOX_AGE_KEY_FILE = $keyFile; fnox exec --profile paper -- pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode paper-farm -ConfirmPaper {{args}}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } else { pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/run_live_paper_farm.ps1 -Mode paper-farm -ConfirmPaper {{args}}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+    pwsh -NoProfile -File scripts/run_live_paper_farm.ps1 -Mode paper-farm {{if args == "" { "-Observe" } else { args }}}; exit $LASTEXITCODE
 
-# Run fail-closed 4-account Paper Farm cycle via fnox paper profile (paper_only=True)
 [unix]
-paper-farm:
-    if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.paper_farm import PaperFarmCoordinator; from tier0_sota.live.performance import aggregate_paper_farm_performance; mdir = Path('${data_root}') / 'manifests'; coord = PaperFarmCoordinator(mdir); [lane.write_status() for lane in coord.lanes.values()]; coord.ibkr.write_status(); perf = aggregate_paper_farm_performance(mdir); print('PAPER_FARM_OK', list(coord.lanes.keys()), perf['summary'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; else uv run --no-sync python -c "$py_code"; fi
+paper-farm *args:
+    active=$(ss -Htan '( sport = :4001 or dport = :4001 or sport = :7496 or dport = :7496 or sport = :8798 or dport = :8798 or sport = :8796 or dport = :8796 )'); test -z "$active"
+    ibkr_tcp=0; if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/4002' 2>/dev/null; then ibkr_tcp=1; fi; IBKR_PAPER_TCP_REACHABLE="$ibkr_tcp" FNOX_AGE_KEY_FILE="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}" PYTHONPATH="$PWD/src" TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" {{uv_prefix}}fnox exec --profile paper -- uv run --no-sync python -m tier0_sota.live.runner {{if args == "" { "--observe" } else { args }}}
 
 # Run full fail-closed ecosystem automation cycle (reconcile -> portals/TV -> scan -> paper-farm -> reflect -> verify)
 [windows]

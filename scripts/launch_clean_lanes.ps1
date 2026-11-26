@@ -102,7 +102,7 @@ foreach ($l in $Selected) {
                 if ($ActivePaperLanes.Count -gt 0 -and -not $ForcePaper) {
                     $PaperNote = "preflight + performance (active external Paper Farm detected: $($ActivePaperLanes -join ','); pass -ForcePaper to override)"
                 } else {
-                    $PaperMode = "paper-farm -ConfirmPaper"
+                    $PaperMode = "paper-farm -Observe"
                     $PaperNote = "3-lane ALPACA_PA1..PA3 + IBKR_DU_4002 paper-farm status sync"
                 }
             }

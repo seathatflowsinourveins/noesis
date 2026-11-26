@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-  [ValidateSet("preflight", "scan", "paper-farm", "alpaca-paper", "ibkr-paper", "performance")]
+  [ValidateSet("preflight", "scan", "paper-farm", "alpaca-paper", "ibkr-paper", "performance", "start-loop")]
   [string]$Mode = "preflight",
 
   [ValidateSet("ALL", "ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3", "IBKR_DU_4002")]
@@ -14,23 +14,21 @@ param(
 
   [string]$ManifestDir = "",
 
+  [switch]$Observe,
+
   [switch]$ConfirmPaper
 )
 
 $ErrorActionPreference = "Stop"
 
 $ScriptRepoRoot = Split-Path -Parent $PSScriptRoot
-$RepoRoot = if ($env:TIER0_REPO_ROOT -and (Test-Path (Join-Path $env:TIER0_REPO_ROOT "src\tier0_sota"))) {
-  $env:TIER0_REPO_ROOT
-} else {
-  $ScriptRepoRoot
-}
+$RepoRoot = $ScriptRepoRoot
 if ([string]::IsNullOrWhiteSpace($ManifestDir)) {
   $ManifestDir = Join-Path $DataRoot "manifests"
 }
 $PyExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $PyExe)) {
-  $PyExe = "python"
+  throw "Missing worktree virtual environment at $PyExe"
 }
 
 $CleanPins = @(
@@ -54,6 +52,30 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 $env:PYTHONPATH = (Join-Path $RepoRoot "src")
 
 switch ($Mode) {
+  "start-loop" {
+    if ($Observe -eq $ConfirmPaper -or $Account -ne "ALL") {
+      throw "Select one of -Observe or -ConfirmPaper and all accounts."
+    }
+    $taskName = if ($Observe) { "Noesis Paper Farm Observation" } else { "Noesis Paper Farm Execution" }
+    $modeFlag = if ($Observe) { "-Observe" } else { "-ConfirmPaper" }
+    $arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -File `"$PSCommandPath`" -Mode paper-farm $modeFlag -ManifestDir `"$ManifestDir`" -TopK $TopK -PinSymbols $PinArg"
+    $action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'pwsh.exe') -Argument $arguments -WorkingDirectory $RepoRoot
+    $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([timespan]::Zero)
+    if ($existing) {
+      if ($existing.Actions.WorkingDirectory -ne $RepoRoot) {
+        throw "Existing task '$taskName' belongs to another worktree."
+      }
+      Set-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings | Out-Null
+    } else {
+      Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -ErrorAction Stop | Out-Null
+    }
+    Enable-ScheduledTask -TaskName $taskName | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    Get-ScheduledTask -TaskName $taskName | Select-Object TaskName, State
+    exit 0
+  }
   "preflight" {
     & $PyExe -c @"
 from pathlib import Path
@@ -77,41 +99,36 @@ print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])
     exit $LASTEXITCODE
   }
   { $_ -in @("paper-farm", "alpaca-paper", "ibkr-paper") } {
-    if (-not $ConfirmPaper) {
-      throw "Refused live paper submission without -ConfirmPaper switch (fail-closed)."
-    }
-    $ibkrReady = $false
+    $forbidden = @(4001, 7496, 8798, 8796)
+    $active = @(Get-NetTCPConnection -ErrorAction Stop | Where-Object {
+      $_.LocalPort -in $forbidden -or $_.RemotePort -in $forbidden
+    })
+    if ($active.Count) { throw "Paper Farm requires zero live broker ports." }
+    $env:IBKR_PAPER_TCP_REACHABLE = "0"
+    $tcp = [System.Net.Sockets.TcpClient]::new()
     try {
-      $tcp = [System.Net.Sockets.TcpClient]::new()
-      try {
-        $iar = $tcp.BeginConnect("127.0.0.1", 4002, $null, $null)
-        if ($iar.AsyncWaitHandle.WaitOne(250, $false)) {
-          $tcp.EndConnect($iar)
-          $ibkrReady = $true
-        }
-      } finally {
-        $tcp.Dispose()
+      if ($tcp.ConnectAsync("127.0.0.1", 4002).Wait(2000) -and $tcp.Connected) {
+        $env:IBKR_PAPER_TCP_REACHABLE = "1"
       }
-    } catch {
-      $ibkrReady = $false
+    } catch [System.AggregateException] {
+      $env:IBKR_PAPER_TCP_REACHABLE = "0"
+    } finally { $tcp.Dispose() }
+    if ($Mode -eq "ibkr-paper" -or $Account -eq "IBKR_DU_4002") {
+      & $PyExe -m tier0_sota.live.runner --ibkr-health --manifest-dir $ManifestDir
+      exit $LASTEXITCODE
     }
-    $ibkrPyBool = if ($ibkrReady) { "True" } else { "False" }
-    & $PyExe -c @"
-import os
-from pathlib import Path
-from tier0_sota.live.paper_farm import PaperFarmCoordinator
-from tier0_sota.live.performance import aggregate_paper_farm_performance
-mdir = Path(r'$ManifestDir')
-coord = PaperFarmCoordinator(mdir)
-sync_rep = coord.sync_all_lanes(account='$Account', ibkr_gateway_ready=$ibkrPyBool)
-otlp_url = os.environ.get('TIER0_OTLP_METRICS_URL', 'http://127.0.0.1:4318/v1/metrics').strip() or None
-perf = aggregate_paper_farm_performance(
-    mdir,
-    prom_output_path=mdir / 'paper_farm_metrics.prom',
-    otlp_endpoint=otlp_url,
-)
-print('PAPER_FARM_OK', list(coord.lanes.keys()), perf['summary'], {k: v.get('total_tca_fills_duckdb', 0) for k, v in sync_rep.items() if isinstance(v, dict)})
-"@
+    if ($Account -ne "ALL") { throw "All three account inventories are required for the shared symbol lock." }
+    if ($ConfirmPaper -eq $Observe) { throw "Select exactly one of -ConfirmPaper or -Observe." }
+    $intent = if ($Observe) { "--observe" } else { "--confirm-paper" }
+    if (-not $env:FNOX_AGE_KEY_FILE) {
+      $env:FNOX_AGE_KEY_FILE = [Environment]::GetEnvironmentVariable("FNOX_AGE_KEY_FILE", "User")
+      if (-not $env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE = Join-Path $HOME ".config/fnox/age.txt" }
+    }
+    if (-not (Test-Path -LiteralPath $env:FNOX_AGE_KEY_FILE -PathType Leaf)) { throw "Missing fnox age identity" }
+    Push-Location -LiteralPath $RepoRoot
+    try {
+      fnox exec --profile paper -- $PyExe -m tier0_sota.live.runner $intent --manifest-dir $ManifestDir --top-k $TopK --pin-symbols $PinArg
+    } finally { Pop-Location }
     exit $LASTEXITCODE
   }
   "performance" {

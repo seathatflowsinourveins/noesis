@@ -361,3 +361,37 @@ def test_tv_console_ps1_parses_cleanly_with_zero_cdp() -> None:
             check=True,
         )
         assert proc.stdout.strip() == "0"
+
+
+def test_live_scan_stages_only_fresh_completed_mover_bars(tmp_path: Path) -> None:
+    movers_path = tmp_path / "movers.json"
+    out = tmp_path / "tv_sota_pack"
+    mover = {
+        "symbol": "NVDA",
+        "last_price": 100,
+        "extreme_mover_eligible": True,
+        "bar_close_utc": "2026-11-25T15:00:00Z",
+    }
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-25T15:00:03Z",
+                "macro_regime": {"regime": 1},
+                "entries": [mover, {**mover, "symbol": "SOXL", "extreme_mover_eligible": False}],
+            }
+        )
+    )
+
+    def refresh(now: datetime) -> list[dict[str, Any]]:
+        refresh_tickets_from_paths(
+            movers_path=movers_path, out_dir=out, venue="ALPACA", now_utc=now
+        )
+        return json.loads((out / "staged_scan_presets.json").read_text())["presets"]
+
+    ts = datetime(2026, 11, 25, 15, 0, 10, tzinfo=UTC)
+    (first,) = refresh(ts)
+    assert first["symbol"] == "NVDA" and first["qty"] == 1 and first["semi_auto_confirmed"] is False
+    assert first["data_source"] == "alpaca_sip" and refresh(ts)[0]["alert_id"] == first["alert_id"]
+    assert refresh(ts.replace(minute=1)) == []
+    assert refresh(ts.replace(day=26)) == []

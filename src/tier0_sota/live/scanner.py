@@ -15,6 +15,7 @@ from typing import Any
 
 import alpaca.data as ad
 import alpaca.trading as at
+import polars as pl
 from alpaca.data.enums import DataFeed, Exchange, MostActivesBy
 from alpaca.data.requests import (
     MarketMoversRequest,
@@ -25,11 +26,13 @@ from alpaca.data.requests import (
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.enums import AssetBorrowStatus, AssetStatus
 from alpaca.trading.requests import GetAssetsRequest
+from nautilus_trader.indicators import AverageTrueRange
 
 from tier0_sota import engine as eng
 from tier0_sota import risk as rk
 
 DEFAULT_PIN_SYMBOLS: tuple[str, ...] = ("SOXL", "SOXS")
+EQUITY_BENCHMARKS = ("SPY", "QQQ", "SOXX", "RSP")
 VALID_EQUITY_RE = re.compile(r"^[A-Z][A-Z0-9.-]{0,6}$")
 _UNVERIFIED = {
     "shortable": False,
@@ -182,25 +185,28 @@ class ExtremeMoverScanner:
         return cands
 
     def _enrich_sip(
-        self, syms: Sequence[str], now_utc: datetime
+        self, syms: Sequence[str], now_utc: datetime, feed: DataFeed = DataFeed.SIP
     ) -> tuple[dict[str, list[Any]], dict[str, float]]:
         if self.data_client is None or not syms:
             return {}, {}
         bars_r = self.data_client.get_stock_bars(
             StockBarsRequest(
-                symbol_or_symbols=sorted({*syms, "SPY", "QQQ"}),
+                symbol_or_symbols=sorted({*syms, *EQUITY_BENCHMARKS}),
                 timeframe=TimeFrame.Minute,
                 start=now_utc - timedelta(hours=6),
-                end=now_utc,
-                feed=DataFeed.SIP,
+                # Alpaca timestamps minute bars at the start of the interval.
+                end=now_utc.replace(second=0, microsecond=0) - timedelta(minutes=1),
+                feed=feed,
             )
         )
+        if feed == DataFeed.BOATS:
+            return dict(_ga(bars_r, "data") or {}), {}
         trades_r = self.data_client.get_stock_trades(
             StockTradesRequest(
-                symbol_or_symbols=list(syms)[:25],
-                start=now_utc - timedelta(hours=4),
+                symbol_or_symbols=list(syms),
+                start=now_utc.replace(second=0, microsecond=0) - timedelta(minutes=1),
+                end=now_utc.replace(second=0, microsecond=0) - timedelta(microseconds=1),
                 feed=DataFeed.SIP,
-                limit=2000,
             )
         )
         flat: list[Any] = []
@@ -219,19 +225,49 @@ class ExtremeMoverScanner:
         now = now_utc or datetime.now(UTC)
         cands = self._discover_raw()
         pins = {p.strip().upper() for p in self.pin_symbols if p.strip()}
-        bars_map, trf_ratios = self._enrich_sip(sorted(cands), now)
+        sess = eng.classify_us_equity_session_et(int(now.timestamp() * 1_000_000_000))
+        feed = DataFeed.BOATS if sess == "OVERNIGHT" else DataFeed.SIP
+        bars_map, trf_ratios = self._enrich_sip(sorted(cands), now, feed)
         spy = bars_map.get("SPY") or []
         spy_mv = (
             ((float(spy[-1].close) / float(spy[0].open)) - 1.0) * 100.0
             if len(spy) >= 2 and float(spy[0].open) > 0
             else 0.0
         )
-        macro_regime = 1 if spy_mv >= 0.25 else (-1 if spy_mv <= -0.75 else 0)
-        sess = eng.classify_us_equity_session_et(int(now.timestamp() * 1_000_000_000))
+        last_open = now.replace(second=0, microsecond=0) - timedelta(minutes=1)
+        fresh = [
+            sym
+            for sym in EQUITY_BENCHMARKS
+            if bars_map.get(sym) and _ga(bars_map[sym][-1], "timestamp") == last_open
+        ]
+        macro_regime = 0
+        if sess != "CLOSED" and len(fresh) == len(EQUITY_BENCHMARKS):
+            from tier0_sota.discovery import compute_causal_market_regime
+
+            history = pl.DataFrame(
+                [
+                    {
+                        "symbol": sym,
+                        "t_ns": int(b.timestamp.timestamp() * 1e9),
+                        "h": b.high,
+                        "l": b.low,
+                        "c": b.close,
+                        "v": b.volume,
+                    }
+                    for sym in fresh
+                    for b in bars_map[sym]
+                    if b.timestamp <= last_open
+                ]
+            )
+            macro_regime = compute_causal_market_regime(history).get(
+                int((last_open + timedelta(minutes=1)).timestamp() * 1e9), 0
+            )
 
         scored: list[dict[str, Any]] = []
         for sym, meta in cands.items():
             sb = bars_map.get(sym) or []
+            observed = _ga(sb[-1], "timestamp") if sb else None
+            bar_close = observed + timedelta(minutes=1) if observed is not None else None
             px = float(sb[-1].close) if sb else float(meta["price"])
             if px < self.min_price and sym not in pins:
                 continue
@@ -240,22 +276,31 @@ class ExtremeMoverScanner:
                 if len(sb) >= 2 and float(sb[0].open) > 0
                 else 0.0
             )
-            mv = meta["move"] if abs(meta["move"]) > 0.0 else bmv
+            mv = meta["move"] if feed == DataFeed.SIP and abs(meta["move"]) > 0.0 else bmv
             vol = max(float(meta["volume"]), sum(_f(_ga(b, "volume")) for b in sb))
             base_v = sum(_f(_ga(b, "volume")) for b in sb[:-5]) / max(1, len(sb) - 5)
             rec_v = sum(_f(_ga(b, "volume")) for b in sb[-5:]) / 5.0 if sb else 0.0
-            rvol = (
-                (rec_v / base_v) if base_v > 0 else (2.0 if abs(mv) >= self.min_move_pct else 1.0)
-            )
+            rvol = (rec_v / base_v) if base_v > 0 else 0.0
             is_ext = (
-                abs(mv) >= self.min_move_pct
+                sess != "CLOSED"
+                and bar_close is not None
+                and eng.classify_us_equity_session_et(
+                    int(bar_close.timestamp() * 1e9) - 60_000_000_000
+                )
+                == sess
+                and timedelta(0) <= now - bar_close < timedelta(minutes=1)
+                and abs(mv) >= self.min_move_pct
                 and rvol >= self.min_rvol
                 and (px * vol >= self.min_dollar_vol or sym in pins)
             )
             if not is_ext and sym not in pins:
                 continue  # reject flat/sleepy mega-caps (e.g. flat AAPL)
             side: rk.Side = "SHORT" if mv <= -self.min_move_pct else "LONG"
-            sched, sp_map = eng.select_pooled_trailing_schedule(Decimal("0.015"))
+            atr = AverageTrueRange(14)
+            for bar in sb:
+                atr.update_raw(float(bar.high), float(bar.low), float(bar.close))
+            natr = Decimal(str(atr.value / px)) if atr.initialized and px > 0 else None
+            sched, sp_map = eng.select_pooled_trailing_schedule(natr or Decimal(0))
             prof = eng.get_session_protection_profile(sess, sp_map)
             stop_px = (
                 None
@@ -278,7 +323,9 @@ class ExtremeMoverScanner:
                     "darkpool_trf_ratio": trf_ratios.get(sym),
                     "side": "SELL" if side == "SHORT" else "BUY",
                     "session": sess,
+                    "bar_close_utc": bar_close.isoformat() if bar_close else None,
                     "trailing_schedule": sched,
+                    "natr_pct": float(natr) if natr is not None else None,
                     "initial_stop_px": stop_px,
                     "extreme_mover_eligible": is_ext,
                     "pinned": sym in pins,
@@ -298,8 +345,18 @@ class ExtremeMoverScanner:
         manifest = {
             "schema_version": "tier0.whole-market-movers.v2",
             "generated_at_utc": now.isoformat(),
-            "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
-            "macro_regime": {"regime": macro_regime, "spy_session_pct": round(spy_mv, 3)},
+            "feed_sources": (
+                ["alpaca_boats"]
+                if feed == DataFeed.BOATS
+                else ["alpaca_sip", "finra_trf_exchange_d"]
+            ),
+            "macro_regime": {
+                "regime": macro_regime,
+                "regime_label": {-1: "CRASH", 0: "NEUTRAL", 1: "BULL"}[macro_regime],
+                "spy_session_pct": round(spy_mv, 3),
+                "fresh_equity_benchmarks": fresh,
+                "vix_available": False,
+            },
             "pin_symbols": list(self.pin_symbols),
             "ranked_count": len(entries),
             "entries": entries,

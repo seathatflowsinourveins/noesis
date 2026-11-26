@@ -19,7 +19,8 @@ function tv-tickets {
         [string]$OutDir      = $script:Tier0PackDir
     )
     $env:PYTHONDONTWRITEBYTECODE = '1'
-    & $script:Tier0Py -B -m tier0_sota.tv.tickets --manifest-dir $ManifestDir --out-dir $OutDir
+    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
+    & $script:Tier0Py -B -m tier0_sota.tv.tickets --manifest-dir $ManifestDir --out-dir $OutDir --venue ALPACA
     if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.tickets exited with code $LASTEXITCODE" }
     $mdPath = Join-Path $OutDir 'LIVE_HALF_AUTO_ORDER_TICKETS.md'
     if (Test-Path -LiteralPath $mdPath) { Get-Content -LiteralPath $mdPath -Encoding UTF8 }
@@ -43,7 +44,8 @@ function tv-copy-watchlist {
         [string]$OutDir      = $script:Tier0PackDir
     )
     $env:PYTHONDONTWRITEBYTECODE = '1'
-    & $script:Tier0Py -B -m tier0_sota.tv.tickets --manifest-dir $ManifestDir --out-dir $OutDir | Out-Null
+    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
+    & $script:Tier0Py -B -m tier0_sota.tv.tickets --manifest-dir $ManifestDir --out-dir $OutDir --venue ALPACA | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.tickets exited with code $LASTEXITCODE" }
     $wlPath = Join-Path $OutDir 'tier0_sota_tv_watchlists_live.txt'
     $wlPath | Set-Clipboard
