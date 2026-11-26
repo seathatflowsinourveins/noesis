@@ -26,6 +26,18 @@
     "Antigravity",
     "Orca"
   ],
+  "source_of_truth_hierarchy": {
+    "sole_source_of_truth": "sota-upstream-convergence-per-core-trading-philosophy",
+    "adrs_living_and_evolvable": true,
+    "adrs_supersession_allowed": true,
+    "adrs_artificial_count_cap": false,
+    "memory_hygiene_policy": "purge-superseded-direct-keep-only-philosophy-aligned-sota-memory",
+    "non_negotiable_mechanical_guardrails": [
+      "src/tier0_sota/risk.py",
+      "live_broker_port_isolation_4001_7496_8798_8796",
+      "live_execution_enabled_false_until_stage5"
+    ]
+  },
   "zero_self_invented_hooks": true,
   "orca_practice": {
     "config_file": "orca.yaml",
@@ -412,6 +424,50 @@
       "tradingview/lightweight-charts": 1,
       "upstream-quality-evals": 3
     }
+  },
+  "auth_and_routing_policy": {
+    "api_key_providers_allowed": [
+      "anthropic",
+      "openai"
+    ],
+    "local_automation_router": {
+      "name": "omniroute",
+      "base_url": "http://127.0.0.1:20128",
+      "health_endpoint": "http://127.0.0.1:20128/api/health",
+      "oauth_auto_fallback": true,
+      "windows_autostart": "omniroute autostart enable --no-tray (Startup OmniRoute.vbs) + Keep-Up"
+    },
+    "claude_code_interactive_auth": {
+      "mode": "native-oauth-only",
+      "available_models_restricted": false,
+      "supported_models": [
+        "claude-fable-5-2",
+        "opus",
+        "sonnet",
+        "haiku",
+        "opusplan"
+      ],
+      "zero_global_api_key_override": true
+    },
+    "orca_multi_account_failover": {
+      "helper_script": "scripts/orca_account_failover.py",
+      "just_commands": [
+        "just account-status",
+        "just account-switch"
+      ],
+      "uses_official_cli_only": [
+        "orca account list --json",
+        "orca account select"
+      ],
+      "switch_on_rate_limit_or_exhaustion": true
+    },
+    "anthropic_banked_keys_policy": {
+      "usage_tier": "high-quality-sota-tasks-only",
+      "vault_schema": "sota-anthropic-keybank.v1",
+      "ci_dispatch_provider": "anthropic-banked-sota",
+      "never_override_interactive_cli": true
+    },
+    "github_actions_workflow": ".github/workflows/multi-model-sota.yml"
   },
   "live_hosted_portals": [
     {

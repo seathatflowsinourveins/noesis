@@ -2,6 +2,18 @@
   "schema_version": "tier0.philosophy-compounding-manifest.v1",
   "repo_name": "tier0-sota-clean",
   "future_flagship_name": "noesis",
+  "source_of_truth_hierarchy": {
+    "sole_source_of_truth": "sota-upstream-convergence-per-core-trading-philosophy",
+    "adrs_living_and_evolvable": true,
+    "adrs_supersession_allowed": true,
+    "adrs_artificial_count_cap": false,
+    "memory_hygiene_policy": "purge-superseded-direct-keep-only-philosophy-aligned-sota-memory",
+    "non_negotiable_mechanical_guardrails": [
+      "src/tier0_sota/risk.py",
+      "live_broker_port_isolation_4001_7496_8798_8796",
+      "live_execution_enabled_false_until_stage5"
+    ]
+  },
   "core_trading_philosophy": {
     "extreme_movers_early": {
       "objective": "Focus capital and broker API rate budgets strictly on the highest-potential extreme movers early while filtering out flat, low-RVOL mega-caps.",

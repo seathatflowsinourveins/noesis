@@ -123,5 +123,13 @@ preflight *args:
 resume *args:
     {{ if os_family() == "windows" { "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/preflight_resume.ps1 -Reconcile" } else { "bash scripts/preflight_resume.sh --reconcile" } }} {{args}}
 
+# Inspect Orca native multi-account OAuth headroom (read-only)
+account-status:
+    {{uv_run}} python scripts/orca_account_failover.py
+
+# Fail over Orca active Claude/Codex account cleanly via `orca account select` if rate-limited
+account-switch:
+    {{uv_run}} python scripts/orca_account_failover.py --apply
+
 # Run complete local SOTA verification suite
 check: fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke test gitleaks

@@ -107,6 +107,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         ".github/workflows/security.yml",
         ".github/workflows/docs.yml",
         ".github/workflows/release.yml",
+        ".github/workflows/multi-model-sota.yml",
         ".github/dependabot.yml",
         ".github/CODEOWNERS",
         ".github/pull_request_template.md",
@@ -165,6 +166,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "opencode.json",
         ".opencode/commands/verify-tier0.md",
         "scripts/nautilus_mcp_server.py",
+        "scripts/orca_account_failover.py",
         "scripts/grand_reset/02_runtimes_agy_orca_setup.ps1",
     ],
     "L10": [
@@ -188,11 +190,13 @@ ENTRYPOINT_CANDIDATES: dict[str, str] = {
     "security_workflow": ".github/workflows/security.yml",
     "docs_workflow": ".github/workflows/docs.yml",
     "release_workflow": ".github/workflows/release.yml",
+    "multi_model_workflow": ".github/workflows/multi-model-sota.yml",
     "ecosystem_setup": "scripts/setup_clean_ecosystem.ps1",
     "lane_launcher": "scripts/launch_clean_lanes.ps1",
     "paper_farm": "scripts/run_live_paper_farm.ps1",
     "tv_console": "scripts/tv_console.ps1",
     "mcp_server": "scripts/nautilus_mcp_server.py",
+    "orca_account_failover": "scripts/orca_account_failover.py",
     "formal_risk_z3": "evals/formal_risk_z3.py",
     "inspect_safety_eval": "evals/tier0_inspect_eval.py",
     "grand_reset_00": "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
@@ -469,6 +473,7 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     gemini_cfg = json.loads((repo_root / ".gemini" / "settings.json").read_text(encoding="utf-8"))
     opencode_cfg = json.loads((repo_root / "opencode.json").read_text(encoding="utf-8"))
     codex_cfg = tomllib.loads((repo_root / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    phil_doc = json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
     claude_md_text = (repo_root / "CLAUDE.md").read_text(encoding="utf-8").strip()
     orca_cfg = _parse_orca_yaml(repo_root)
     zero_hooks = _check_zero_hooks(repo_root)
@@ -640,6 +645,7 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "Antigravity",
             "Orca",
         ],
+        "source_of_truth_hierarchy": phil_doc["source_of_truth_hierarchy"],
         "zero_self_invented_hooks": zero_hooks,
         "orca_practice": {
             "config_file": "orca.yaml",
@@ -679,6 +685,37 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "agent_coverage": f"{len(agent_covered)}/{len(locked_skills)}",
             "unmapped_skills": missing_lane_skills,
             "by_upstream_source": dict(sorted(skills_by_source.items())),
+        },
+        "auth_and_routing_policy": {
+            "api_key_providers_allowed": ["anthropic", "openai"],
+            "local_automation_router": {
+                "name": "omniroute",
+                "base_url": "http://127.0.0.1:20128",
+                "health_endpoint": "http://127.0.0.1:20128/api/health",
+                "oauth_auto_fallback": True,
+                "windows_autostart": (
+                    "omniroute autostart enable --no-tray (Startup OmniRoute.vbs) + Keep-Up"
+                ),
+            },
+            "claude_code_interactive_auth": {
+                "mode": "native-oauth-only",
+                "available_models_restricted": False,
+                "supported_models": ["claude-fable-5-2", "opus", "sonnet", "haiku", "opusplan"],
+                "zero_global_api_key_override": True,
+            },
+            "orca_multi_account_failover": {
+                "helper_script": "scripts/orca_account_failover.py",
+                "just_commands": ["just account-status", "just account-switch"],
+                "uses_official_cli_only": ["orca account list --json", "orca account select"],
+                "switch_on_rate_limit_or_exhaustion": True,
+            },
+            "anthropic_banked_keys_policy": {
+                "usage_tier": "high-quality-sota-tasks-only",
+                "vault_schema": "sota-anthropic-keybank.v1",
+                "ci_dispatch_provider": "anthropic-banked-sota",
+                "never_override_interactive_cli": True,
+            },
+            "github_actions_workflow": ".github/workflows/multi-model-sota.yml",
         },
         "live_hosted_portals": all_portals,
         "live_hosted_portals_count": len(all_portals),

@@ -10,14 +10,18 @@ Single-command recovery and fresh-session grounding guide for the standalone `Z:
 
 ---
 
-## 1. Exact Post-Restart Sequence (Steps 1 to 4)
+## 1. Automatic Logon Recovery + One-Command Verification (`Steps 1 to 4`)
+
+On Windows startup / logon:
+- **OmniRoute native autostart** (`OmniRoute.vbs` in Startup, registered via `omniroute autostart enable --no-tray`) launches the local `:20128` router silently (`--no-open --no-tray`) backed by your connected OAuth accounts.
+- **Scheduled Task `\Noesis Orca Mesh Keep-Up`** (logon & every 5m, zero-window `pythonw.exe` running `ensure-noesis-orca-6770.pyw`) warms `Noesis-SOTA`, brings up all 4 systemd units + Docker Compose (`11/11` + FINOS `5/5`), ensures OmniRoute (`:20128`), Orca Desktop, `:6770`, and `:8792`, refreshes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` on fresh boot via `preflight_resume.ps1 -Reconcile`, and runs rate-limit-only Orca account failover (`scripts/orca_account_failover.py --apply`).
 
 ### Step 1: Open `Z:\tier0-sota-clean` in Antigravity (AGY) or Orca
 
 1. Launch **Antigravity (AGY)** or **Orca** and open `Z:\tier0-sota-clean` as the active workspace (never open superseded paths).
 2. Confirm a fresh terminal inherits the persisted Disk-Z environment (`TIER0_REPO_ROOT=Z:\tier0-sota-clean`, `TIER0_DATA_ROOT=Z:\sota-data`, `ORCA_WORKSPACES_DIR=Z:\workspaces`) and AGY loads native stdio MCPs from `~/.gemini/config/mcp_config.json` (`$env:USERPROFILE\.gemini\config\mcp_config.json`: `codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
 
-### Step 2: Run `just resume` (Reconcile & Full 15/15 Portal Preflight)
+### Step 2: Run `just resume` (Reconcile & Full 15/15 Portal + OmniRoute + Orca Preflight)
 
 From `Z:\tier0-sota-clean` (works identically in Windows `pwsh` and WSL2 `Noesis-SOTA` `bash`):
 
@@ -28,16 +32,28 @@ just resume
 What `just resume` executes (`scripts/preflight_resume.ps1 -Reconcile` on Windows, `scripts/preflight_resume.sh --reconcile` in WSL2):
 
 1. Verifies `0` forbidden live broker ports (`:4001`, `:7496`, `:8798`, `:8796`) and default WSL2 distro == `Noesis-SOTA`.
-2. Ensures all 4 WSL2 systemd units are active (`tier0-duckdb-ui`, `tier0-openbb-backend`, `tier0-ollama-docker-bridge`, `tier0-openbb-docker-bridge`) and brings up `docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d`.
+2. Ensures all 4 WSL2 systemd units are active (`tier0-duckdb-ui`, `tier0-openbb-backend`, `tier0-ollama-docker-bridge`, `tier0-openbb-docker-bridge`), brings up `docker compose -p docker -f /mnt/z/tier0-sota-clean/docker/compose.sota.yml up -d`, and reconciles OmniRoute (`http://127.0.0.1:20128/api/health`).
 3. Probes all `15/15` local portals on `127.0.0.1`, including real `otelcol_*` metrics on `:9464/metrics` and `Server: Caddy` on `:8793`.
-4. Verifies Disk-Z environment variables, AGY native MCP config, `8/8` Windows + WSL2 byte-identical Global Charter SHA-256 (`057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c`), `risk.py` SHA-256, git status & origin (`seathatflowsinourveins/noesis`), and Paper Farm preflight readiness.
+4. Verifies Disk-Z environment variables, AGY native MCP config, `8/8` Windows + WSL2 byte-identical Global Charter SHA-256 (`057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c`), `risk.py` SHA-256, git status & origin (`seathatflowsinourveins/noesis`), Paper Farm preflight readiness, OmniRoute OAuth readiness, and unrestricted native Claude Code / Orca multi-account readiness (`0` global API-key overrides).
 5. Atomically writes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` (`schema_version: "tier0.workstation-preflight-resume.v1"`, `verdict: "PASS"`).
 
 For a read-only check anytime without restarting services:
 
 ```powershell
 just preflight
+just account-status   # Read-only Orca native Claude/Codex OAuth headroom check
+just account-switch   # Optional: fail over active Orca account only when rate-limited/exhausted
 ```
+
+---
+
+## 2. Three-Tier Auth, OmniRoute & Multi-Model Policy (Anthropic & OpenAI Only)
+
+| Tier / Surface | Auth & Router Mechanism | Models Allowed | Policy |
+|---|---|---|---|
+| **Interactive Claude Code CLI (Win & WSL2)** | **Native Orca OAuth logins only** (`0` global `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` overrides) | **Unrestricted** (`claude-fable-5-2`, `opus`, `sonnet`, `haiku`, `opusplan`, etc.) | Remove `availableModels` cap so tasks switch models dynamically; Orca switches accounts cleanly via `orca account select` on rate-limit. |
+| **Local Automations & Multi-Provider Routing** | **OmniRoute (`http://127.0.0.1:20128`)** with connected OAuth accounts (`agy`, `codex`) & autostart | OmniRoute OAuth pools & auto-fallback combos | Primary engine for local headless automations and routine GitHub Actions (`provider=omniroute` via `OMNIROUTE_API_KEY` + `OMNIROUTE_BASE_URL`). |
+| **High-Quality SOTA & Banked Tasks Only** | **Banked `ANTHROPIC_API_KEY` (DPAPI vault / GitHub Secret) + `OPENAI_API_KEY`** | `opus` / `gpt-6.2-*` / SOTA deep audits | Reserved strictly for high-quality SOTA CI dispatches (`provider=anthropic-banked-sota` or `openai-codex`) and SDK/Batch SOTA runs — never overrides interactive CLI OAuth and zero `GEMINI_API_KEY`. |
 
 ### Step 3 (Optional, One-Time Post-Restart): Clean Unlocked Legacy Disk-Z Directories & GitHub Repos
 

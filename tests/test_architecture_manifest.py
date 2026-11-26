@@ -310,10 +310,16 @@ def test_philosophy_and_llm_harness_manifests() -> None:
         phil["upstream_strategy_realization_map"]["immutable_risk_kernel"]["sha256"]
         == EXPECTED_RISK_SHA256
     )
+    sot = phil["source_of_truth_hierarchy"]
+    assert sot["sole_source_of_truth"] == "sota-upstream-convergence-per-core-trading-philosophy"
+    assert sot["adrs_living_and_evolvable"] is True
+    assert sot["adrs_supersession_allowed"] is True
+    assert sot["adrs_artificial_count_cap"] is False
     assert len(phil["self_invention_lessons_prevented"]) >= 5
     assert all(entry["purged"] is True for entry in phil["self_invention_lessons_prevented"])
 
     llm = json.loads((REPO_ROOT / "LLM_HARNESS_MANIFEST.json").read_text(encoding="utf-8"))
+    assert llm["source_of_truth_hierarchy"] == sot
     assert llm["schema_version"] == "tier0.llm-harness-manifest.v1"
     assert llm["zero_self_invented_hooks"] is True
     assert llm["ssot_entrypoints"]["canonical_agents_md"] == "AGENTS.md"
@@ -399,6 +405,19 @@ def test_philosophy_and_llm_harness_manifests() -> None:
     agent_skills_map = llm["agent_skills"]
     assert sorted(agent_skills_map.keys()) == llm["agent_roles"]
     assert {s for skills in agent_skills_map.values() for s in skills} == locked_skills
+
+    auth_policy = llm["auth_and_routing_policy"]
+    assert auth_policy["api_key_providers_allowed"] == ["anthropic", "openai"]
+    assert auth_policy["local_automation_router"]["name"] == "omniroute"
+    assert auth_policy["claude_code_interactive_auth"]["available_models_restricted"] is False
+    assert auth_policy["claude_code_interactive_auth"]["zero_global_api_key_override"] is True
+    assert (
+        auth_policy["orca_multi_account_failover"]["helper_script"]
+        == "scripts/orca_account_failover.py"
+    )
+    assert auth_policy["anthropic_banked_keys_policy"]["ci_dispatch_provider"] == (
+        "anthropic-banked-sota"
+    )
 
 
 def test_sync_manifest_check_zero_drift() -> None:

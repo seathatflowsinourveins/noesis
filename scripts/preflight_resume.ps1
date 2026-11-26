@@ -595,6 +595,118 @@ Record-Gate -Name "paper_farm_preflight" `
         perf_manifest     = $PerfManifestPath
     }
 
+# 13. OmniRoute local router (:20128) & OAuth account pool readiness
+$OmniUrl = "http://127.0.0.1:20128/api/health"
+$OmniHealthy = $false
+try {
+    $omniResp = Invoke-WebRequest -Uri $OmniUrl -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+    $omniBody = $omniResp.Content | ConvertFrom-Json
+    $OmniHealthy = ($omniResp.StatusCode -eq 200 -and $omniBody.status -eq "ok")
+} catch {
+    $OmniHealthy = $false
+}
+if (-not $OmniHealthy -and $Reconcile) {
+    Write-InfoLine -Tag "RECONCILE" -Message "Starting OmniRoute daemon hidden (:20128)..."
+    $nodeExe = Join-Path $env:LOCALAPPDATA "mise\installs\node\global\node.exe"
+    $omniMjs = Get-ChildItem (Join-Path $env:LOCALAPPDATA "mise\installs\node") -Filter "omniroute.mjs" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    $startOk = $false
+    if ((Test-Path -LiteralPath $nodeExe) -and $omniMjs) {
+        Start-Process -FilePath $nodeExe -ArgumentList @($omniMjs, "serve", "--no-open", "--no-tray") -WindowStyle Hidden | Out-Null
+        $startOk = $true
+    } elseif (Get-Command omniroute -ErrorAction SilentlyContinue) {
+        Start-Process -FilePath "omniroute" -ArgumentList @("serve", "--daemon", "--no-open", "--no-tray") -WindowStyle Hidden | Out-Null
+        $startOk = $true
+    }
+    if ($startOk) {
+        for ($i = 1; $i -le 10; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+                $omniResp2 = Invoke-WebRequest -Uri $OmniUrl -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+                $omniBody2 = $omniResp2.Content | ConvertFrom-Json
+                if ($omniResp2.StatusCode -eq 200 -and $omniBody2.status -eq "ok") {
+                    $OmniHealthy = $true
+                    break
+                }
+            } catch {
+                $OmniHealthy = $false
+            }
+        }
+    }
+    $ReconcileActions.Add([ordered]@{
+        action = "omniroute_start"
+        ok     = $OmniHealthy
+        detail = if ($OmniHealthy) { "http://127.0.0.1:20128/api/health ok" } else { "failed to start :20128" }
+    })
+}
+
+$OmniDbPath = Join-Path $env:USERPROFILE ".omniroute\storage.sqlite"
+$OmniConnActive = 0
+$OmniAutostartVbs = Test-Path -LiteralPath (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\OmniRoute.vbs")
+$VenvPy = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+if ((Test-Path -LiteralPath $OmniDbPath) -and (Test-Path -LiteralPath $VenvPy)) {
+    $cntOut = & $VenvPy -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('SELECT count(*) FROM provider_connections WHERE is_active=1').fetchone()[0])" $OmniDbPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and ([string]$cntOut).Trim() -match '^\d+$') {
+        $OmniConnActive = [int]([string]$cntOut).Trim()
+    }
+}
+Record-Gate -Name "omniroute_local_router" `
+    -Passed ($OmniHealthy -and $OmniConnActive -ge 1) `
+    -Detail "health=$OmniHealthy active_oauth_connections=$OmniConnActive autostart_vbs=$OmniAutostartVbs" `
+    -Meta @{
+        url                       = $OmniUrl
+        healthy                   = $OmniHealthy
+        active_oauth_connections  = $OmniConnActive
+        autostart_vbs_present     = $OmniAutostartVbs
+    }
+
+# 14. Orca native multi-account readiness & zero global API-key CLI override
+$OrcaAccountsOk = $false
+$ClaudeAccountsCount = 0
+$CodexAccountsCount = 0
+$ClaudeModelUnrestricted = $false
+$LeakedGlobalAuthVars = [System.Collections.Generic.List[string]]::new()
+foreach ($gk in @("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY")) {
+    foreach ($sc in @("User", "Machine", "Process")) {
+        $gv = [Environment]::GetEnvironmentVariable($gk, $sc)
+        if (-not [string]::IsNullOrWhiteSpace($gv)) {
+            $LeakedGlobalAuthVars.Add("${sc}:$gk")
+        }
+    }
+}
+$WinClaudeSettings = Join-Path $env:USERPROFILE ".claude\settings.json"
+if (Test-Path -LiteralPath $WinClaudeSettings) {
+    try {
+        $cs = Get-Content -LiteralPath $WinClaudeSettings -Raw -Encoding UTF8 | ConvertFrom-Json
+        $ClaudeModelUnrestricted = (-not ($cs.PSObject.Properties.Name -contains "availableModels"))
+    } catch {
+        $ClaudeModelUnrestricted = $false
+    }
+}
+if (Get-Command orca -ErrorAction SilentlyContinue) {
+    try {
+        $orcaRaw = (& orca account list --json 2>&1) -join "`n"
+        if ($LASTEXITCODE -eq 0) {
+            $orcaDoc = $orcaRaw | ConvertFrom-Json
+            if ($orcaDoc.ok -eq $true) {
+                $ClaudeAccountsCount = @($orcaDoc.result.claude.accounts).Count
+                $CodexAccountsCount = @($orcaDoc.result.codex.accounts).Count
+                $OrcaAccountsOk = ($ClaudeAccountsCount -ge 1 -and $CodexAccountsCount -ge 1 -and $LeakedGlobalAuthVars.Count -eq 0 -and $ClaudeModelUnrestricted)
+            }
+        }
+    } catch {
+        $OrcaAccountsOk = $false
+    }
+}
+Record-Gate -Name "orca_multi_account_readiness" `
+    -Passed $OrcaAccountsOk `
+    -Detail "claude_oauth=$ClaudeAccountsCount codex_oauth=$CodexAccountsCount model_unrestricted=$ClaudeModelUnrestricted leaked_global_keys=$($LeakedGlobalAuthVars.Count)" `
+    -Meta @{
+        claude_oauth_accounts     = $ClaudeAccountsCount
+        codex_oauth_accounts      = $CodexAccountsCount
+        claude_model_unrestricted = $ClaudeModelUnrestricted
+        leaked_global_auth_vars   = @($LeakedGlobalAuthVars)
+    }
+
 # Build & atomically write workstation_preflight_resume_manifest.json
 $GatesPassed = @($Gates.Values | Where-Object { $_.ok }).Count
 $GatesTotal = $Gates.Count

@@ -482,6 +482,32 @@ else
   record_gate "paper_farm_preflight" "false" "preflight=${PF_OK} manifest_safe=${PERF_OK} output=${PF_OUT}"
 fi
 
+# 13. OmniRoute local router (:20128) & zero global API-key override
+OMNI_OK=false
+OMNI_DETAIL="http://127.0.0.1:20128/api/health unreachable"
+OMNI_BODY="$(curl -sS -m 3 http://127.0.0.1:20128/api/health 2>/dev/null || true)"
+if jq -e '.status == "ok"' <<<"$OMNI_BODY" >/dev/null 2>&1; then
+  OMNI_OK=true
+  OMNI_DETAIL="health=ok url=http://127.0.0.1:20128/api/health"
+fi
+record_gate "omniroute_local_router" "$OMNI_OK" "$OMNI_DETAIL"
+
+CLAUDE_MODEL_UNRESTRICTED=false
+if [[ -f "${HOME}/.claude/settings.json" ]] && jq -e 'has("availableModels") | not' "${HOME}/.claude/settings.json" >/dev/null 2>&1; then
+  CLAUDE_MODEL_UNRESTRICTED=true
+fi
+LEAKED_ENV=0
+for k in ANTHROPIC_API_KEY ANTHROPIC_BASE_URL OPENAI_API_KEY OPENAI_BASE_URL GEMINI_API_KEY; do
+  if [[ -n "${!k:-}" ]]; then
+    LEAKED_ENV=$((LEAKED_ENV + 1))
+  fi
+done
+if [[ "$CLAUDE_MODEL_UNRESTRICTED" == "true" && "$LEAKED_ENV" -eq 0 ]]; then
+  record_gate "claude_native_auth_and_models" "true" "model_unrestricted=true leaked_global_keys=0"
+else
+  record_gate "claude_native_auth_and_models" "false" "model_unrestricted=${CLAUDE_MODEL_UNRESTRICTED} leaked_global_keys=${LEAKED_ENV}"
+fi
+
 # Atomically write workstation_preflight_resume_manifest.json
 FAIL_COUNT="$(jq 'length' <<<"$FAILURES_JSON")"
 if [[ "$FAIL_COUNT" -eq 0 ]]; then

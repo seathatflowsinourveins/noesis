@@ -370,3 +370,67 @@ def test_preflight_resume_kit_scripts_and_playbook() -> None:
     just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
     assert "preflight" in just_txt and "scripts/preflight_resume.ps1" in just_txt
     assert "resume" in just_txt and "scripts/preflight_resume.sh" in just_txt
+    assert "account-status" in just_txt and "scripts/orca_account_failover.py" in just_txt
+    assert "account-switch" in just_txt and "--apply" in just_txt
+
+
+def test_orca_account_failover_and_ci_auth_policy() -> None:
+    from scripts.orca_account_failover import evaluate_agent_failover
+
+    # 1. Healthy active account (43% weekly, even with 80% fableWeekly) stays active cleanly
+    healthy_payload = {
+        "ok": True,
+        "result": {
+            "claude": {
+                "activeAccountId": "acc-1",
+                "accounts": [
+                    {"id": "acc-1", "email": "alpha@example.com", "organizationUuid": "org-1"},
+                    {"id": "acc-2", "email": "alpha@example.com", "organizationUuid": "org-1"},
+                    {"id": "acc-3", "email": "beta@example.com", "organizationUuid": "org-2"},
+                ],
+                "systemDefaultEmail": "sys@example.com",
+            },
+            "rateLimits": {
+                "claude": {
+                    "status": "ok",
+                    "weekly": {"usedPercent": 43},
+                    "fableWeekly": {"usedPercent": 80},
+                    "planType": "max_20x",
+                },
+                "inactiveClaudeAccounts": [
+                    {
+                        "accountId": "acc-2",
+                        "rateLimits": {"status": "ok", "weekly": {"usedPercent": 10}},
+                    },
+                    {
+                        "accountId": "acc-3",
+                        "rateLimits": {"status": "ok", "weekly": {"usedPercent": 5}},
+                    },
+                ],
+            },
+        },
+    }
+    res_keep = evaluate_agent_failover(healthy_payload, "claude")
+    assert res_keep["needs_switch"] is False
+    assert res_keep["recommended_target"] is None
+    # Org duplicate acc-2 was deduplicated cleanly
+    assert [c["account_id"] for c in res_keep["candidates"]] == ["acc-1", "acc-3", "system"]
+
+    # 2. Rate-limited active account selects healthiest alternate (acc-3 at 5% over system unknown)
+    limited_payload = json.loads(json.dumps(healthy_payload))
+    limited_payload["result"]["rateLimits"]["claude"] = {
+        "status": "error",
+        "usageMetadata": {"failureKind": "rate-limited"},
+    }
+    res_switch = evaluate_agent_failover(limited_payload, "claude")
+    assert res_switch["needs_switch"] is True
+    assert res_switch["recommended_target"] == "acc-3"
+
+    # 3. CI workflow strictly excludes GEMINI_API_KEY and reserves banked Anthropic for SOTA lane
+    ci_mm = (REPO_ROOT / ".github" / "workflows" / "multi-model-sota.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "GEMINI_API_KEY" not in ci_mm
+    assert "anthropic-banked-sota" in ci_mm
+    assert "OMNIROUTE_API_KEY" in ci_mm
+    assert "OPENAI_API_KEY" in ci_mm

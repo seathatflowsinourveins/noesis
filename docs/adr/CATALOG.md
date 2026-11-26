@@ -1,6 +1,8 @@
 # Architecture Decision Record Catalog (`tier0-sota-clean`)
 
-Bounded evolvable MADR 4.0 Architecture Decision Record catalog (`ADR-0001`..`ADR-0012`), hosted on `Zensical` (`http://127.0.0.1:8010`) and indexed into `XERJ` (`http://127.0.0.1:9200`). Every ADR records verified upstream evidence, self-invention lessons learned with mechanical upstream gates, and compounding-layer integration across the 4 active lanes (`sim-backtest`, `paper`, `half-auto-tv`, `live`).
+Living, evolvable MADR 4.0 Architecture Decision Record catalog (initially `ADR-0001`..`ADR-0012`; open-ended `ADR-0013+` as the upstream landscape evolves), hosted on `Zensical` (`http://127.0.0.1:8010`) and indexed into `XERJ` (`http://127.0.0.1:9200`).
+
+> **Living ADR Governance & Sole Source of Truth:** SOTA upstream convergence directed by our Core Trading Philosophy (`PHILOSOPHY_COMPOUNDING_MANIFEST.json`) is the **sole source of truth**. ADRs are empirical engineering decision snapshots, never frozen dogma or capped in count — amend, supersede (`Superseded by ADR-XXXX`), or retire any ADR whenever a superior verified OSI upstream better realizes the Core Trading Philosophy, while preserving immutable risk invariants (`src/tier0_sota/risk.py`) and fail-closed live broker port isolation. Every ADR records verified upstream evidence, self-invention lessons learned with mechanical upstream gates, and compounding-layer integration across the 4 active lanes (`sim-backtest`, `paper`, `half-auto-tv`, `live`).
 
 | ADR | Title | Status | Date | Primary Modules / Anchors |
 |---|---|---|---|---|
