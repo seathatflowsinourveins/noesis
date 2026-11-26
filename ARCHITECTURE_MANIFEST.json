@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 123,
+    "repository_files_count": 125,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -512,6 +512,7 @@
     ".github/pull_request_template.md",
     ".github/workflows/ci.yml",
     ".github/workflows/docs.yml",
+    ".github/workflows/multi-model-sota.yml",
     ".github/workflows/release.yml",
     ".github/workflows/security.yml",
     ".gitignore",
@@ -563,6 +564,7 @@
     "mise.toml",
     "opencode.json",
     "orca.yaml",
+    "osv-scanner.toml",
     "pine/tier0_market_regime.pine",
     "pine/tier0_omni_sota_24x5.pine",
     "pyproject.toml",

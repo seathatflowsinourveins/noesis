@@ -1,0 +1,131 @@
+name: Tier-0 Multi-Model SOTA Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Multi-model execution lane to invoke"
+        type: choice
+        options: [claude, codex, gemini, all-available]
+        default: all-available
+      task:
+        description: "Review or audit prompt passed safely via action input"
+        type: string
+        default: "Review repository alignment with AGENTS.md and PHILOSOPHY_COMPOUNDING_MANIFEST.json without modifying src/tier0_sota/risk.py."
+
+concurrency:
+  group: tier0-multi-model-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  claude-anthropic-or-omniroute:
+    name: Claude Code (Anthropic / OmniRoute)
+    if: inputs.provider == 'claude' || inputs.provider == 'all-available'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # Required by official anthropics/claude-code-action OIDC handshake
+    steps:
+      - name: Check Anthropic or OmniRoute secret availability
+        id: auth-check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+        run: |
+          if [ -n "${ANTHROPIC_API_KEY}${OMNIROUTE_API_KEY}" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "Skipped Claude lane cleanly: configure ANTHROPIC_API_KEY (or OMNIROUTE_API_KEY + OMNIROUTE_BASE_URL) in repository secrets."
+          fi
+
+      - name: Checkout repository
+        if: steps.auth-check.outputs.has_key == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Claude Code Action (Anthropic / OmniRoute)
+        if: steps.auth-check.outputs.has_key == 'true'
+        uses: anthropics/claude-code-action@4411a9e9b0283becf4b924f7bce360fd7756c78c # v1
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY || secrets.OMNIROUTE_API_KEY }}
+          allow_fork_prs: "false"
+          restrict_untrusted_prs: "true"
+          prompt: ${{ inputs.task }}
+
+  codex-openai-or-omniroute:
+    name: OpenAI Codex (OpenAI / OmniRoute)
+    if: inputs.provider == 'codex' || inputs.provider == 'all-available'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check OpenAI or OmniRoute secret availability
+        id: auth-check
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+        run: |
+          if [ -n "${OPENAI_API_KEY}${OMNIROUTE_API_KEY}" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "Skipped Codex lane cleanly: configure OPENAI_API_KEY (or OMNIROUTE_API_KEY + OMNIROUTE_BASE_URL) in repository secrets."
+          fi
+
+      - name: Checkout repository
+        if: steps.auth-check.outputs.has_key == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run OpenAI Codex Action
+        if: steps.auth-check.outputs.has_key == 'true'
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14
+        env:
+          OPENAI_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY || secrets.OMNIROUTE_API_KEY }}
+          sandbox: read-only
+          safety-strategy: drop-sudo
+          prompt: ${{ inputs.task }}
+
+  gemini-cli-lane:
+    name: Google Gemini CLI
+    if: inputs.provider == 'gemini' || inputs.provider == 'all-available'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check Gemini API secret availability
+        id: auth-check
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -n "${GEMINI_API_KEY}" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "Skipped Gemini lane cleanly: configure GEMINI_API_KEY in repository secrets."
+          fi
+
+      - name: Checkout repository
+        if: steps.auth-check.outputs.has_key == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Gemini CLI Action
+        if: steps.auth-check.outputs.has_key == 'true'
+        uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: ${{ inputs.task }}
