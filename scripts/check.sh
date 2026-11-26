@@ -22,6 +22,9 @@ else
   exit 1
 fi
 export PATH="$BIN_DIR:$HOME/.local/bin:$PATH"
+VENV_DIR="$(dirname "$BIN_DIR")"
+export VIRTUAL_ENV="$VENV_DIR"
+export UV_PROJECT_ENVIRONMENT="$VENV_DIR"
 
 EXPECTED_RISK_SHA="ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 ACTUAL_RISK_SHA="$(sha256sum "src/tier0_sota/risk.py" | awk '{print $1}')"
@@ -60,7 +63,7 @@ echo "[OK] LEGACY_MATCHES=0"
 
 ruff format --check src tests scripts evals
 ruff check .
-ty check
+ty check --python "$PY"
 deptry .
 ast-grep scan
 

@@ -82,7 +82,7 @@ All 5 configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gem
 | Directory | Role | Handling |
 |---|---|---|
 | `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`) | Standalone Tier-0 SOTA clean repository (`L0..L10`, `46/46` skills, `0` legacy refs, `0` `yfinance`) | **ACTIVE CANONICAL REPO** |
-| WSL2 `Noesis-SOTA` (`~/tier0-sota-clean/.venv`) | Isolated Linux `.venv` (`Python 3.13.18`, `314` packages, `nautilus_trader 2.0.0rc9`, `polars 2.2.0`; `Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1`, `nautilus_mcp_server.py --smoke` `10/10`, `pytest` `17 passed`, `shellcheck` `0` errors) | **ACTIVE WSL2 PARITY VENV** (preserves `~/.config/tier0/.env.*` with `chmod 600`) |
+| WSL2 `Noesis-SOTA` (`~/tier0-sota-clean/.venv`) | Isolated Linux `.venv` (`Python 3.13.18`, `314` packages, `nautilus_trader 2.0.0rc9`, `polars 2.2.0`; `Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1`, `nautilus_mcp_server.py --smoke` `10/10`, `pytest` `41 passed`, `shellcheck` `0` errors) | **ACTIVE WSL2 PARITY VENV** (preserves `~/.config/tier0/.env.*` with `chmod 600`) |
 | `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT\manifests`) | Active live Paper Farm & TV manifests/DuckDB ledgers | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-data\prewall-lake` (`$env:TIER0_DATA_ROOT\prewall-lake`) | Pre-wall (`<= 2026-10-15`) immutable market data lake | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-cache` | Shared `uv` wheel & Python cache | **PRESERVED SHARED CACHE** (never delete) |
