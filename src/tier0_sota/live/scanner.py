@@ -245,9 +245,7 @@ class ExtremeMoverScanner:
             base_v = sum(_f(_ga(b, "volume")) for b in sb[:-5]) / max(1, len(sb) - 5)
             rec_v = sum(_f(_ga(b, "volume")) for b in sb[-5:]) / 5.0 if sb else 0.0
             rvol = (
-                (rec_v / base_v)
-                if base_v > 0
-                else (2.0 if abs(mv) >= self.min_move_pct else 1.0)
+                (rec_v / base_v) if base_v > 0 else (2.0 if abs(mv) >= self.min_move_pct else 1.0)
             )
             is_ext = (
                 abs(mv) >= self.min_move_pct
@@ -259,22 +257,34 @@ class ExtremeMoverScanner:
             side: rk.Side = "SHORT" if mv <= -self.min_move_pct else "LONG"
             sched, sp_map = eng.select_pooled_trailing_schedule(Decimal("0.015"))
             prof = eng.get_session_protection_profile(sess, sp_map)
-            stop_px = None if sess == "CLOSED" or px <= 0 else float(
-                rk.compute_capped_stop_price(
-                    Decimal(f"{px:.4f}"), side, max_loss_pct=prof.initial_max_loss_pct
+            stop_px = (
+                None
+                if sess == "CLOSED" or px <= 0
+                else float(
+                    rk.compute_capped_stop_price(
+                        Decimal(f"{px:.4f}"), side, max_loss_pct=prof.initial_max_loss_pct
+                    )
                 )
             )
             sc = abs(mv) * 2.0 + math.log1p(max(0.0, rvol)) * 10.0 + trf_ratios.get(sym, 0.0) * 8.0
-            scored.append({
-                "symbol": sym, "score": round(sc + (20.0 if sym in pins else 0.0), 2),
-                "last_price": round(px, 4), "session_move_pct": round(mv, 2),
-                "rvol_normalized": round(rvol, 2), "dollar_vol": round(px * vol, 2),
-                "darkpool_trf_ratio": trf_ratios.get(sym),
-                "side": "SELL" if side == "SHORT" else "BUY", "session": sess,
-                "trailing_schedule": sched, "initial_stop_px": stop_px,
-                "extreme_mover_eligible": is_ext, "pinned": sym in pins,
-                "screen_buckets": list(meta["tags"]),
-            })
+            scored.append(
+                {
+                    "symbol": sym,
+                    "score": round(sc + (20.0 if sym in pins else 0.0), 2),
+                    "last_price": round(px, 4),
+                    "session_move_pct": round(mv, 2),
+                    "rvol_normalized": round(rvol, 2),
+                    "dollar_vol": round(px * vol, 2),
+                    "darkpool_trf_ratio": trf_ratios.get(sym),
+                    "side": "SELL" if side == "SHORT" else "BUY",
+                    "session": sess,
+                    "trailing_schedule": sched,
+                    "initial_stop_px": stop_px,
+                    "extreme_mover_eligible": is_ext,
+                    "pinned": sym in pins,
+                    "screen_buckets": list(meta["tags"]),
+                }
+            )
 
         scored.sort(key=lambda r: (-float(r["score"]), str(r["symbol"])))
         selected = scored[: max(1, int(top_k))]
@@ -290,7 +300,9 @@ class ExtremeMoverScanner:
             "generated_at_utc": now.isoformat(),
             "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
             "macro_regime": {"regime": macro_regime, "spy_session_pct": round(spy_mv, 3)},
-            "pin_symbols": list(self.pin_symbols), "ranked_count": len(entries), "entries": entries,
+            "pin_symbols": list(self.pin_symbols),
+            "ranked_count": len(entries),
+            "entries": entries,
         }
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)

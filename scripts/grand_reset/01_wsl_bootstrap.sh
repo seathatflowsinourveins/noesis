@@ -80,12 +80,29 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+WSL_VENV="${UV_PROJECT_ENVIRONMENT:-$HOME/tier0-sota-clean/.venv}"
 if [[ "$DRY_RUN" == "1" ]]; then
-  echo "[DRY-RUN] Would sync uv Python 3.13 .venv in $REPO_ROOT"
+  echo "[DRY-RUN] Would sync uv Python 3.13 venv at $WSL_VENV from $REPO_ROOT"
   exit 0
 fi
 
+mkdir -p "$(dirname "$WSL_VENV")"
+export UV_PROJECT_ENVIRONMENT="$WSL_VENV"
+export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+
 cd "$REPO_ROOT"
 uv python install 3.13 >/dev/null 2>&1 || true
-bash "$REPO_ROOT/scripts/bootstrap_env.sh"
-echo "[WSL-BOOTSTRAP-OK] repo=$REPO_ROOT env_dir=$HOME/.config/tier0"
+SYNC_ARGS=(sync --no-progress)
+if [[ -f "uv.lock" ]]; then
+  SYNC_ARGS+=(--frozen)
+fi
+uv "${SYNC_ARGS[@]}"
+
+PY="$WSL_VENV/bin/python"
+if [[ ! -x "$PY" ]]; then
+  echo "Expected WSL virtualenv interpreter missing at $PY" >&2
+  exit 1
+fi
+
+"$PY" -c "import sys, nautilus_trader, polars, duckdb, z3; print(f'python={sys.version.split()[0]} nautilus={nautilus_trader.__version__} polars={polars.__version__}')"
+echo "[WSL-BOOTSTRAP-OK] repo=$REPO_ROOT venv=$WSL_VENV env_dir=$HOME/.config/tier0"

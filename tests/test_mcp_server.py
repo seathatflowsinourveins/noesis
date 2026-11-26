@@ -165,7 +165,10 @@ def test_manifests_ranking_and_semi_auto_staging(tmp_path: Path) -> None:
     assert ok_s["ok"] is True and ok_s["semi_auto_confirmed"] is False
     bad_live = mcp_srv.stage_semi_auto_order_preset(
         payload={
-            "symbol": "NVDA", "side": "BUY", "session": "RTH", "endpoint": "api.alpaca.markets"
+            "symbol": "NVDA",
+            "side": "BUY",
+            "session": "RTH",
+            "endpoint": "api.alpaca.markets",
         }
     )
     assert bad_live["ok"] is False

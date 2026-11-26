@@ -105,9 +105,7 @@ def test_scanner_filters_flat_megacaps_and_enriches_trf_and_borrow(tmp_path: Pat
         trading_client=_FakeTradingClient(shortable=True, etb=True),
     )
     out = tmp_path / "movers.json"
-    doc = scanner.scan(
-        top_k=10, output_path=out, now_utc=datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
-    )
+    doc = scanner.scan(top_k=10, output_path=out, now_utc=datetime(2026, 10, 15, 15, 0, tzinfo=UTC))
     syms = [e["symbol"] for e in doc["entries"]]
     assert "AAPL" not in syms
     assert "SOXL" in syms

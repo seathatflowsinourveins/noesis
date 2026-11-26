@@ -83,8 +83,46 @@ select = ["E", "F", "UP", "B", "SIM", "I", "S"]
 "tests/*" = ["S101", "S603"]
 "evals/*" = ["S101", "S603"]
 
+[tool.ruff.format]
+exclude = ["src/tier0_sota/risk.py"]
+
 [tool.ty.src]
 exclude = [".claude/skills/**"]
+
+[tool.deptry]
+known_first_party = ["tier0_sota"]
+ignore_notebooks = true
+extend_exclude = ["\\.claude/skills", "site"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = [
+  "anthropic",
+  "ast-grep-cli",
+  "catboost",
+  "dagster",
+  "dagster-webserver",
+  "deptry",
+  "dspy",
+  "dvc",
+  "edgartools",
+  "fredapi",
+  "google-genai",
+  "hypothesis",
+  "lightgbm",
+  "openai",
+  "opentelemetry-api",
+  "opentelemetry-sdk",
+  "optuna",
+  "optuna-dashboard",
+  "pre-commit",
+  "prometheus-client",
+  "pyarrow",
+  "ruff",
+  "shap",
+  "ty",
+  "zensical",
+]
+DEP003 = ["jsonschema"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

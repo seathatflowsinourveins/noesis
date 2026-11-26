@@ -1,0 +1,46 @@
+name: Tier-0 SOTA Clean CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tier0-sota-clean-ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TIER0_CATBOOST_TASK_TYPE: "CPU"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  sota-quality-and-safety-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+
+      - name: Sync locked environment
+        run: uv sync --frozen --no-progress
+
+      - name: Run SOTA static, formal, and unit gates
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check src tests scripts evals
+          uv run --no-sync ty check
+          uv run --no-sync ast-grep scan
+          uv run --no-sync deptry .
+          uv run --no-sync pytest -q
+          uv run --no-sync python evals/formal_risk_z3.py
+          uv run --no-sync python scripts/nautilus_mcp_server.py --smoke

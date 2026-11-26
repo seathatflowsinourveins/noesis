@@ -106,19 +106,36 @@ class ExecutionVenueProfile:
 
 _IB = ExecutionVenueProfile("IBKR_PAPER_4002", "IBKR", "PAPER", "IBKR_SMART_24X5")
 _AB = ExecutionVenueProfile(
-    "ALPACA_PAPER_200", "ALPACA", "PAPER", "ALPACA_PAPER_STANDARD",
-    200, 10, 3, False, False, False, False,
+    "ALPACA_PAPER_200",
+    "ALPACA",
+    "PAPER",
+    "ALPACA_PAPER_STANDARD",
+    200,
+    10,
+    3,
+    False,
+    False,
+    False,
+    False,
 )
 _AP = replace(
-    _AB, venue_id="ALPACA_LIVE_PRO_LINE_1000", environment="LIVE",
-    routing_tier="ALPACA_PRO_LINE_HELD", max_rpm=1000, max_rps=25,
+    _AB,
+    venue_id="ALPACA_LIVE_PRO_LINE_1000",
+    environment="LIVE",
+    routing_tier="ALPACA_PRO_LINE_HELD",
+    max_rpm=1000,
+    max_rps=25,
     max_concurrent_trailed_positions=10,
 )
 _AE = replace(
-    _AP, venue_id="ALPACA_LIVE_ELITE_SMART_ROUTER",
-    routing_tier="ALPACA_ELITE_SMART_ROUTER_NOT_HELD", supports_dma=True,
-    supports_twap=True, supports_vwap=True,
-    order_flow_classification="not_held", reg_nms_covered=False,
+    _AP,
+    venue_id="ALPACA_LIVE_ELITE_SMART_ROUTER",
+    routing_tier="ALPACA_ELITE_SMART_ROUTER_NOT_HELD",
+    supports_dma=True,
+    supports_twap=True,
+    supports_vwap=True,
+    order_flow_classification="not_held",
+    reg_nms_covered=False,
 )
 _IL = replace(_IB, venue_id="IBKR_LIVE_3000", environment="LIVE")
 EXECUTION_VENUE_PROFILES: dict[str, ExecutionVenueProfile] = {
@@ -182,12 +199,20 @@ def inspect_venue_capability(venue_id: str, **o: Any) -> dict[str, Any]:
     if not exec_now:
         rsn.append("LIVE execution hard-refused (live_execution_enabled=False)")
     return {
-        "venue_id": p.venue_id, "broker": p.broker, "environment": p.environment,
-        "routing_tier": p.routing_tier, "max_rpm": p.max_rpm, "max_rps": p.max_rps,
+        "venue_id": p.venue_id,
+        "broker": p.broker,
+        "environment": p.environment,
+        "routing_tier": p.routing_tier,
+        "max_rpm": p.max_rpm,
+        "max_rps": p.max_rps,
         "live_execution_enabled": p.live_execution_enabled,
         "supports_extended_overnight_24x5": p.supports_extended_overnight_24x5,
-        "allowed": cap_ok and exec_now, "capability_ok": cap_ok, "executable_now": exec_now,
-        "reasons": rsn, "exit_reserve_rpm": res_rpm, "active_entry_rpm": p.max_rpm - res_rpm,
+        "allowed": cap_ok and exec_now,
+        "capability_ok": cap_ok,
+        "executable_now": exec_now,
+        "reasons": rsn,
+        "exit_reserve_rpm": res_rpm,
+        "active_entry_rpm": p.max_rpm - res_rpm,
     }
 
 
@@ -306,8 +331,10 @@ def select_pooled_trailing_schedule(
 ) -> tuple[str, dict[MarketSession24x5, SessionProtectionProfile]]:
     """Select causal NATR-bucketed trailing schedule strictly <= 2.00% initial stop."""
     v = max(_ZERO, Decimal(str(natr_pct)))
-    key = "tight_near_lossless" if v <= Decimal("0.015") else (
-        "baseline" if v <= Decimal("0.030") else "wide_natr_adaptive"
+    key = (
+        "tight_near_lossless"
+        if v <= Decimal("0.015")
+        else ("baseline" if v <= Decimal("0.030") else "wide_natr_adaptive")
     )
     return key, POOLED_TRAILING_SCHEDULES[key]
 
@@ -366,8 +393,11 @@ def compute_collared_limit_price(
 ) -> Decimal:
     """Compute a Rule-612 collared limit price for extended/overnight STOP_LIMIT exits."""
     trig, collar = Decimal(str(trigger_price)), Decimal(str(collar_pct))
-    if not trig.is_finite() or trig <= _ZERO or not collar.is_finite() or not (
-        _ZERO <= collar < Decimal("0.20")
+    if (
+        not trig.is_finite()
+        or trig <= _ZERO
+        or not collar.is_finite()
+        or not (_ZERO <= collar < Decimal("0.20"))
     ):
         raise ValueError(f"Invalid trigger_price={trig!r} or collar_pct={collar!r}")
     if side not in ("LONG", "SHORT"):
@@ -932,8 +962,13 @@ def run_nautilus_signal_backtest(
         fee_r, cid, c0 = cbps / _BPS_DIV, nm.ClientId("SIM"), float(cash)
         fm = MakerTakerFeeModel(fee_r, fee_r)
         engine.add_venue(
-            VENUE_XNAS, nm.OmsType.NETTING, nm.AccountType.MARGIN,
-            [nm.Money(c0, usd)], usd, fee_model=fm, use_reduce_only=False,
+            VENUE_XNAS,
+            nm.OmsType.NETTING,
+            nm.AccountType.MARGIN,
+            [nm.Money(c0, usd)],
+            usd,
+            fee_model=fm,
+            use_reduce_only=False,
         )
         for ins in (inst, *ex_i):
             engine.add_instrument(ins)
@@ -942,14 +977,27 @@ def run_nautilus_signal_backtest(
             engine.add_data(sorted(ex_b, key=lambda b: b.ts_event), client_id=cid)
             engine.add_actor(MarketRegimeActor(MarketRegimeActorConfig(bar_types=ex_bt)))
         opt_keys = (
-            "enable_24x5_trailing", "reentry_cooldown_secs", "max_reentries",
-            "auto_reverse", "auto_reentry", "fixed_qty", "semi_auto_confirmed",
-            "shortable", "enable_native_5m_bars",
+            "enable_24x5_trailing",
+            "reentry_cooldown_secs",
+            "max_reentries",
+            "auto_reverse",
+            "auto_reentry",
+            "fixed_qty",
+            "semi_auto_confirmed",
+            "shortable",
+            "enable_native_5m_bars",
         )
         skw = {k: o[k] for k in opt_keys if k in o}
         cfg = SignalExecutionConfig(
-            btype, signals_by_ts, cash, prec, cbps,
-            venue_profile=vp, market_bar_types=tuple(ex_bt), rate_budget_max_rpm=rp, **skw,
+            btype,
+            signals_by_ts,
+            cash,
+            prec,
+            cbps,
+            venue_profile=vp,
+            market_bar_types=tuple(ex_bt),
+            rate_budget_max_rpm=rp,
+            **skw,
         )
         st = SignalExecutionStrategy(cfg)
         engine.add_strategy(st)
@@ -966,10 +1014,20 @@ def run_nautilus_signal_backtest(
                     rets.append((float(pos.total_pnl(lp).as_double()) - xc) / notl)
                 end_eq += float(pos.unrealized_pnl(lp).as_double()) - xc
         return SignalBacktestResult(
-            len(bars), st.bars_processed, len(orders), fills, st.stops_attached,
-            ((end_eq - c0) / c0) * 100.0, tuple(rets), st.trailing_ratchets,
-            st.session_transitions, bool(st._halt_triggered), st.bars_5m_processed,
-            st.auto_reverses, st.auto_reentries, st.max_lock_tier,
+            len(bars),
+            st.bars_processed,
+            len(orders),
+            fills,
+            st.stops_attached,
+            ((end_eq - c0) / c0) * 100.0,
+            tuple(rets),
+            st.trailing_ratchets,
+            st.session_transitions,
+            bool(st._halt_triggered),
+            st.bars_5m_processed,
+            st.auto_reverses,
+            st.auto_reentries,
+            st.max_lock_tier,
         )
     finally:
         engine.dispose()

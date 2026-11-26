@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -81,9 +82,7 @@ def _valid_alert(**overrides: Any) -> dict[str, Any]:
     return base
 
 
-@pytest.mark.parametrize(
-    "pine_name", ["tier0_omni_sota_24x5.pine", "tier0_market_regime.pine"]
-)
+@pytest.mark.parametrize("pine_name", ["tier0_omni_sota_24x5.pine", "tier0_market_regime.pine"])
 def test_pine_v6_non_repainting_balance_and_colors(pine_name: str) -> None:
     src = (REPO_ROOT / "pine" / pine_name).read_text(encoding="utf-8")
     assert src.startswith("//@version=6")
@@ -96,8 +95,7 @@ def test_pine_v6_non_repainting_balance_and_colors(pine_name: str) -> None:
     assert found_colors and found_colors.issubset(VALID_PINE_COLORS)
 
     stripped_lines = [
-        re.sub(r'"(?:\\.|[^"\\])*"', '""', re.sub(r"//.*", "", line))
-        for line in src.splitlines()
+        re.sub(r'"(?:\\.|[^"\\])*"', '""', re.sub(r"//.*", "", line)) for line in src.splitlines()
     ]
     cleaned = "\n".join(stripped_lines)
     for op, cl in [("(", ")"), ("[", "]"), ("{", "}")]:
@@ -347,17 +345,19 @@ def test_tv_console_ps1_parses_cleanly_with_zero_cdp() -> None:
     assert "semi_auto_confirmed" in src
 
     pwsh_exe = shutil.which("pwsh")
-    assert pwsh_exe is not None
-    cmd = (
-        "$t=$null; $e=$null; "
-        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{ps1}', "
-        "[ref]$t, [ref]$e); "
-        "Write-Output $e.Count"
-    )
-    proc = subprocess.run(
-        [pwsh_exe, "-NoProfile", "-Command", cmd],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert proc.stdout.strip() == "0"
+    if os.name == "nt":
+        assert pwsh_exe is not None
+    if pwsh_exe is not None:
+        cmd = (
+            "$t=$null; $e=$null; "
+            f"[void][System.Management.Automation.Language.Parser]::ParseFile('{ps1}', "
+            "[ref]$t, [ref]$e); "
+            "Write-Output $e.Count"
+        )
+        proc = subprocess.run(
+            [pwsh_exe, "-NoProfile", "-Command", cmd],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert proc.stdout.strip() == "0"

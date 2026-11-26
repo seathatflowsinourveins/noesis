@@ -115,9 +115,12 @@ def test_risk_sha256_and_invariants() -> None:
         assert budget.try_consume(1000.0 + i * 0.01, is_exit=False) is True
     assert budget.try_consume(1002.0, is_exit=False) is False
     assert budget.try_consume(1002.0, is_exit=True) is True
-    assert size_position_by_risk(
-        equity=Decimal("100000"), entry_price=Decimal("100"), stop_price=Decimal("98")
-    ) == 200
+    assert (
+        size_position_by_risk(
+            equity=Decimal("100000"), entry_price=Decimal("100"), stop_price=Decimal("98")
+        )
+        == 200
+    )
 
 
 @given(
@@ -141,9 +144,7 @@ def test_venue_capability_matrix_and_fail_closed_live() -> None:
     assert ap["allowed"] is False and ap["max_rpm"] == 200 and len(ap["reasons"]) == 2
     assert validate_venue_order_capability("ALPACA_PAPER_200").max_rpm == 200
 
-    live_ids = (
-        "IBKR_LIVE_3000", "ALPACA_LIVE_PRO_LINE_1000", "ALPACA_LIVE_ELITE_SMART_ROUTER"
-    )
+    live_ids = ("IBKR_LIVE_3000", "ALPACA_LIVE_PRO_LINE_1000", "ALPACA_LIVE_ELITE_SMART_ROUTER")
     for live_id in live_ids:
         assert EXECUTION_VENUE_PROFILES[live_id].live_execution_enabled is False
         with pytest.raises(PermissionError, match="live_execution_enabled=False"):
@@ -189,27 +190,50 @@ def test_24x5_session_protection_and_4tier_progressive_trailing() -> None:
     prof = SESSION_PROTECTION_24X5["RTH"]
     entry, init_s = Decimal("100.00"), Decimal("98.00")
     s1, t1, _ = compute_progressive_trailing_stop(
-        entry_price=entry, side="LONG", favorable_extreme=Decimal("100.50"),
-        current_stop=init_s, profile=prof, initial_stop=init_s,
+        entry_price=entry,
+        side="LONG",
+        favorable_extreme=Decimal("100.50"),
+        current_stop=init_s,
+        profile=prof,
+        initial_stop=init_s,
     )
     s2, t2, _ = compute_progressive_trailing_stop(
-        entry_price=entry, side="LONG", favorable_extreme=Decimal("102.20"),
-        current_stop=s1, profile=prof, initial_stop=init_s,
+        entry_price=entry,
+        side="LONG",
+        favorable_extreme=Decimal("102.20"),
+        current_stop=s1,
+        profile=prof,
+        initial_stop=init_s,
     )
     s3, t3, _ = compute_progressive_trailing_stop(
-        entry_price=entry, side="LONG", favorable_extreme=Decimal("104.20"),
-        current_stop=s2, profile=prof, initial_stop=init_s,
+        entry_price=entry,
+        side="LONG",
+        favorable_extreme=Decimal("104.20"),
+        current_stop=s2,
+        profile=prof,
+        initial_stop=init_s,
     )
     s4, t4, _ = compute_progressive_trailing_stop(
-        entry_price=entry, side="LONG", favorable_extreme=Decimal("106.50"),
-        current_stop=s3, profile=prof, initial_stop=init_s,
+        entry_price=entry,
+        side="LONG",
+        favorable_extreme=Decimal("106.50"),
+        current_stop=s3,
+        profile=prof,
+        initial_stop=init_s,
     )
     assert (t1, t2, t3, t4) == (1, 2, 3, 4)
     assert init_s < s1 < s2 < s3 < s4
-    assert compute_dynamic_trailing_stop(
-        entry_price=entry, side="LONG", favorable_extreme=Decimal("106.50"),
-        current_stop=s3, profile=prof, initial_stop=init_s,
-    ) == s4
+    assert (
+        compute_dynamic_trailing_stop(
+            entry_price=entry,
+            side="LONG",
+            favorable_extreme=Decimal("106.50"),
+            current_stop=s3,
+            profile=prof,
+            initial_stop=init_s,
+        )
+        == s4
+    )
 
 
 def test_nautilus_backtest_4tier_reentry_and_autoreverse() -> None:
@@ -289,11 +313,20 @@ def test_six_gate_falsification_and_hftbacktest(tmp_path: Path) -> None:
     sigs = {ts_l[i]: (1 if i % 2 == 0 else 0) for i in range(40)}
     uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
     rep = evaluate_six_gate_falsification(
-        bars_df=bars, signals_by_ts=sigs, n_trials_total=5, pbo=0.2,
-        l1_quotes_df=q_df, l1_trades_df=t_df, mlflow_tracking_uri=uri,
+        bars_df=bars,
+        signals_by_ts=sigs,
+        n_trials_total=5,
+        pbo=0.2,
+        l1_quotes_df=q_df,
+        l1_trades_df=t_df,
+        mlflow_tracking_uri=uri,
     )
     assert set(rep["gates"]) == {
-        "1_hftbacktest_l1_markout", "2_cost_1x_2x_survival", "3_cpcv_oos_positive",
-        "4_dsr_pbo_credible", "5_hansen_spa_significant", "6_hac_t_stat_significant",
+        "1_hftbacktest_l1_markout",
+        "2_cost_1x_2x_survival",
+        "3_cpcv_oos_positive",
+        "4_dsr_pbo_credible",
+        "5_hansen_spa_significant",
+        "6_hac_t_stat_significant",
     }
     assert "mlflow_run_id" in rep

@@ -12,6 +12,9 @@
 | Script / Config | Role | Notes |
 |---|---|---|
 | [`scripts/setup_clean_ecosystem.ps1`](../scripts/setup_clean_ecosystem.ps1) | Idempotent setup & health check | Verifies `.venv`, `risk.py` SHA-256, 4-runtime MCP parity, `13/13` hosted portals, Paper Farm readiness, and `0` live broker ports |
+| [`scripts/check.ps1`](../scripts/check.ps1) | One-command Windows CI gate | Runs `risk.py` SHA-256, PS1 AST parse, `UV_LOCK_YFINANCE_MATCHES=0`, `LEGACY_MATCHES=0`, `ruff format --check`, `ruff check`, `ty check`, `deptry .`, `ast-grep scan`, `formal_risk_z3.py`, `nautilus_mcp_server.py --smoke`, `pytest -q`, and `gitleaks` |
+| [`scripts/check.sh`](../scripts/check.sh) | One-command POSIX/WSL2 CI gate | Runs `risk.py` SHA-256, `bash -n`, `shellcheck`, `UV_LOCK_YFINANCE_MATCHES=0`, `LEGACY_MATCHES=0`, `ruff format --check`, `ruff check`, `ty check`, `deptry .`, `ast-grep scan`, `formal_risk_z3.py`, `nautilus_mcp_server.py --smoke`, `pytest -q`, and `gitleaks` |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | Hardened GitHub Actions CI | Top-level `permissions: contents: read`, full 40-char commit SHA action pins, `persist-credentials: false`, `zizmor --offline` (`0` findings) |
 | [`scripts/launch_clean_lanes.ps1`](../scripts/launch_clean_lanes.ps1) | Non-overlapping lane launcher | Supports `-DryRun`; orchestrates Pre-Wall Sim Lab (`<= 2026-10-15`), 3-Lane Paper Farm (`ALPACA_PA1..PA3` + `IBKR_DU_4002`), TV Half-Auto Cockpit, and Verifier Gate |
 | [`scripts/run_live_paper_farm.ps1`](../scripts/run_live_paper_farm.ps1) | Paper Farm controller | Supports `preflight`, `scan`, `paper-farm` (requires `-ConfirmPaper`), and `performance` |
 | [`scripts/tv_console.ps1`](../scripts/tv_console.ps1) | TradingView Half-Auto console | Display-only Pine v6 staging (`qty=1`, `semi_auto_confirmed=false`, zero CDP `:9223`) |
@@ -79,7 +82,13 @@ All 5 configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gem
 | Directory | Role | Handling |
 |---|---|---|
 | `Z:\tier0-sota-clean` (`$env:TIER0_REPO_ROOT`) | Standalone Tier-0 SOTA clean repository (`L0..L10`, `46/46` skills, `0` legacy refs, `0` `yfinance`) | **ACTIVE CANONICAL REPO** |
+| WSL2 `Noesis-SOTA` (`~/tier0-sota-clean/.venv`) | Isolated Linux `.venv` (`Python 3.13.18`, `314` packages, `nautilus_trader 2.0.0rc9`, `polars 2.2.0`; `Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1`, `nautilus_mcp_server.py --smoke` `10/10`, `pytest` `17 passed`, `shellcheck` `0` errors) | **ACTIVE WSL2 PARITY VENV** (preserves `~/.config/tier0/.env.*` with `chmod 600`) |
 | `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT\manifests`) | Active live Paper Farm & TV manifests/DuckDB ledgers | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-data\prewall-lake` (`$env:TIER0_DATA_ROOT\prewall-lake`) | Pre-wall (`<= 2026-10-15`) immutable market data lake | **PRESERVED SHARED DATA ROOT** (never delete) |
 | `Z:\sota-cache` | Shared `uv` wheel & Python cache | **PRESERVED SHARED CACHE** (never delete) |
 | `Z:\archive` | Non-destructive archival store (`superseded_2026-11-25`, `pre_grand_reset_2026-11-25`) | **PRESERVED ARCHIVE ROOT** |
+
+### Release Verification Gates (`v1.0.0-sota-clean`)
+
+- **Formatting & Dependencies:** `ruff format --check` (`src/tier0_sota/risk.py` excluded, SHA-256 `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847` byte-identical) and `deptry .` (`0` dependency issues).
+- **CI Hardening:** `.github/workflows/ci.yml` (`zizmor --offline` = `0` findings), `scripts/check.ps1` (PS1 AST `0` errors), and `scripts/check.sh` (`shellcheck` `0` errors across all `.sh` scripts).

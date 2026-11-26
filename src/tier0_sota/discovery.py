@@ -46,8 +46,7 @@ DISCOVERY_WALL_UTC_NS: int = (
 )
 DEFAULT_DATA_ROOT: Path = Path(os.environ.get("TIER0_DATA_ROOT", "").strip() or "Z:/sota-data")
 DEFAULT_MARKET_DATA_ROOT: Path = Path(
-    os.environ.get("TIER0_MARKET_DATA_ROOT", "").strip()
-    or str(DEFAULT_DATA_ROOT / "prewall-lake")
+    os.environ.get("TIER0_MARKET_DATA_ROOT", "").strip() or str(DEFAULT_DATA_ROOT / "prewall-lake")
 )
 BAR_DURATION_NS: int = 60_000_000_000
 WARMUP_BARS: int = 40

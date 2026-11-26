@@ -70,20 +70,31 @@ def evaluate_hftbacktest_queue_markout(
     ev = np.ascontiguousarray(ev[np.argsort(ets, kind="mergesort")])
     t0, t_end = int(ev[0]["local_ts"]), int(ev[-1]["local_ts"])
     out: dict[str, Any] = {
-        "symbol": symbol.upper(), "side": side, "qty": float(qty), "events_replayed": len(ev),
+        "symbol": symbol.upper(),
+        "side": side,
+        "qty": float(qty),
+        "events_replayed": len(ev),
         "queue_model": "RiskAdverseQueueModel",
-        "maker_fee_rate": maker_fee_rate, "taker_fee_rate": taker_fee_rate,
+        "maker_fee_rate": maker_fee_rate,
+        "taker_fee_rate": taker_fee_rate,
     }
     if entry_ts_ns is not None and not (t0 <= entry_ts_ns < t_end):
         return out | {
-            "passive_filled": False, "passive_order_submitted": False,
-            "fill_price": None, "markout_bps": 0.0,
+            "passive_filled": False,
+            "passive_order_submitted": False,
+            "fill_price": None,
+            "markout_bps": 0.0,
         }
     tk = 0.0001 if float(np.min(bp)) < 1.0 else 0.01
     asset = (
-        hft.BacktestAsset().linear_asset(1.0).tick_size(tk).lot_size(1.0)
-        .constant_order_latency(100_000, 100_000).risk_adverse_queue_model()
-        .no_partial_fill_exchange().trading_value_fee_model(maker_fee_rate, taker_fee_rate)
+        hft.BacktestAsset()
+        .linear_asset(1.0)
+        .tick_size(tk)
+        .lot_size(1.0)
+        .constant_order_latency(100_000, 100_000)
+        .risk_adverse_queue_model()
+        .no_partial_fill_exchange()
+        .trading_value_fee_model(maker_fee_rate, taker_fee_rate)
         .data(ev)
     )
     hbt = hft.HashMapMarketDepthBacktest([asset])
@@ -93,7 +104,8 @@ def evaluate_hftbacktest_queue_markout(
         d0, sfn = hbt.depth(0), hbt.submit_buy_order if side == "BUY" else hbt.submit_sell_order
         px0 = float(d0.best_bid if side == "BUY" else d0.best_ask)
         sub_ok = bool(
-            math.isfinite(px0) and px0 > 0.0
+            math.isfinite(px0)
+            and px0 > 0.0
             and int(sfn(0, 1, px0, float(qty), hft.GTX, hft.LIMIT, True)) == 0
         )
         rem = max(1, t_end - int(hbt.current_timestamp))
@@ -107,8 +119,10 @@ def evaluate_hftbacktest_queue_markout(
             diff = (emid - fpx) if side == "BUY" else (fpx - emid)
             mbps = round((diff / fpx - maker_fee_rate) * 1e4, 2)
         return out | {
-            "passive_order_submitted": sub_ok, "passive_filled": filled,
-            "fill_price": fpx, "markout_bps": mbps,
+            "passive_order_submitted": sub_ok,
+            "passive_filled": filled,
+            "fill_price": fpx,
+            "markout_bps": mbps,
         }
     finally:
         hbt.close()
@@ -116,9 +130,11 @@ def evaluate_hftbacktest_queue_markout(
 
 def _compute_cpcv_pbo(trial_returns: Sequence[np.ndarray]) -> float | None:
     elig = [
-        a for r in trial_returns
+        a
+        for r in trial_returns
         if (a := np.asarray(r, float)).size >= MIN_CPCV_SAMPLES
-        and bool(np.all(np.isfinite(a))) and float(np.std(a)) > 1e-12
+        and bool(np.all(np.isfinite(a)))
+        and float(np.std(a)) > 1e-12
     ]
     if len(elig) < 2:
         return None
@@ -145,10 +161,18 @@ def falsify_trade_returns(
     worst_pct = round(float(np.min(tr_r)) * 100.0, 4) if n_s > 0 else 0.0
     if n_s < MIN_CPCV_SAMPLES:
         return {
-            "n_trades": n_s, "worst_trade_pct": worst_pct, "cpcv_splits": 0,
-            "cpcv_oos_mean_bps": 0.0, "dsr": 0.0, "min_trl": None, "pbo": pbo,
-            "hac_t": 0.0, "spa_p": 1.0, "spa_p_upper": 1.0,
-            "promoted": False, "verdict": "DISCARD_INSUFFICIENT_TRADES",
+            "n_trades": n_s,
+            "worst_trade_pct": worst_pct,
+            "cpcv_splits": 0,
+            "cpcv_oos_mean_bps": 0.0,
+            "dsr": 0.0,
+            "min_trl": None,
+            "pbo": pbo,
+            "hac_t": 0.0,
+            "spa_p": 1.0,
+            "spa_p_upper": 1.0,
+            "promoted": False,
+            "verdict": "DISCARD_INSUFFICIENT_TRADES",
         }
     splits = list(_CPCV.split(tr_r.reshape(-1, 1)))
     te_idx = [np.concatenate(te) if isinstance(te, (list, tuple)) else te for _, te in splits]
@@ -158,8 +182,13 @@ def falsify_trade_returns(
     dsr_val, min_trl = 0.0, None
     if std_r > 1e-12:
         dsr_res = mstats.deflated_sharpe_ratio_from_statistics(
-            mean_r / std_r, n_s, n_t, vt,
-            skewness=float(skew(tr_r)), excess_kurtosis=float(kurtosis(tr_r)), frequency="daily",
+            mean_r / std_r,
+            n_s,
+            n_t,
+            vt,
+            skewness=float(skew(tr_r)),
+            excess_kurtosis=float(kurtosis(tr_r)),
+            frequency="daily",
         )
         dsr_val = float(dsr_res.probability)
         mt_res = mstats.compute_min_trl(returns=tr_r, target_sharpe=0.0, frequency="daily")
@@ -175,17 +204,30 @@ def falsify_trade_returns(
     hlz_t = float(NormalDist().inv_cdf(1.0 - 0.00135 / n_t))
     pbo_ok = bool(pbo is not None and math.isfinite(float(pbo)) and float(pbo) < 0.50)
     prom = bool(
-        mean_r > 0.0 and cpcv_oos_m > 0.0 and dsr_val >= 0.95
-        and min_trl is not None and n_s >= min_trl
-        and hac_t >= hlz_t and spa_p < 0.05 and spa_pu < 0.05 and pbo_ok
+        mean_r > 0.0
+        and cpcv_oos_m > 0.0
+        and dsr_val >= 0.95
+        and min_trl is not None
+        and n_s >= min_trl
+        and hac_t >= hlz_t
+        and spa_p < 0.05
+        and spa_pu < 0.05
+        and pbo_ok
     )
     return {
-        "n_trades": n_s, "worst_trade_pct": worst_pct, "mean_bps": round(mean_r * 1e4, 3),
-        "cpcv_splits": len(splits), "cpcv_oos_mean_bps": round(cpcv_oos_m * 1e4, 3),
-        "dsr": round(dsr_val, 6), "min_trl": round(min_trl, 2) if min_trl is not None else None,
+        "n_trades": n_s,
+        "worst_trade_pct": worst_pct,
+        "mean_bps": round(mean_r * 1e4, 3),
+        "cpcv_splits": len(splits),
+        "cpcv_oos_mean_bps": round(cpcv_oos_m * 1e4, 3),
+        "dsr": round(dsr_val, 6),
+        "min_trl": round(min_trl, 2) if min_trl is not None else None,
         "pbo": round(float(pbo), 4) if pbo is not None else None,
-        "hac_t": round(hac_t, 4), "spa_p": round(spa_p, 4), "spa_p_upper": round(spa_pu, 4),
-        "promoted": prom, "verdict": "PROMOTE" if prom else "DISCARD",
+        "hac_t": round(hac_t, 4),
+        "spa_p": round(spa_p, 4),
+        "spa_p_upper": round(spa_pu, 4),
+        "promoted": prom,
+        "verdict": "PROMOTE" if prom else "DISCARD",
     }
 
 
@@ -227,7 +269,9 @@ def evaluate_six_gate_falsification(
     bt1 = run_nautilus_signal_backtest(bars_df, signals_by_ts, cost_bps_per_side=cost_bps_1x)
     bt2 = run_nautilus_signal_backtest(bars_df, signals_by_ts, cost_bps_per_side=cost_bps_2x)
     kw: dict[str, Any] = {
-        "n_trials_total": n_trials_total, "pbo": pbo, "trial_returns": trial_returns
+        "n_trials_total": n_trials_total,
+        "pbo": pbo,
+        "trial_returns": trial_returns,
     }
     f1 = falsify_trade_returns(np.asarray(bt1.trade_returns, float), **kw)
     f2 = falsify_trade_returns(np.asarray(bt2.trade_returns, float), **kw)
@@ -237,27 +281,40 @@ def evaluate_six_gate_falsification(
         l1 = evaluate_hftbacktest_queue_markout(l1_quotes_df, l1_trades_df, symbol=sym)
     g1 = l1 is None or (l1["passive_order_submitted"] and l1["markout_bps"] >= -20.0)
     g2 = (
-        bt1.total_return_pct > 0.0 and bt2.total_return_pct > 0.0
-        and f1["promoted"] and f2["promoted"]
+        bt1.total_return_pct > 0.0
+        and bt2.total_return_pct > 0.0
+        and f1["promoted"]
+        and f2["promoted"]
     )
     g3 = f1["cpcv_splits"] > 0 and f1["cpcv_oos_mean_bps"] > 0.0 and f2["cpcv_oos_mean_bps"] > 0.0
     g4 = f1["dsr"] >= 0.95 and f2["dsr"] >= 0.95 and f1["pbo"] is not None and f1["pbo"] < 0.50
     g5 = f1["spa_p"] < 0.05 and f2["spa_p"] < 0.05
     g6 = f1["promoted"] and f2["promoted"]
     gates = {
-        "1_hftbacktest_l1_markout": bool(g1), "2_cost_1x_2x_survival": bool(g2),
-        "3_cpcv_oos_positive": bool(g3), "4_dsr_pbo_credible": bool(g4),
-        "5_hansen_spa_significant": bool(g5), "6_hac_t_stat_significant": bool(g6),
+        "1_hftbacktest_l1_markout": bool(g1),
+        "2_cost_1x_2x_survival": bool(g2),
+        "3_cpcv_oos_positive": bool(g3),
+        "4_dsr_pbo_credible": bool(g4),
+        "5_hansen_spa_significant": bool(g5),
+        "6_hac_t_stat_significant": bool(g6),
     }
     promoted = all(gates.values())
     rep: dict[str, Any] = {
-        "n_trials_total": n_trials_total, "gates": gates, "promoted": promoted,
-        "verdict": "PROMOTE" if promoted else "DISCARD", "bt_1x": bt1, "bt_2x": bt2,
-        "falsification_1x": f1, "falsification_2x": f2, "l1_markout": l1,
+        "n_trials_total": n_trials_total,
+        "gates": gates,
+        "promoted": promoted,
+        "verdict": "PROMOTE" if promoted else "DISCARD",
+        "bt_1x": bt1,
+        "bt_2x": bt2,
+        "falsification_1x": f1,
+        "falsification_2x": f2,
+        "l1_markout": l1,
     }
     if mlflow_tracking_uri:
         rep["mlflow_run_id"] = log_falsification_to_mlflow(
-            rep, tracking_uri=mlflow_tracking_uri,
-            experiment_name=experiment_name, run_name=run_name,
+            rep,
+            tracking_uri=mlflow_tracking_uri,
+            experiment_name=experiment_name,
+            run_name=run_name,
         )
     return rep

@@ -62,9 +62,7 @@ from tier0_sota.tv.bridge import (  # noqa: E402
 
 _NY_TZ = ZoneInfo("America/New_York")
 _DEFAULT_LAKE_ROOT = (
-    Path("Z:/sota-data/prewall-lake")
-    if os.name == "nt"
-    else Path("/mnt/z/sota-data/prewall-lake")
+    Path("Z:/sota-data/prewall-lake") if os.name == "nt" else Path("/mnt/z/sota-data/prewall-lake")
 )
 _DEFAULT_PERF_PATH = DEFAULT_MANIFEST_DIR / "paper_farm_live_performance_manifest.json"
 _FALLBACK_PERF_PATH = DEFAULT_MANIFEST_DIR / "live_performance_manifest.json"

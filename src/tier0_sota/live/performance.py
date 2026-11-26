@@ -100,8 +100,7 @@ class PaperPerformanceAggregator:
         fast_sells = int(
             status.get("fast_sells")
             or (
-                int(status.get("lossless_fast_sells") or 0)
-                + int(status.get("fast_scratches") or 0)
+                int(status.get("lossless_fast_sells") or 0) + int(status.get("fast_scratches") or 0)
             )
         )
         entries = int(status.get("entries") or 0)

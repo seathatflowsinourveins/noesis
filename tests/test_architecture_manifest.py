@@ -193,6 +193,9 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     ]
 
     required_files = {
+        ".github/workflows/ci.yml",
+        "scripts/check.ps1",
+        "scripts/check.sh",
         "zensical.toml",
         "docs/index.md",
         "docs/adr/CATALOG.md",
@@ -211,6 +214,10 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
         "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
     } | {f"docs/adr/ADR-{idx:04d}.md" for idx in range(1, 13)}
     assert required_files.issubset(repo_files)
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "src/tier0_sota/risk.py" in pyproject["tool"]["ruff"]["format"]["exclude"]
+    assert "tier0_sota" in pyproject["tool"]["deptry"]["known_first_party"]
 
     scan_targets = [
         REPO_ROOT / "pyproject.toml",

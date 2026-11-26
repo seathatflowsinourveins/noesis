@@ -24,19 +24,31 @@ IBKR_PAPER_ACCOUNT = "IBKR_DU_4002"
 
 ALPACA_LANE_PROFILES: dict[str, dict[str, Any]] = {
     "ALPACA_PA1": {
-        "lane_id": "L1_ORB_BURST", "risk_per_trade_pct": Decimal("0.0090"),
-        "max_notional_pct": Decimal("0.75"), "rev_vote_exit": 3, "stall_secs": 45.0,
-        "profit_lock_mid": 0.50, "profit_lock_high": 0.65,
+        "lane_id": "L1_ORB_BURST",
+        "risk_per_trade_pct": Decimal("0.0090"),
+        "max_notional_pct": Decimal("0.75"),
+        "rev_vote_exit": 3,
+        "stall_secs": 45.0,
+        "profit_lock_mid": 0.50,
+        "profit_lock_high": 0.65,
     },
     "ALPACA_PA2": {
-        "lane_id": "L2_STRUCTURAL_TREND", "risk_per_trade_pct": Decimal("0.0050"),
-        "max_notional_pct": Decimal("0.35"), "rev_vote_exit": 3, "stall_secs": 60.0,
-        "profit_lock_mid": 0.55, "profit_lock_high": 0.70,
+        "lane_id": "L2_STRUCTURAL_TREND",
+        "risk_per_trade_pct": Decimal("0.0050"),
+        "max_notional_pct": Decimal("0.35"),
+        "rev_vote_exit": 3,
+        "stall_secs": 60.0,
+        "profit_lock_mid": 0.55,
+        "profit_lock_high": 0.70,
     },
     "ALPACA_PA3": {
-        "lane_id": "L3_AVWAP_TIGHT_LOCK", "risk_per_trade_pct": Decimal("0.0040"),
-        "max_notional_pct": Decimal("0.25"), "rev_vote_exit": 2, "stall_secs": 30.0,
-        "profit_lock_mid": 0.60, "profit_lock_high": 0.75,
+        "lane_id": "L3_AVWAP_TIGHT_LOCK",
+        "risk_per_trade_pct": Decimal("0.0040"),
+        "max_notional_pct": Decimal("0.25"),
+        "rev_vote_exit": 2,
+        "stall_secs": 30.0,
+        "profit_lock_mid": 0.60,
+        "profit_lock_high": 0.75,
     },
 }
 
@@ -86,15 +98,20 @@ class CrossLaneSymbolLock:
 
 
 def select_short_or_inverse_fallback(
-    symbol: str, *, market_regime: int, borrow_meta: dict[str, Any] | None,
-    session: str, sector_hint: str = "SEMI",
+    symbol: str,
+    *,
+    market_regime: int,
+    borrow_meta: dict[str, Any] | None,
+    session: str,
+    sector_hint: str = "SEMI",
 ) -> tuple[str, rk.Side, str] | None:
     """Market-aligned always-short with verified ETB or fail-closed SOXS/SQQQ fallback."""
     if session == "CLOSED":
         return None
     meta = borrow_meta or {}
     is_etb = (
-        meta.get("shortable") is True and meta.get("easy_to_borrow") is True
+        meta.get("shortable") is True
+        and meta.get("easy_to_borrow") is True
         and meta.get("borrow_source") == "alpaca_paper_asset"
     )
     if market_regime <= 0:
@@ -122,8 +139,12 @@ class AlpacaPaperLane:
     breaker: rk.DailyDrawdownBreaker = field(init=False)
     counters: dict[str, int] = field(
         default_factory=lambda: {
-            "fills": 0, "auto_shorts": 0, "reverses": 0,
-            "reentries": 0, "fast_sells": 0, "orders_submitted": 0,
+            "fills": 0,
+            "auto_shorts": 0,
+            "reverses": 0,
+            "reentries": 0,
+            "fast_sells": 0,
+            "orders_submitted": 0,
         }
     )
 
@@ -163,9 +184,15 @@ class AlpacaPaperLane:
             )
 
     def submit_guarded_entry(
-        self, *, symbol: str, side: rk.Side, ref_price: Decimal,
-        natr_pct: Decimal = Decimal("0.015"), session: str = "RTH",
-        origin: str = "AUTO_ENTRY", now_s: float | None = None,
+        self,
+        *,
+        symbol: str,
+        side: rk.Side,
+        ref_price: Decimal,
+        natr_pct: Decimal = Decimal("0.015"),
+        session: str = "RTH",
+        origin: str = "AUTO_ENTRY",
+        now_s: float | None = None,
     ) -> dict[str, Any] | None:
         """Submit a Rule-612 stop-protected Paper entry if lock, breaker, and RPM allow."""
         if not self.paper_only or self.live_execution_enabled:
@@ -188,7 +215,9 @@ class AlpacaPaperLane:
             ref_price, side, max_loss_pct=prof.initial_max_loss_pct
         )
         qty = rk.size_position_by_risk(
-            equity=self.start_equity, entry_price=ref_price, stop_price=stop_d,
+            equity=self.start_equity,
+            entry_price=ref_price,
+            stop_price=stop_d,
             risk_per_trade_pct=self.profile["risk_per_trade_pct"],
             max_notional_pct=self.profile["max_notional_pct"],
         )
@@ -199,12 +228,16 @@ class AlpacaPaperLane:
         is_ext = session in ("PRE_MARKET", "AFTER_HOURS")
         lim_d = rk.quantize_rule_612(
             ref_price * (Decimal("1.003") if side == "LONG" else Decimal("0.997")),
-            side=side, is_stop=False,
+            side=side,
+            is_stop=False,
         )
         req_kw: dict[str, Any] = {
-            "symbol": sym, "qty": qty,
+            "symbol": sym,
+            "qty": qty,
             "side": OrderSide.BUY if side == "LONG" else OrderSide.SELL,
-            "limit_price": float(lim_d), "time_in_force": TimeInForce.DAY, "extended_hours": is_ext,
+            "limit_price": float(lim_d),
+            "time_in_force": TimeInForce.DAY,
+            "extended_hours": is_ext,
         }
         if not is_ext:
             req_kw["order_class"] = OrderClass.OTO
@@ -216,12 +249,23 @@ class AlpacaPaperLane:
         self.counters["auto_shorts"] += int(side == "SHORT")
         self.counters["reverses"] += int("REVERSE" in origin)
         self.counters["reentries"] += int("REENTRY" in origin)
-        self._record_order((
-            datetime.now(UTC).isoformat(), self.account, self.profile["lane_id"],
-            str(getattr(order, "id", "")), sym, side, float(qty),
-            "LIMIT_EXTENDED" if is_ext else "LIMIT", float(lim_d), float(stop_d),
-            session, str(getattr(order, "status", "SUBMITTED")), 0.0,
-        ))
+        self._record_order(
+            (
+                datetime.now(UTC).isoformat(),
+                self.account,
+                self.profile["lane_id"],
+                str(getattr(order, "id", "")),
+                sym,
+                side,
+                float(qty),
+                "LIMIT_EXTENDED" if is_ext else "LIMIT",
+                float(lim_d),
+                float(stop_d),
+                session,
+                str(getattr(order, "status", "SUBMITTED")),
+                0.0,
+            )
+        )
         return {
             "symbol": sym,
             "side": side,
@@ -235,11 +279,16 @@ class AlpacaPaperLane:
         payload = {
             "schema_version": "tier0.alpaca-paper-lane.v1",
             "generated_at_utc": datetime.now(UTC).isoformat(),
-            "account_alias": self.account, "lane_id": self.profile["lane_id"],
-            "endpoint": PAPER_ALPACA_ENDPOINT, "paper_only": True, "live_execution_enabled": False,
-            "session_24x5": session, "equity": eq_val,
+            "account_alias": self.account,
+            "lane_id": self.profile["lane_id"],
+            "endpoint": PAPER_ALPACA_ENDPOINT,
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "session_24x5": session,
+            "equity": eq_val,
             "daily_drawdown_pct": float(self.breaker.drawdown_pct),
-            "breaker_tripped": not self.breaker.allow_entry(), **self.counters,
+            "breaker_tripped": not self.breaker.allow_entry(),
+            **self.counters,
         }
         _atomic_write_json(self.status_path, payload)
         return payload
@@ -276,11 +325,19 @@ class IbkrPaperAdapter:
         payload = {
             "schema_version": "tier0.ibkr-paper-lane.v1",
             "generated_at_utc": datetime.now(UTC).isoformat(),
-            "account_alias": IBKR_PAPER_ACCOUNT, "lane_id": "IBKR_SMART_24X5",
+            "account_alias": IBKR_PAPER_ACCOUNT,
+            "lane_id": "IBKR_SMART_24X5",
             "endpoint": f"ibkr://127.0.0.1:{self.port}",
-            "paper_only": True, "live_execution_enabled": False,
-            "ready": bool(gateway_ready), "equity": equity, "daily_drawdown_pct": 0.0,
-            "fills": 0, "auto_shorts": 0, "reverses": 0, "reentries": 0, "fast_sells": 0,
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "ready": bool(gateway_ready),
+            "equity": equity,
+            "daily_drawdown_pct": 0.0,
+            "fills": 0,
+            "auto_shorts": 0,
+            "reverses": 0,
+            "reentries": 0,
+            "fast_sells": 0,
         }
         _atomic_write_json(self.status_path, payload)
         return payload

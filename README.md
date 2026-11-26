@@ -24,10 +24,17 @@ bash scripts/bootstrap_env.sh
 
 ## Verification & Ecosystem Gates
 
+One-command local CI gates ([`scripts/check.ps1`](scripts/check.ps1) on Windows, [`scripts/check.sh`](scripts/check.sh) on Linux/WSL2 `Noesis-SOTA`, mirrored in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+```
+
 ```bash
-ruff check src tests scripts evals
+ruff check .
 ruff format --check src tests scripts evals
-ty check src tests scripts evals
+ty check
+deptry .
 ast-grep scan
 pytest -v
 python evals/formal_risk_z3.py

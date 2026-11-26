@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -194,37 +195,46 @@ def test_grand_reset_scripts_ps1_ast_dryrun_and_wsl_safety() -> None:
     assert {p.name for p in ps1_files} == expected_ps1
 
     pwsh_exe = shutil.which("pwsh")
-    assert pwsh_exe is not None
-    ps_script = (
-        "$ErrorActionPreference='Stop'; "
-        "foreach($f in @("
-        + ",".join(f"'{p}'" for p in ps1_files)
-        + ")){"
-        "$tok=$null; $err=$null; "
-        "[void][System.Management.Automation.Language.Parser]::ParseFile($f,[ref]$tok,[ref]$err);"
-        "if($err.Count -gt 0){ throw \"Parse error in $f\" }}"
-    )
-    proc = subprocess.run(
-        [pwsh_exe, "-NoProfile", "-Command", ps_script],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
+    if os.name == "nt":
+        assert pwsh_exe is not None
+    if pwsh_exe is not None:
+        ps_script = (
+            "$ErrorActionPreference='Stop'; "
+            "foreach($f in @(" + ",".join(f"'{p}'" for p in ps1_files) + ")){"
+            "$tok=$null; $err=$null; "
+            "[void][System.Management.Automation.Language.Parser]::ParseFile($f,[ref]$tok,[ref]$err);"
+            'if($err.Count -gt 0){ throw "Parse error in $f" }}'
+        )
+        proc = subprocess.run(
+            [pwsh_exe, "-NoProfile", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr or proc.stdout
 
     for p in ps1_files:
         txt = p.read_text(encoding="utf-8")
         assert all(port in txt for port in LIVE_PORTS), f"{p.name} missing live-port guard"
         if p.name != "verify_grand_reset.ps1":
             assert "DryRun" in txt, f"{p.name} missing -DryRun switch"
-            dry = subprocess.run(
-                [pwsh_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(p), "-DryRun"],
-                cwd=str(REPO_ROOT),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            assert dry.returncode == 0, f"{p.name} -DryRun failed: {dry.stderr or dry.stdout}"
+            if os.name == "nt" and pwsh_exe is not None:
+                dry = subprocess.run(
+                    [
+                        pwsh_exe,
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(p),
+                        "-DryRun",
+                    ],
+                    cwd=str(REPO_ROOT),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                assert dry.returncode == 0, f"{p.name} -DryRun failed: {dry.stderr or dry.stdout}"
 
     wsl_sh = (gr_dir / "01_wsl_bootstrap.sh").read_text(encoding="utf-8")
     for forbidden in ("mkfs", "rm -rf /mnt/z", "wsl --shutdown"):

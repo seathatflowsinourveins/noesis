@@ -191,9 +191,7 @@ def build_half_auto_tickets(
             if e.get("easy_to_borrow") is not None
             else b_row.get("easy_to_borrow", False)
         )
-        rev_short_mode = (
-            "DIRECT_SHORT_ETB" if (shortable and etb) else "INVERSE_HEDGE_SOXS_SQQQ"
-        )
+        rev_short_mode = "DIRECT_SHORT_ETB" if (shortable and etb) else "INVERSE_HEDGE_SOXS_SQQQ"
         if sym in INVERSE_HEDGE_SYMBOLS and regime_int == -1:
             gate = "READY_HALF_AUTO_HEDGE"
         elif side == "SELL" and not (shortable and etb):

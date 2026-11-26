@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+export PYTHONDONTWRITEBYTECODE=1
+
+if [[ -x ".venv/bin/python" ]]; then
+  PY=".venv/bin/python"
+  BIN_DIR="$REPO_ROOT/.venv/bin"
+elif [[ -n "${UV_PROJECT_ENVIRONMENT:-}" && -x "$UV_PROJECT_ENVIRONMENT/bin/python" ]]; then
+  PY="$UV_PROJECT_ENVIRONMENT/bin/python"
+  BIN_DIR="$UV_PROJECT_ENVIRONMENT/bin"
+elif [[ -x "$HOME/tier0-sota-clean/.venv/bin/python" ]]; then
+  PY="$HOME/tier0-sota-clean/.venv/bin/python"
+  BIN_DIR="$HOME/tier0-sota-clean/.venv/bin"
+elif [[ -x ".venv/Scripts/python.exe" ]]; then
+  PY=".venv/Scripts/python.exe"
+  BIN_DIR="$REPO_ROOT/.venv/Scripts"
+else
+  echo "Expected .venv interpreter missing under $REPO_ROOT/.venv or $HOME/tier0-sota-clean/.venv" >&2
+  exit 1
+fi
+export PATH="$BIN_DIR:$HOME/.local/bin:$PATH"
+
+EXPECTED_RISK_SHA="ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
+ACTUAL_RISK_SHA="$(sha256sum "src/tier0_sota/risk.py" | awk '{print $1}')"
+if [[ "$ACTUAL_RISK_SHA" != "$EXPECTED_RISK_SHA" ]]; then
+  echo "risk.py SHA-256 mismatch: $ACTUAL_RISK_SHA != $EXPECTED_RISK_SHA" >&2
+  exit 1
+fi
+echo "[OK] risk.py SHA-256 = $ACTUAL_RISK_SHA"
+
+mapfile -t SH_FILES < <(find scripts -type f -name '*.sh' | sort)
+if [[ "${#SH_FILES[@]}" -gt 0 ]]; then
+  for sf in "${SH_FILES[@]}"; do
+    bash -n "$sf"
+  done
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck "${SH_FILES[@]}"
+    echo "[OK] shellcheck (${#SH_FILES[@]} scripts, 0 errors)"
+  else
+    echo "[OK] bash -n (${#SH_FILES[@]} scripts)"
+  fi
+fi
+
+UV_LOCK_YFINANCE_MATCHES="$(grep -ic 'yfinance' uv.lock || true)"
+if [[ "$UV_LOCK_YFINANCE_MATCHES" -ne 0 ]]; then
+  echo "UV_LOCK_YFINANCE_MATCHES=$UV_LOCK_YFINANCE_MATCHES (expected 0)" >&2
+  exit 1
+fi
+echo "[OK] UV_LOCK_YFINANCE_MATCHES=0"
+
+LEGACY_PATTERN="tier0""-quant|CLEAN"" LIVE|sota-live-tv""-harness|sota_compounding_1000rpm""_harness|RTX ""4090"
+if grep -rnE --exclude-dir=__pycache__ "$LEGACY_PATTERN" src docs evals scripts pyproject.toml ARCHITECTURE_MANIFEST.json SOTA_STARRED_AND_BEYOND_MANIFEST.json >/dev/null 2>&1; then
+  echo "Legacy references detected" >&2
+  exit 1
+fi
+echo "[OK] LEGACY_MATCHES=0"
+
+ruff format --check src tests scripts evals
+ruff check .
+ty check
+deptry .
+ast-grep scan
+
+"$PY" evals/formal_risk_z3.py
+"$PY" scripts/nautilus_mcp_server.py --smoke >/dev/null
+pytest -q
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks detect --no-git --source "$REPO_ROOT" --config "$REPO_ROOT/.gitleaks.toml" --no-banner
+fi
+
+echo "[CHECK-SH VERDICT: PASS]"
