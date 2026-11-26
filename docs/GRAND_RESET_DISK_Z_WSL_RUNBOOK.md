@@ -49,7 +49,7 @@ What this establishes:
 - Syncs fresh zero-hook AGY (`~/.gemini/settings.json`, `~/.gemini/config/mcp_config.json`) + Claude Code (`.claude/agents`, `.claude/commands`, `.claude/mcp-lanes/*.mcp.json`) + Codex + OpenCode wiring strictly the 4 vetted native `uv` MCPs (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`).
 - Syncs the `46` standalone locked skills strictly from `Z:\noesis\.claude\skills\` across AGY, Claude, and Codex, and verifies `orca.yaml`.
 
-### Step 03: Hosted Stack (`13/13` Portals), TradingView Pine v6 & Paper Farm Sync
+### Step 03: Hosted Stack (`15/15` Portals), TradingView Pine v6 & Paper Farm Sync
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\03_hosted_stack_tv_paper.ps1 -DryRun
@@ -57,7 +57,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File Z:\noesis\scripts\grand_reset\03_h
 ```
 
 What this establishes:
-- Starts/verifies `docker/compose.sota.yml` (`13/13` hosted portals HTTP `200` on `127.0.0.1`).
+- Starts/verifies `docker/compose.sota.yml` (`15/15` hosted portals HTTP `200` on `127.0.0.1`).
 - Refreshes TradingView Pine v6 Half-Auto tickets & watchlists via `scripts/tv_console.ps1` (`qty = 1`, `semi_auto_confirmed = false`, zero CDP `:9223`).
 - Runs Paper Farm preflight (`ALPACA_PA1..PA3` + `IBKR_DU_4002`) and refreshes `Z:\sota-data\manifests\paper_farm_live_performance_manifest.json`.
 
@@ -71,9 +71,9 @@ Requires `[VERDICT: PASS]` across all `12/12` gates:
 1. `0` live broker ports (`4001/7496/8798/8796`)
 2. `risk.py` SHA-256 (`ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`)
 3. `ARCHITECTURE_MANIFEST.json` (`L0..L10`, `11/11` layers)
-4. `12/12` MADR 4.0 ADRs + `zensical build --clean`
+4. Living MADR 4.0 ADRs (`ADR-0001..ADR-0021+`) + `zensical build --clean`
 5. `5/5` native `uv` MCP parity + `scripts/nautilus_mcp_server.py --smoke` (`10/10`)
-6. `13/13` hosted portals HTTP `200`
+6. `15/15` hosted portals HTTP `200`
 7. TradingView Pine v6 balance + `schema_v1.json`
 8. Paper Farm preflight + `paper_farm_live_performance_manifest.json`
 9. `hooks_zero = True` + `.claude/mcp-lanes/*.mcp.json` + `SOTA_STARRED_AND_BEYOND_MANIFEST.json` (`spdx_license_firewall`) + `UPSTREAM_SKILLS_LOCK.json` + `paper-gatekeeper.md` (`permissionMode: plan`)

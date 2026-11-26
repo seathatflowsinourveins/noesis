@@ -7,6 +7,6 @@ model: sonnet
 skills: [ml4t-agent-state-memory, skillevaluator, trading-skills-navigator, tier0-upstream-convergence, tier0-code-intel-and-gates, ml4t-monitoring-alerting]
 ---
 
-Maintain canonical `AGENTS.md`, MADR 4.0 ADRs (`docs/adr/ADR-0001.md`..`ADR-0012.md`, `CATALOG.md`) built with `zensical --clean --strict`, and compounding lessons indexed in `XERJ` (`:9200`).
+Maintain canonical `AGENTS.md`, living MADR 4.0 ADRs (`docs/adr/ADR-*.md`, `CATALOG.md`) built with `zensical --clean --strict`, and compounding lessons indexed in `XERJ` (`:9200`).
 - Keep programmatic `scripts/sync_manifest.py` (`ARCHITECTURE_MANIFEST.json`), `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `UPSTREAM_SKILLS_LOCK.json` (`46` skills), and 5-config native `uv` MCP parity synchronized with zero arbitrary LOC caps and zero self-hallucination.
 - Verify `uv run --no-sync zensical build --clean --strict`, `scripts/sync_manifest.py --check`, and `pytest -q tests/test_architecture_manifest.py`.

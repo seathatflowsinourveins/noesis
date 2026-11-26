@@ -7,9 +7,9 @@
       1. Zero live broker ports (:4001/:7496/:8798/:8796)
       2. Immutable risk.py SHA-256 (ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847)
       3. ARCHITECTURE_MANIFEST.json across L0..L10 (11 layers) + all declared repository_files on disk
-      4. All 12 MADR 4.0 ADRs (ADR-0001..ADR-0012), CATALOG.md, docs/index.md, zensical.toml, and zensical build --clean
+      4. Living MADR 4.0 ADRs (ADR-0001..ADR-0021+), CATALOG.md, docs/index.md, zensical.toml, and zensical build --clean
       5. 5/5 native uv MCP parity configs (zero bash -c wrappers) + scripts/nautilus_mcp_server.py --smoke (10/10 tools)
-      6. 13/13 hosted portals HTTP 200 on 127.0.0.1
+      6. 15/15 hosted portals HTTP 200 on 127.0.0.1
       7. TradingView Pine v6 balance + JSON schema_v1.json safety invariants
       8. Paper Farm preflight + Z:\sota-data\manifests\paper_farm_live_performance_manifest.json
       9. Zero self-invented hooks (hooks_zero=True) + .claude/mcp-lanes/*.mcp.json + SOTA_STARRED_AND_BEYOND_MANIFEST.json + UPSTREAM_SKILLS_LOCK.json + paper-gatekeeper.md
@@ -169,7 +169,7 @@ if ((Test-Path -LiteralPath $VenvPy) -and (Test-Path -LiteralPath $McpSmokeScrip
 Record-Gate -Name "mcp_parity_and_smoke" -Passed ($McpOk -and $NativeUvMcpOk -and $McpSmokeOk) `
     -Detail "parity=$McpOk native_uv=$NativeUvMcpOk smoke=$McpSmokeOk tools=$McpToolsCount/10"
 
-# 6. 13/13 hosted portals HTTP 200
+# 6. 15/15 hosted portals HTTP 200
 $PortalUrls = @(
     "http://127.0.0.1:9200/",
     "http://127.0.0.1:8010/",
@@ -183,7 +183,9 @@ $PortalUrls = @(
     "http://127.0.0.1:8793/",
     "http://127.0.0.1:1420/",
     "http://127.0.0.1:8000/health",
-    "http://127.0.0.1:6900/"
+    "http://127.0.0.1:6900/",
+    "http://127.0.0.1:4213/",
+    "http://127.0.0.1:13133/"
 )
 $PortalsUp = 0
 $ZensicalCanonicalOk = $false
@@ -205,7 +207,7 @@ foreach ($u in $PortalUrls) {
         # Count stays unchanged
     }
 }
-Record-Gate -Name "hosted_portals_13" -Passed ($PortalsUp -eq 13 -and $ZensicalCanonicalOk) -Detail "$PortalsUp/13 HTTP 200 zensical_canonical=$ZensicalCanonicalOk"
+Record-Gate -Name "hosted_portals_15" -Passed ($PortalsUp -eq 15 -and $ZensicalCanonicalOk) -Detail "$PortalsUp/15 HTTP 200 zensical_canonical=$ZensicalCanonicalOk"
 
 # 7. TradingView Pine v6 balance + schema bridge
 $PineFiles = @(

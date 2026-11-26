@@ -128,4 +128,4 @@ Every newly opened session (Antigravity, Claude Code, Codex, Gemini CLI, OpenCod
 - [Clean Ecosystem Manifest](CLEAN_ECOSYSTEM_MANIFEST.md)
 - [Architecture Layer Manifest (`L0..L10`)](ARCHITECTURE_LAYER_MANIFEST.md)
 - [TradingView Automation Playbook](TV_AUTOMATION_PLAYBOOK.md)
-- [MADR 4.0 ADR Catalog (`ADR-0001..ADR-0012`)](adr/CATALOG.md)
+- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0021+`)](adr/CATALOG.md)

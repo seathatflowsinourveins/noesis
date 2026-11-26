@@ -177,7 +177,7 @@ if (-not (Test-Path -LiteralPath $NautilusMcpScript)) {
     Write-CheckLine -Tag "WARN" -Message "scripts/nautilus_mcp_server.py missing (referenced by nautilus-engine MCP)" -Color "Yellow"
 }
 
-# 4. 13 hosted SOTA portals health check
+# 4. 15 hosted SOTA portals health check
 $Portals = @(
     @{ Name = "xerj";             Url = "http://127.0.0.1:9200/" },
     @{ Name = "zensical";         Url = "http://127.0.0.1:8010/" },
@@ -191,7 +191,9 @@ $Portals = @(
     @{ Name = "tearsheets";       Url = "http://127.0.0.1:8793/" },
     @{ Name = "finos-workspace";  Url = "http://127.0.0.1:1420/" },
     @{ Name = "finos-api";        Url = "http://127.0.0.1:8000/health" },
-    @{ Name = "openbb-backend";   Url = "http://127.0.0.1:6900/" }
+    @{ Name = "openbb-backend";   Url = "http://127.0.0.1:6900/" },
+    @{ Name = "duckdb-ui";        Url = "http://127.0.0.1:4213/" },
+    @{ Name = "otel-health";      Url = "http://127.0.0.1:13133/" }
 )
 
 $PortalResults = @()
