@@ -56,10 +56,18 @@ switch ($Mode) {
     if ($Observe -eq $ConfirmPaper -or $Account -ne "ALL") {
       throw "Select one of -Observe or -ConfirmPaper and all accounts."
     }
+    $PywExe = Join-Path $RepoRoot ".venv\Scripts\pythonw.exe"
+    $LoopPyw = Join-Path $RepoRoot "scripts\paper_farm_loop_hidden.pyw"
+    if (-not (Test-Path -LiteralPath $PywExe -PathType Leaf)) {
+      throw "Missing zero-window pythonw.exe at $PywExe"
+    }
+    if (-not (Test-Path -LiteralPath $LoopPyw -PathType Leaf)) {
+      throw "Missing zero-window loop launcher at $LoopPyw"
+    }
     $taskName = if ($Observe) { "Noesis Paper Farm Observation" } else { "Noesis Paper Farm Execution" }
-    $modeFlag = if ($Observe) { "-Observe" } else { "-ConfirmPaper" }
-    $arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -File `"$PSCommandPath`" -Mode paper-farm $modeFlag -ManifestDir `"$ManifestDir`" -TopK $TopK -PinSymbols $PinArg"
-    $action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'pwsh.exe') -Argument $arguments -WorkingDirectory $RepoRoot
+    $modeFlag = if ($Observe) { "--observe" } else { "--confirm-paper" }
+    $arguments = "`"$LoopPyw`" $modeFlag --manifest-dir `"$ManifestDir`" --top-k $TopK --pin-symbols $PinArg"
+    $action = New-ScheduledTaskAction -Execute $PywExe -Argument $arguments -WorkingDirectory $RepoRoot
     $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([timespan]::Zero)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import math
 import os
@@ -641,3 +642,513 @@ def load_causal_fred_vintages(
         .last()
         .select(["series_id", "observation_date", "vintage_date", "value"])
     )
+
+
+NON_SHORTABLE_INVERSE_ETFS: frozenset[str] = frozenset(
+    {
+        "SOXS",
+        "SPXS",
+        "UVXY",
+        "VXX",
+        "UVIX",
+        "SVIX",
+        "ZSL",
+        "TMF",
+        "TMV",
+        "NAIL",
+        "SQQQ",
+        "SDOW",
+        "SRTY",
+        "FAZ",
+        "DRV",
+        "YANG",
+        "BOIL",
+        "KOLD",
+        "LABD",
+        "WEBS",
+        "TZA",
+        "SPXU",
+        "SH",
+        "PSQ",
+        "DOG",
+        "SARK",
+        "BITI",
+        "CONI",
+        "NVD",
+        "TSLS",
+        "MSTZ",
+    }
+)
+
+PREWALL_AFML_FEATURE_COLS: tuple[str, ...] = (
+    "pm_gap",
+    "rel_pm_gap",
+    "spy_pm_gap",
+    "pm_fade_hi",
+    "pm_reb_lo",
+    "pm_rng",
+    "pm_drift",
+    "pm_dvol_ratio",
+    "mean_20d_range_pct",
+    "mean_5d_range_pct_prior",
+    "vdu_5d_20d_ratio",
+    "coil_5d_20d_range_ratio",
+    "prev_close_to_20d_high",
+    "prior_ret_5d",
+    "prior_ret_20d",
+    "prev_rvol_20d",
+    "prev_ret_1d",
+    "prev_range_pct",
+    "prev_close_loc",
+    "log_dvol",
+    "spy_prev_ret1",
+    "spy_ret5",
+    "spy_ret20",
+    "growth_vs_broad_5d",
+    "prev_vix",
+    "prev_vix_chg5",
+    "prev_hy_oas",
+)
+
+
+def _sim_rth_short_label(
+    o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, xi: int
+) -> float:
+    """Strictly causal 1-min RTH STOP_MARKET label for AFML meta-labeling training only."""
+    if xi <= 1 or len(o) <= 2:
+        return float("nan")
+    ep = float(o[1])
+    if ep <= 0.0 or not math.isfinite(ep):
+        return float("nan")
+    sp, fav, fee = ep * 1.02, ep, 0.0016
+    for i in range(1, min(xi + 1, len(o))):
+        if o[i] >= sp:
+            return (1.0 - float(o[i]) / ep) - fee
+        if h[i] >= sp:
+            return (1.0 - sp / ep) - fee
+        if lo[i] < fav:
+            fav = float(lo[i])
+        g = 1.0 - fav / ep
+        if g >= 0.010:
+            lock = 0.04 if g >= 0.06 else (0.02 if g >= 0.04 else (0.005 if g >= 0.02 else 0.0018))
+            sp = min(sp, min(ep * (1.0 - lock), fav * 1.010))
+    return (1.0 - float(c[min(xi, len(c) - 1)]) / ep) - fee
+
+
+def load_published_orb_l1_sample(
+    lake_root: Path = DEFAULT_MARKET_DATA_ROOT,
+    *,
+    preferred_symbols: Sequence[str] = ("TSLA", "PLTR", "AMD", "META", "NVDA"),
+    max_quotes: int = 1500,
+    max_trades: int = 800,
+) -> tuple[str, pl.DataFrame, pl.DataFrame] | None:
+    """Load real pre-wall L1 quotes/trades from published-orb strictly <= DISCOVERY_WALL."""
+    q_root = lake_root / "published-orb" / "quotes"
+    t_root = lake_root / "published-orb" / "trades"
+    if not (q_root.is_dir() and t_root.is_dir()):
+        return None
+    for sym in preferred_symbols:
+        qd, td = q_root / sym, t_root / sym
+        if not (qd.is_dir() and td.is_dir()):
+            continue
+        for qf in sorted(qd.glob("*.parquet"))[-5:]:
+            tf = td / qf.name
+            if not tf.is_file():
+                continue
+            qc = pl.read_parquet(qf).select(["t_ns", "bp", "bs", "ap", "as"]).head(max_quotes)
+            tc = pl.read_parquet(tf).select(["t_ns", "p", "s"]).head(max_trades)
+            if qc.height >= 100 and tc.height >= 30:
+                q_max = qc.select(pl.col("t_ns").max()).item()
+                t_max = tc.select(pl.col("t_ns").max()).item()
+                if isinstance(q_max, int) and isinstance(t_max, int):
+                    assert_pre_wall_ns(max(q_max, t_max))
+                return sym, qc, tc
+    return None
+
+
+def discover_prewall_multi_symbol_alpha(
+    lake_root: Path = DEFAULT_MARKET_DATA_ROOT,
+    *,
+    start_date: str = "2024-02-01",
+    min_dvol_usd: float = 50_000_000.0,
+    min_pm_gap: float = 0.035,
+    top_candidates_per_day: int = 6,
+    wf_warmup_days: int = 200,
+    wf_retrain_step: int = 45,
+    wf_purge_days: int = 2,
+    random_state: int = 42,
+) -> dict[str, Any]:
+    """Run zero-leakage multi-symbol pre-wall discovery for SHORT (AFML PM) & LONG (VIX stress).
+
+    All selection, features, macro vintages, and bars are strictly causal <= DISCOVERY_WALL_ISO.
+    """
+    assert_pre_wall_date(start_date)
+    df10_path = lake_root / "derived" / "df10_daily_20d_baselines.parquet"
+    bars_root = lake_root / "alpaca-sip" / "raw" / "bars-1min"
+    if not df10_path.is_file() or not bars_root.is_dir():
+        raise FileNotFoundError(f"Pre-wall lake artifacts missing under {lake_root}")
+
+    c = pl.col
+    df10 = (
+        pl.read_parquet(
+            df10_path,
+            columns=[
+                "symbol",
+                "trade_date",
+                "raw_close",
+                "prev_raw_close",
+                "split_close",
+                "split_high",
+                "split_low",
+                "mean_20d_dvol",
+                "mean_20d_range_pct",
+                "mean_5d_range_pct_prior",
+                "prior_ret_5d",
+                "prior_ret_20d",
+                "rvol_20d",
+                "vdu_5d_20d_ratio",
+                "coil_5d_20d_range_ratio",
+                "prev_close_to_20d_high",
+                "ret_1d",
+                "bar_range_pct",
+            ],
+        )
+        .filter((c("trade_date") <= DISCOVERY_WALL_ISO) & (c("trade_date") >= start_date))
+        .sort(["symbol", "trade_date"])
+        .with_columns(
+            (c("split_close") / c("raw_close")).alias("sf"),
+            c("split_close").rolling_mean(20).over("symbol").shift(1).alias("prev_sma20"),
+            c("split_close").shift(1).over("symbol").alias("prev_c"),
+            c("rvol_20d").shift(1).over("symbol").alias("prev_rvol_20d"),
+            c("ret_1d").shift(1).over("symbol").alias("prev_ret_1d"),
+            c("bar_range_pct").shift(1).over("symbol").alias("prev_range_pct"),
+            (
+                (c("split_close") - c("split_low"))
+                / (c("split_high") - c("split_low")).clip(lower_bound=1e-6)
+            )
+            .shift(1)
+            .over("symbol")
+            .alias("prev_close_loc"),
+        )
+        .with_columns(c("sf").shift(1).over("symbol").alias("prev_sf"))
+    )
+
+    alfred = load_causal_fred_vintages(
+        series_ids=["VIXCLS", "BAMLH0A0HYM2", "T10Y2Y"],
+        cutoff_date=DISCOVERY_WALL_ISO,
+        snapshot_path=lake_root / "public-tables" / "alfred_macro_vintages.parquet",
+    )
+    macro = (
+        alfred.pivot(index="observation_date", on="series_id", values="value")
+        .sort("observation_date")
+        .with_columns(pl.all().exclude("observation_date").forward_fill())
+        .with_columns(
+            c("VIXCLS").shift(1).alias("prev_vix"),
+            (c("VIXCLS").shift(1) - c("VIXCLS").shift(6)).alias("prev_vix_chg5"),
+            c("BAMLH0A0HYM2").shift(1).alias("prev_hy_oas"),
+            c("observation_date").dt.strftime("%Y-%m-%d").alias("trade_date"),
+        )
+        .select(["trade_date", "prev_vix", "prev_vix_chg5", "prev_hy_oas"])
+    )
+
+    spy_ref = (
+        df10.filter(c("symbol") == "SPY")
+        .select(
+            "trade_date",
+            c("prev_c").alias("spy_prev_c"),
+            c("prev_sma20").alias("spy_prev_sma20"),
+            c("prev_ret_1d").alias("spy_prev_ret1"),
+            c("prior_ret_5d").alias("spy_ret5"),
+            c("prior_ret_20d").alias("spy_ret20"),
+        )
+        .join(macro, on="trade_date", how="left")
+    )
+    qqq_ref = df10.filter(c("symbol") == "QQQ").select("trade_date", c("prior_ret_5d").alias("q5"))
+    rsp_ref = df10.filter(c("symbol") == "RSP").select("trade_date", c("prior_ret_5d").alias("r5"))
+
+    # Strictly causal LONG stress-open days: SPY prior close < prior SMA20 & prior VIX >= 20
+    long_stress_days = set(
+        spy_ref.filter((c("spy_prev_c") < c("spy_prev_sma20")) & (c("prev_vix") >= 20.0))[
+            "trade_date"
+        ].to_list()
+    )
+
+    elig = (
+        df10.filter(
+            (c("mean_20d_dvol") >= min_dvol_usd)
+            & (c("prev_raw_close") >= 5.0)
+            & (~c("symbol").is_in(list(NON_SHORTABLE_INVERSE_ETFS)))
+            & ((c("sf") - c("prev_sf")).abs() < 1e-4)
+        )
+        .join(
+            spy_ref.select(
+                "trade_date",
+                "spy_prev_ret1",
+                "spy_ret5",
+                "spy_ret20",
+                "prev_vix",
+                "prev_vix_chg5",
+                "prev_hy_oas",
+            ),
+            on="trade_date",
+            how="left",
+        )
+        .join(qqq_ref, on="trade_date", how="left")
+        .join(rsp_ref, on="trade_date", how="left")
+        .with_columns(
+            (c("q5") - c("r5")).alias("growth_vs_broad_5d"),
+            c("mean_20d_dvol").log().alias("log_dvol"),
+        )
+    )
+    elig_by_day = elig.partition_by("trade_date", as_dict=True)
+    all_days = sorted(str(k[0]) for k in elig_by_day)
+
+    short_recs: list[dict[str, Any]] = []
+    short_bars: dict[tuple[str, str], pl.DataFrame] = {}
+    long_bars: dict[tuple[str, str], pl.DataFrame] = {}
+
+    for d_iso in all_days:
+        ddir = bars_root / d_iso
+        if not ddir.is_dir():
+            continue
+        edf = elig_by_day[(d_iso,)]
+        want_syms = set(edf["symbol"].to_list()) | {"SPY"}
+        if d_iso in long_stress_days:
+            want_syms.update({"SPXL", "TQQQ"})
+        try:
+            bdf = (
+                pl.scan_parquet(str(ddir / "*.parquet"))
+                .filter(c("symbol").is_in(list(want_syms)))
+                .select(["symbol", "t_ns", "o", "h", "l", "c", "v"])
+                .collect()
+            )
+        except (OSError, pl.exceptions.PolarsError):
+            continue
+        if bdf.height == 0:
+            continue
+        bdf = bdf.with_columns(
+            pl.from_epoch("t_ns", time_unit="ns")
+            .dt.replace_time_zone("UTC")
+            .dt.convert_time_zone("America/New_York")
+            .alias("_dt_et")
+        ).with_columns(
+            (
+                c("_dt_et").dt.hour().cast(pl.Int32) * 60 + c("_dt_et").dt.minute().cast(pl.Int32)
+            ).alias("hm")
+        )
+
+        # Collect LONG SPXL/TQQQ pure-RTH (09:29..15:59) bars on stress days
+        if d_iso in long_stress_days:
+            l_part = bdf.filter(
+                c("symbol").is_in(["SPXL", "TQQQ"]) & (c("hm") >= 569) & (c("hm") <= 959)
+            ).partition_by("symbol", as_dict=True)
+            for lsym in ("SPXL", "TQQQ"):
+                lb = l_part.get((lsym,))
+                if lb is None:
+                    continue
+                lb = lb.sort("t_ns").unique("t_ns", keep="last")
+                if lb.height >= 40 and int(lb["hm"][0]) == 569:
+                    with contextlib.suppress(ValueError):
+                        long_bars[(d_iso, lsym)] = validate_causal_bars(lb.drop(["_dt_et", "hm"]))
+
+        # Strictly pre-market <= 09:29 ET selection for SHORT ETB parabolic gap-ups
+        pm_sub = bdf.filter((c("hm") >= 240) & (c("hm") <= 569)).sort(["symbol", "t_ns"])
+        if pm_sub.height == 0:
+            continue
+        pm_agg = (
+            pm_sub.group_by("symbol")
+            .agg(
+                c("c").last().alias("pm_last"),
+                c("o").first().alias("pm_first"),
+                c("h").max().alias("pm_hi"),
+                c("l").min().alias("pm_lo"),
+                c("hm").last().alias("pm_last_hm"),
+                (c("c") * c("v")).sum().alias("pm_dvol"),
+                pl.len().alias("pm_bars"),
+            )
+            .filter((c("pm_last_hm") == 569) & (c("pm_bars") >= 4) & (c("pm_dvol") >= 150_000.0))
+        )
+        spy_pm = pm_agg.filter(c("symbol") == "SPY")
+        spy_prev = edf.filter(c("symbol") == "SPY")
+        spy_pm_gap = (
+            float(spy_pm["pm_last"][0]) / float(spy_prev["prev_raw_close"][0]) - 1.0
+            if spy_pm.height > 0 and spy_prev.height > 0
+            else 0.0
+        )
+        joined = (
+            pm_agg.join(edf, on="symbol", how="inner")
+            .with_columns(
+                (c("pm_last") / c("prev_raw_close") - 1.0).alias("pm_gap"),
+                (c("pm_last") / c("pm_hi") - 1.0).alias("pm_fade_hi"),
+                (c("pm_last") / c("pm_lo") - 1.0).alias("pm_reb_lo"),
+                (c("pm_hi") / c("pm_lo") - 1.0).alias("pm_rng"),
+                (c("pm_last") / c("pm_first") - 1.0).alias("pm_drift"),
+                (c("pm_dvol") / c("mean_20d_dvol")).alias("pm_dvol_ratio"),
+            )
+            .filter(c("pm_gap") >= min_pm_gap)
+            .sort("pm_gap", descending=True)
+            .head(top_candidates_per_day)
+        )
+        if joined.height == 0:
+            continue
+        sub_bars = bdf.filter(c("symbol").is_in(joined["symbol"].to_list())).partition_by(
+            "symbol", as_dict=True
+        )
+        for row in joined.to_dicts():
+            sym = str(row["symbol"])
+            sb = sub_bars.get((sym,))
+            if sb is None or sb.height < 40:
+                continue
+            sb = (
+                sb.sort("t_ns")
+                .unique("t_ns", keep="last")
+                .filter((c("hm") >= 569) & (c("hm") <= 959))
+            )
+            hm = sb["hm"].to_numpy()
+            if len(hm) < 40 or int(hm[0]) != 569:
+                continue
+            xi = int(np.searchsorted(hm, 955, side="left"))
+            if xi >= len(hm):
+                xi = len(hm) - 1
+            o_a, h_a, l_a, c_a = (sb[k].to_numpy().astype(float) for k in ("o", "h", "l", "c"))
+            y_lbl = _sim_rth_short_label(o_a, h_a, l_a, c_a, xi)
+            if not math.isfinite(y_lbl):
+                continue
+            try:
+                vdf = validate_causal_bars(sb.drop(["_dt_et", "hm"]))
+            except ValueError:
+                continue
+            short_bars[(d_iso, sym)] = vdf
+            short_recs.append(
+                {
+                    "trade_date": d_iso,
+                    "symbol": sym,
+                    "pm_gap": float(row["pm_gap"]),
+                    "rel_pm_gap": float(row["pm_gap"]) - spy_pm_gap,
+                    "spy_pm_gap": spy_pm_gap,
+                    "pm_fade_hi": float(row["pm_fade_hi"]),
+                    "pm_reb_lo": float(row["pm_reb_lo"]),
+                    "pm_rng": float(row["pm_rng"]),
+                    "pm_drift": float(row["pm_drift"]),
+                    "pm_dvol_ratio": float(row["pm_dvol_ratio"]),
+                    "mean_20d_range_pct": float(row["mean_20d_range_pct"] or 0.03),
+                    "mean_5d_range_pct_prior": float(row["mean_5d_range_pct_prior"] or 0.03),
+                    "vdu_5d_20d_ratio": float(row["vdu_5d_20d_ratio"] or 1.0),
+                    "coil_5d_20d_range_ratio": float(row["coil_5d_20d_range_ratio"] or 1.0),
+                    "prev_close_to_20d_high": float(row["prev_close_to_20d_high"] or 0.0),
+                    "prior_ret_5d": float(row["prior_ret_5d"] or 0.0),
+                    "prior_ret_20d": float(row["prior_ret_20d"] or 0.0),
+                    "prev_rvol_20d": float(row["prev_rvol_20d"] or 1.0),
+                    "prev_ret_1d": float(row["prev_ret_1d"] or 0.0),
+                    "prev_range_pct": float(row["prev_range_pct"] or 0.03),
+                    "prev_close_loc": float(row["prev_close_loc"] or 0.5),
+                    "log_dvol": float(row["log_dvol"] or 17.7),
+                    "spy_prev_ret1": float(row["spy_prev_ret1"] or 0.0),
+                    "spy_ret5": float(row["spy_ret5"] or 0.0),
+                    "spy_ret20": float(row["spy_ret20"] or 0.0),
+                    "growth_vs_broad_5d": float(row["growth_vs_broad_5d"] or 0.0),
+                    "prev_vix": float(row["prev_vix"] or 16.0),
+                    "prev_vix_chg5": float(row["prev_vix_chg5"] or 0.0),
+                    "prev_hy_oas": float(row["prev_hy_oas"] or 3.2),
+                    "y_label": float(y_lbl),
+                }
+            )
+
+    if not short_recs:
+        raise ValueError(f"No pre-wall SHORT candidates extracted under {lake_root}")
+
+    pdf = pl.DataFrame(short_recs).sort(["trade_date", "symbol"])
+    fcols = list(PREWALL_AFML_FEATURE_COLS)
+    udates = sorted(pdf["trade_date"].unique().to_list())
+    x_all = np.nan_to_num(
+        pdf.select(fcols).to_numpy().astype(float), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    y_all = pdf["y_label"].to_numpy().astype(float)
+    d_arr = np.array(pdf["trade_date"].to_list())
+    preds = np.full(len(y_all), np.nan)
+    last_lgb: lgb.LGBMRegressor | None = None
+    last_x_oos: np.ndarray | None = None
+    cb_task = os.environ.get("TIER0_CATBOOST_TASK_TYPE", "CPU").strip() or "CPU"
+
+    for si in range(wf_warmup_days, len(udates), wf_retrain_step):
+        purge_idx = max(0, si - wf_purge_days)
+        tr_m = d_arr <= udates[purge_idx]
+        te_m = (d_arr >= udates[si]) & (
+            d_arr <= udates[min(len(udates) - 1, si + wf_retrain_step - 1)]
+        )
+        if int(np.sum(tr_m)) < 150 or int(np.sum(te_m)) == 0:
+            continue
+        m_lgb = lgb.LGBMRegressor(
+            n_estimators=45,
+            max_depth=3,
+            num_leaves=7,
+            learning_rate=0.04,
+            min_child_samples=30,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=random_state,
+            verbosity=-1,
+        )
+        m_lgb.fit(x_all[tr_m], y_all[tr_m])
+        m_cb = CatBoostRegressor(
+            iterations=65,
+            depth=3,
+            learning_rate=0.04,
+            l2_leaf_reg=6.0,
+            random_seed=random_state,
+            verbose=False,
+            allow_writing_files=False,
+            task_type=cb_task,
+        )
+        m_cb.fit(x_all[tr_m], y_all[tr_m])
+        preds[te_m] = 0.5 * (
+            np.asarray(m_lgb.predict(x_all[te_m]), dtype=float)
+            + np.asarray(m_cb.predict(x_all[te_m]), dtype=float)
+        )
+        last_lgb, last_x_oos = m_lgb, x_all[te_m]
+
+    oos_short = pdf.with_columns(pl.Series("pred", preds)).filter(c("pred").is_finite())
+    shap_top: list[dict[str, Any]] = []
+    if last_lgb is not None and last_x_oos is not None and len(last_x_oos) > 0:
+        sv = np.mean(
+            np.abs(np.asarray(shap.TreeExplainer(last_lgb).shap_values(last_x_oos), dtype=float)),
+            axis=0,
+        )
+        shap_top = [
+            {"feature": fcols[i], "mean_abs_shap": round(float(sv[i]), 6)}
+            for i in np.argsort(sv)[::-1][:8]
+        ]
+
+    # Sample ml4t-engineer feature validation on the latest OOS session
+    ml4t_verified = False
+    if short_bars:
+        sample_df = next(iter(short_bars.values()))
+        ren = (("o", "open"), ("h", "high"), ("l", "low"), ("c", "close"), ("v", "volume"))
+        ohlcv = sample_df.select(
+            pl.from_epoch("t_close_ns", time_unit="ns").alias("timestamp"),
+            *(c(k).alias(v) for k, v in ren),
+        )
+        feat_chk = compute_features(
+            ohlcv,
+            ["roc", "rsi", "natr"],
+            timestamp_col="timestamp",
+            assume_sorted=True,
+            calendar=None,
+        )
+        ml4t_verified = isinstance(feat_chk, pl.DataFrame) and feat_chk.height == sample_df.height
+
+    return {
+        "prewall_cutoff_iso": DISCOVERY_WALL_ISO,
+        "start_date": start_date,
+        "days_scanned": len(all_days),
+        "short_total_events": int(pdf.height),
+        "short_oos_events": int(oos_short.height),
+        "short_oos_days": int(oos_short["trade_date"].n_unique()) if oos_short.height else 0,
+        "short_oos_df": oos_short,
+        "short_bars": short_bars,
+        "long_stress_days": sorted(long_stress_days),
+        "long_bars": long_bars,
+        "shap_top_features": shap_top,
+        "ml4t_engineer_verified": ml4t_verified,
+        "l1_sample": load_published_orb_l1_sample(lake_root),
+    }

@@ -1306,3 +1306,18 @@ def test_read_duckdb_counts_falls_back_on_lock_error(tmp_path: Path, monkeypatch
     monkeypatch.setattr(duckdb, "connect", _connect)
     counts = _read_duckdb_counts(db_path)
     assert counts["tca_fills_count"] == 1
+
+
+def test_paper_farm_start_loop_uses_zero_window_pythonw() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    ps1_text = (repo_root / "scripts" / "run_live_paper_farm.ps1").read_text(encoding="utf-8")
+    pyw_path = repo_root / "scripts" / "paper_farm_loop_hidden.pyw"
+    assert pyw_path.is_file()
+    pyw_text = pyw_path.read_text(encoding="utf-8")
+
+    assert ".venv\\Scripts\\pythonw.exe" in ps1_text
+    assert "paper_farm_loop_hidden.pyw" in ps1_text
+    assert "-WindowStyle Hidden" not in ps1_text
+    assert "CREATE_NO_WINDOW = 0x08000000" in pyw_text
+    assert "shell=True" not in pyw_text
+    assert "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847" in pyw_text

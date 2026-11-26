@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 151,
+    "repository_files_count": 152,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -327,7 +327,7 @@
     },
     "fitness_bound_accepted_ratio": "21/21",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "27bd9a84f728a8a705c4d355ffc638d14659905122fc1b427c17ba505ec02943"
+    "corpus_sha256": "2be4ef20b9975786a6b459acdcb08de7dc89d45e7b2890a460559fda02be8ecc"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -878,6 +878,7 @@
     "scripts/launch_clean_lanes.ps1",
     "scripts/nautilus_mcp_server.py",
     "scripts/orca_account_failover.py",
+    "scripts/paper_farm_loop_hidden.pyw",
     "scripts/preflight_resume.ps1",
     "scripts/preflight_resume.sh",
     "scripts/run_compounding_reflection.py",
