@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,13 @@ import polars as pl
 from tier0_sota.live.paper_farm import ALPACA_LANE_PROFILES, IBKR_PAPER_ACCOUNT
 
 ALL_FARM_ACCOUNTS: tuple[str, ...] = (*ALPACA_LANE_PROFILES.keys(), IBKR_PAPER_ACCOUNT)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def _read_json_safe(path: Path) -> dict[str, Any]:
@@ -30,8 +39,12 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
     out = {"duckdb_orders": 0, "roundtrips": 0, "wins": 0, "realized_pnl_usd": 0.0}
     if not duck_path.is_file():
         return out
+    tmp: Path | None = None
     try:
-        with duckdb.connect(str(duck_path), read_only=True) as conn:
+        with tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False) as tf:
+            tmp = Path(tf.name)
+        shutil.copy2(duck_path, tmp)
+        with duckdb.connect(str(tmp), read_only=True) as conn:
             tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
             if "paper_wire_orders" in tables:
                 row = conn.execute("SELECT COUNT(*) FROM paper_wire_orders").fetchone()
@@ -46,8 +59,11 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
                     out["roundtrips"] = int(row[0])
                     out["wins"] = int(row[1])
                     out["realized_pnl_usd"] = round(float(row[2]), 2)
-    except duckdb.Error:
+    except (OSError, duckdb.Error):
         pass
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     return out
 
 
@@ -66,7 +82,7 @@ class PaperPerformanceAggregator:
             if account in ALPACA_LANE_PROFILES
             else "IBKR_SMART_24X5"
         )
-        lane_id = status.get("lane_id") or default_lane
+        lane_id = str(status.get("lane_id") or status.get("strategy_profile") or default_lane)
         fast_sells = int(
             status.get("fast_sells")
             or (
@@ -74,7 +90,8 @@ class PaperPerformanceAggregator:
                 + int(status.get("fast_scratches") or 0)
             )
         )
-        fills = int(status.get("fills") or status.get("entries") or duck["duckdb_orders"])
+        entries = int(status.get("entries") or 0)
+        fills = int(status.get("fills") or entries or duck["duckdb_orders"])
         rts = max(int(status.get("session_roundtrips") or 0), duck["roundtrips"])
         pnl_usd = float(status.get("session_realized_pnl_usd") or duck["realized_pnl_usd"])
         return {
@@ -84,10 +101,12 @@ class PaperPerformanceAggregator:
             "live_execution_enabled": False,
             "equity": round(float(status.get("equity") or 0.0), 2),
             "drawdown_pct": round(float(status.get("daily_drawdown_pct") or 0.0), 6),
+            "entries": entries,
             "fills": fills,
             "auto_shorts": int(status.get("auto_shorts") or 0),
             "reverses": int(status.get("reverses") or 0),
             "reentries": int(status.get("reentries") or 0),
+            "stop_replaces": int(status.get("stop_replaces") or 0),
             "fast_sells": fast_sells,
             "roundtrips": rts,
             "realized_pnl_usd": round(pnl_usd, 2),
@@ -100,6 +119,7 @@ class PaperPerformanceAggregator:
         *,
         accounts: tuple[str, ...] = ALL_FARM_ACCOUNTS,
         output_path: Path | None = None,
+        finos_output_path: Path | None = None,
     ) -> dict[str, Any]:
         lanes = {acct: self.collect_lane_metrics(acct) for acct in accounts}
         df = pl.DataFrame(list(lanes.values()))
@@ -107,39 +127,50 @@ class PaperPerformanceAggregator:
         combined = {
             "combined_equity_usd": round(float(df["equity"].sum()), 2),
             "max_drawdown_pct": round(max_dd, 6),
+            "entries": int(df["entries"].sum()),
             "fills": int(df["fills"].sum()),
             "auto_shorts": int(df["auto_shorts"].sum()),
             "reverses": int(df["reverses"].sum()),
             "reentries": int(df["reentries"].sum()),
+            "stop_replaces": int(df["stop_replaces"].sum()),
             "fast_sells": int(df["fast_sells"].sum()),
             "roundtrips": int(df["roundtrips"].sum()),
             "realized_pnl_usd": round(float(df["realized_pnl_usd"].sum()), 2),
         }
+        now_iso = datetime.now(UTC).isoformat()
+        finos_doc = build_finos_openbb_export(lanes, combined, generated_at_utc=now_iso)
         manifest = {
             "schema_version": "tier0.paper-farm-live-performance.v1",
-            "generated_at_utc": datetime.now(UTC).isoformat(),
+            "generated_at_utc": now_iso,
             "paper_only": True,
             "live_execution_enabled": False,
             "paper_live_deployed": False,
             "summary": combined,
             "per_lane": lanes,
-            "finos_openbb": build_finos_openbb_export(lanes, combined),
+            "finos_openbb": finos_doc,
         }
-        target = output_path or (self.manifest_dir / "paper_farm_live_performance_manifest.json")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(target)
+        perf_target = output_path or (
+            self.manifest_dir / "paper_farm_live_performance_manifest.json"
+        )
+        finos_target = finos_output_path or (
+            self.manifest_dir / "finos_paper_farm_performance.json"
+        )
+        _atomic_write_json(perf_target, manifest)
+        _atomic_write_json(finos_target, finos_doc)
         return manifest
 
 
 def build_finos_openbb_export(
-    per_lane: dict[str, dict[str, Any]], summary: dict[str, Any]
+    per_lane: dict[str, dict[str, Any]],
+    summary: dict[str, Any],
+    *,
+    generated_at_utc: str | None = None,
 ) -> dict[str, Any]:
     """Build declarative FINOS Workspace Plotly + OpenBB tabular JSON export."""
     accts = list(per_lane.keys())
     return {
         "schema_version": "tier0.finos-openbb-paper-farm.v1",
+        "generated_at_utc": generated_at_utc or datetime.now(UTC).isoformat(),
         "plugin": "@finos-workspace/plotly-charts@2.5.0",
         "paper_only": True,
         "live_execution_enabled": False,
@@ -168,7 +199,12 @@ def build_finos_openbb_export(
 
 
 def aggregate_paper_farm_performance(
-    manifest_dir: Path, *, output_path: Path | None = None
+    manifest_dir: Path,
+    *,
+    output_path: Path | None = None,
+    finos_output_path: Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate Paper Farm performance manifest and FINOS/OpenBB export."""
-    return PaperPerformanceAggregator(manifest_dir).aggregate(output_path=output_path)
+    return PaperPerformanceAggregator(manifest_dir).aggregate(
+        output_path=output_path, finos_output_path=finos_output_path
+    )

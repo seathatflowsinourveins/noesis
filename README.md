@@ -22,7 +22,7 @@ Linux / macOS / Git Bash:
 bash scripts/bootstrap_env.sh
 ```
 
-## Verification Gates
+## Verification & Ecosystem Gates
 
 ```bash
 ruff check src tests scripts
@@ -30,9 +30,18 @@ ruff format --check src tests scripts
 ty check src tests scripts
 ast-grep scan
 pytest -v
+python scripts/nautilus_mcp_server.py --smoke
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/setup_clean_ecosystem.ps1
 gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner
 ```
 
+## Architecture & Ecosystem Documentation
+
+- [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](docs/ARCHITECTURE_LAYER_MANIFEST.md) — Complete `L0`–`L9` architecture, Mermaid topology diagram, repository map, `13/13` hosted portals, and workstation multi-repo topology.
+- [`ARCHITECTURE_MANIFEST.json`](ARCHITECTURE_MANIFEST.json) — Machine-readable SSOT (`tier0.architecture-layer-manifest.v1`) verified by [`tests/test_architecture_manifest.py`](tests/test_architecture_manifest.py).
+- [`docs/CLEAN_ECOSYSTEM_MANIFEST.md`](docs/CLEAN_ECOSYSTEM_MANIFEST.md) — Paper Farm readiness, portal health, Orca terminal audit, and safe archive receipts.
+- [`docs/TV_AUTOMATION_PLAYBOOK.md`](docs/TV_AUTOMATION_PLAYBOOK.md) — TradingView Pine v6 indicators and Half-Auto ticket/bridge workflow.
+
 ## 4-Runtime MCP Parity
 
-Configured identically across `.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, and `opencode.json` for `codebase-memory`, `xerj`, `nautilus-engine`, and `edgartools`.
+Configured identically across `.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, and `opencode.json` for `codebase-memory`, `xerj`, `nautilus-engine` ([`scripts/nautilus_mcp_server.py`](scripts/nautilus_mcp_server.py)), and `edgartools`.

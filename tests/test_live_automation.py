@@ -183,6 +183,8 @@ def test_paper_farm_non_overlapping_lanes_and_fail_closed_gates(tmp_path: Path) 
 
 
 def test_performance_aggregator_and_finos_openbb_export(tmp_path: Path) -> None:
+    import json
+
     clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
     coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
     for lane in coord.lanes.values():
@@ -197,7 +199,9 @@ def test_performance_aggregator_and_finos_openbb_export(tmp_path: Path) -> None:
 
     manifest = aggregate_paper_farm_performance(tmp_path)
     out_file = tmp_path / "paper_farm_live_performance_manifest.json"
+    finos_file = tmp_path / "finos_paper_farm_performance.json"
     assert out_file.is_file()
+    assert finos_file.is_file()
     assert manifest["paper_only"] is True
     assert manifest["live_execution_enabled"] is False
     assert manifest["summary"]["combined_equity_usd"] == 557_500.0
@@ -207,6 +211,47 @@ def test_performance_aggregator_and_finos_openbb_export(tmp_path: Path) -> None:
     assert manifest["summary"]["reentries"] == 3
     assert manifest["summary"]["fast_sells"] == 9
     assert manifest["summary"]["realized_pnl_usd"] == 376.5
-    finos = manifest["finos_openbb"]
+    finos = json.loads(finos_file.read_text(encoding="utf-8"))
     assert finos["plugin"] == "@finos-workspace/plotly-charts@2.5.0"
+    assert finos["paper_only"] is True
+    assert finos["live_execution_enabled"] is False
     assert len(finos["openbb_rows"]) == 4
+
+
+def test_performance_aggregator_parses_v10_alpaca_status_fields(tmp_path: Path) -> None:
+    import json
+
+    for acct, eq, ent, sr, lfs, fs in (
+        ("ALPACA_PA1", 802_953.45, 5, 11, 2, 1),
+        ("ALPACA_PA2", 99_388.17, 3, 7, 1, 1),
+        ("ALPACA_PA3", 118_644.72, 2, 4, 0, 2),
+    ):
+        (tmp_path / f"{acct.lower()}_live_automation_status.json").write_text(
+            json.dumps(
+                {
+                    "account_alias": acct,
+                    "strategy_profile": f"PROF_{acct}",
+                    "paper_only": True,
+                    "live_execution_enabled": False,
+                    "equity": eq,
+                    "daily_drawdown_pct": 0.0012,
+                    "entries": ent,
+                    "auto_shorts": 1,
+                    "reverses": 1,
+                    "reentries": 1,
+                    "stop_replaces": sr,
+                    "lossless_fast_sells": lfs,
+                    "fast_scratches": fs,
+                }
+            ),
+            encoding="utf-8",
+        )
+    manifest = aggregate_paper_farm_performance(tmp_path)
+    assert manifest["summary"]["combined_equity_usd"] == pytest.approx(1_020_986.34)
+    assert manifest["summary"]["entries"] == 10
+    assert manifest["summary"]["stop_replaces"] == 22
+    assert manifest["summary"]["fast_sells"] == 7
+    assert manifest["summary"]["auto_shorts"] == 3
+    assert manifest["summary"]["reverses"] == 3
+    assert manifest["summary"]["reentries"] == 3
+    assert manifest["per_lane"]["ALPACA_PA1"]["lane_id"] == "PROF_ALPACA_PA1"

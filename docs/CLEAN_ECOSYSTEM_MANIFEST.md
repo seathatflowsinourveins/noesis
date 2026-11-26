@@ -21,7 +21,7 @@
 All 5 configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, `opencode.json`) wire the exact 4 vetted MCP servers with zero unvetted broker MCPs:
 - `codebase-memory` (`codebase-memory-mcp`)
 - `xerj` (`xerj mcp` -> `http://127.0.0.1:9200`)
-- `nautilus-engine` (`scripts/nautilus_mcp_server.py` — note: check presence before starting `nautilus-engine` stdio MCP)
+- `nautilus-engine` (`scripts/nautilus_mcp_server.py` — `FastMCP("tier0-nautilus-engine")`, `10/10` tools verified via `--smoke`, `0` warnings)
 - `edgartools` (`edgartools-mcp`)
 
 ---
@@ -60,11 +60,24 @@ All 5 configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gem
 ## 3. Safe Superseded Cleanup Receipt (`Z:\archive\superseded_2026-11-25`)
 
 Moved non-destructively (zero deletions):
-- `Z:\tmp_pine.diff` -> `Z:\archive\superseded_2026-11-25\tmp_pine.diff`
-- `Z:\tmp_rev.diff` -> `Z:\archive\superseded_2026-11-25\tmp_rev.diff`
+- `Z:\tmp_pine.diff` -> `Z:\archive\superseded_2026-11-25\tmp_pine.diff` (`21,776` bytes)
+- `Z:\tmp_rev.diff` -> `Z:\archive\superseded_2026-11-25\tmp_rev.diff` (`28,578` bytes)
 - `Z:\sota-data\research-runs\sota_compounding_1000rpm_harness\run_live_24x5_lane_terminal.ps1.bak-2026-11-23` -> `Z:\archive\superseded_2026-11-25\sota_compounding_1000rpm_harness\run_live_24x5_lane_terminal.ps1.bak-2026-11-23`
-- `Z:\sota-data\research-runs\sota_compounding_1000rpm_harness\run_live_24x5_lane_terminal.ps1.bak-2026-11-23-pre-pins` -> `Z:\archive\superseded_2026-11-25\sota_compounding_1000rpm_harness\run_live_24x5_lane_terminal.ps1.bak-2026-11-23-pre-pins`
+- `Z:\sota-data\research-runs\sota_compounding_1000rpm_harness\run_live_24x5_lane_terminal.ps1.bak-2026-11-23-pre-pins` -> `Z:\archive\superseded_2026-11-25\sota_compounding_1000rpm_harness\run_live_24x5_lane_terminal.ps1.bak-2026-11-25-pre-pins`
 - `Z:\sota-data\research-runs\sota_compounding_1000rpm_harness\start_ungated_paper_farm_lane.ps1.bak-2026-11-23` -> `Z:\archive\superseded_2026-11-25\sota_compounding_1000rpm_harness\start_ungated_paper_farm_lane.ps1.bak-2026-11-23`
+- `Z:\sota-live-tv-harness` diff preserved at `Z:\archive\superseded_2026-11-25\sota_live_tv_harness_dirty.diff` (`0` bytes; working tree clean at move time) and full repo moved to `Z:\archive\superseded_2026-11-25\sota-live-tv-harness`.
+- `Z:\CLEAN LIVE` archival blocker (preserved intact, zero force-kills): `Move-Item` failed with OS directory handle lock (`"The process cannot access the file because it is being used by another process"`) held by the `5` orphaned Orca PTY processes whose CWD is `Z:\CLEAN LIVE`.
+
+### Zero-Warning Setup Gate (`setup_clean_ecosystem.ps1 -Strict`)
+
+Verified post-finalization (`warnings_count=0`, `failures_count=0`):
+- `[OK] Live broker firewall clean: ports 4001/7496/8798/8796 = 0`
+- `[OK] .venv ready: py=3.13.14 nautilus=2.0.0rc9 polars=2.2.0`
+- `[OK] risk.py SHA-256 verified (ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847)`
+- `[OK] 4-runtime MCP parity verified (5/5 configs -> codebase-memory, xerj, nautilus-engine, edgartools)`
+- `[OK] Hosted portals healthy: 13/13 HTTP 200`
+- `[INFO] Paper Farm: preflight=True | ALPACA_PA1..PA3 fresh=3/3 | IBKR_DU_4002_port4002_open=False`
+- `[VERDICT: PASS] Clean ecosystem verified (13/13 portals, 5/5 MCP parity, Paper preflight=True, live_ports=0).`
 
 ---
 
@@ -97,8 +110,8 @@ Attempted `orca terminal close --terminal <handle> --tab --json`; Orca returned 
 | Directory | Contents / Git State | Migration Status | Safe Handling / Archive Instructions |
 |---|---|---|---|
 | `Z:\tier0-quant` | ~165,903 files; `git status` clean (`0` dirty lines) on `main` (`f15fe6f`) | **PRESERVED AS IMMUTABLE REFERENCE** (canonical `risk.py`, Docker SOTA compose stack, MADR 4.0 ADRs) | **DO NOT DELETE OR ARCHIVE.** Read-only upstream reference and host for the `13/13` Docker SOTA portals. |
-| `Z:\sota-live-tv-harness` | ~76,438 files (includes `.venv`, `site`); HEAD `4846bbf` with 2 dirty files (`src/sota_harness/engine.py`, `tests/e2e/test_tier5_adversarial.py`) | **MIGRATED** into `Z:\tier0-sota-clean\pine\`, `src\tier0_sota\tv\`, `scripts\tv_console.ps1`, and `docs\TV_AUTOMATION_PLAYBOOK.md` | Safe to archive after preserving dirty diff: `git -C Z:\sota-live-tv-harness diff > Z:\archive\superseded_2026-11-25\sota_live_tv_harness_dirty.diff; Move-Item Z:\sota-live-tv-harness Z:\archive\superseded_2026-11-25\sota-live-tv-harness` |
-| `Z:\CLEAN LIVE` | 4 files (`AGENTS.md`, `.claude\commands\lane-live.md`, `.ruff_cache\*`); not a git repo | **SUPERSEDED** staging folder replaced by `Z:\tier0-sota-clean` | Safe to archive once owner dismisses the 5 orphaned Orca tabs: `Move-Item "Z:\CLEAN LIVE" "Z:\archive\superseded_2026-11-25\CLEAN_LIVE"` |
+| `Z:\sota-live-tv-harness` | ~76,438 files (includes `.venv`, `site`); HEAD `4846bbf` | **ARCHIVED** (`Z:\archive\superseded_2026-11-25\sota-live-tv-harness`; diff `sota_live_tv_harness_dirty.diff` `0` bytes); migrated into `pine/`, `src/tier0_sota/tv/`, `scripts/tv_console.ps1`, `docs/TV_AUTOMATION_PLAYBOOK.md` | Archive complete (`2026-11-25`). Do not restore into root `Z:\`. |
+| `Z:\CLEAN LIVE` | 4 files (`AGENTS.md`, `.claude\commands\lane-live.md`, `.ruff_cache\*`); not a git repo | **SUPERSEDED** staging folder replaced by `Z:\tier0-sota-clean`; **OS-LOCKED** during move (`5` orphaned Orca PTY CWDs) | Dismiss the `5` orphaned Orca tabs in UI to release the directory lock, then run: `Move-Item "Z:\CLEAN LIVE" "Z:\archive\superseded_2026-11-25\CLEAN_LIVE"` |
 | `Z:\sota-data\manifests` | Active live Paper Farm & TV manifests/DuckDB ledgers | **PRESERVED SHARED DATA ROOT** | **NEVER DELETE.** Shared state plane consumed by `PA1..PA3` and `tv_sota_pack`. |
 | `Z:\sota-data\prewall-lake` | Pre-wall (`<= 2026-10-15`) immutable market data lake | **PRESERVED SHARED DATA ROOT** | **NEVER DELETE.** Read-only pre-wall PIT lake. |
 | `Z:\sota-data\research-runs\sota_compounding_1000rpm_harness` | Active Paper Farm daemon scripts (`start_alpaca_pa1_seamless_lane.ps1` etc.) | **ACTIVE RUNTIME HARNESS** (`.bak-*` files archived) | Keep live daemon scripts running until cutover to `Z:\tier0-sota-clean\scripts\run_live_paper_farm.ps1` is owner-scheduled. |

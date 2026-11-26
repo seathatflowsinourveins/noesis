@@ -88,10 +88,25 @@ print('PAPER_FARM_OK', list(coord.lanes.keys()), perf['summary'])
   }
   "performance" {
     & $PyExe -c @"
+import json
 from pathlib import Path
 from tier0_sota.live.performance import aggregate_paper_farm_performance
-perf = aggregate_paper_farm_performance(Path(r'$ManifestDir'))
-print('PERF_OK', perf['summary'])
+mdir = Path(r'$ManifestDir')
+perf = aggregate_paper_farm_performance(mdir)
+lanes = {
+    k: {
+        'equity': v['equity'],
+        'entries': v['entries'],
+        'auto_shorts': v['auto_shorts'],
+        'reverses': v['reverses'],
+        'reentries': v['reentries'],
+        'stop_replaces': v['stop_replaces'],
+        'fast_sells': v['fast_sells'],
+        'status_present': v['status_present'],
+    }
+    for k, v in perf['per_lane'].items()
+}
+print('PERF_OK', json.dumps({'summary': perf['summary'], 'per_lane': lanes}))
 "@
     exit $LASTEXITCODE
   }
