@@ -289,7 +289,8 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     )
     assert "docs/adr/ADR-0001.md" in adr_files
     assert "docs/adr/ADR-0024.md" in adr_files
-    assert len(adr_files) >= 24
+    assert "docs/adr/ADR-0025.md" in adr_files
+    assert len(adr_files) >= 25
 
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "src/tier0_sota/risk.py" in pyproject["tool"]["ruff"]["format"]["exclude"]
@@ -468,6 +469,11 @@ def test_meta_convergence_and_zero_banned_caps_in_skills_and_readme() -> None:
     meta = llm.get("meta_convergence_practice", {})
     assert isinstance(meta, dict)
     assert "MADR 4.0 (living evolvable ADRs)" in meta.get("standards", [])
+    assert "ISO/IEC/IEEE 42010:2022 (architecture rationale & viewpoints)" in meta.get(
+        "standards", []
+    )
+    assert "Evolutionary Architecture Fitness Functions" in meta.get("standards", [])
+    assert "AFML/ML4T Causal Statistical Falsification" in meta.get("standards", [])
     assert {
         "nautilus_trader",
         "hftbacktest",
@@ -599,10 +605,13 @@ def test_adr_madr4_frontmatter_schema_and_sections() -> None:
     from scripts.sync_manifest import validate_adr_frontmatter_and_sections
 
     adrs = validate_adr_frontmatter_and_sections(REPO_ROOT)
-    assert len(adrs) >= 24
+    assert len(adrs) >= 25
     assert "ADR-0001" in adrs
     assert "ADR-0024" in adrs
-    assert adrs["ADR-0019"][0].status == "proposed"
+    assert "ADR-0025" in adrs
+    assert adrs["ADR-0019"][0].status == "accepted"
+    proposed = [aid for aid, (fm, _) in sorted(adrs.items()) if fm.status == "proposed"]
+    assert proposed == [], f"Expected 0 proposed ADRs after saturation, found: {proposed}"
 
 
 def test_adr_bidirectional_supersession_dag_and_related_links() -> None:
@@ -632,7 +641,7 @@ def test_adr_code_anchors_and_fitness_bindings_resolve() -> None:
 
     adrs = validate_adr_frontmatter_and_sections(REPO_ROOT)
     summary = validate_adr_anchors_and_fitness_bindings(REPO_ROOT, adrs)
-    assert summary["accepted_count"] >= 19
+    assert summary["accepted_count"] >= 21
     assert summary["fitness_bound_accepted"] == summary["accepted_count"]
 
 
@@ -665,6 +674,11 @@ def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
     assert rep["spdx_firewall_count"] == len(NON_OSI_REPOS)
     mapped_num, mapped_den = (int(x) for x in str(rep["src_files_mapped_ratio"]).split("/"))
     assert mapped_den >= 13 and mapped_num == mapped_den
+    pw_audit = rep["zero_paper_winners_audit"]
+    assert isinstance(pw_audit, dict)
+    assert pw_audit["ok"] is True
+    assert pw_audit["unwired_packages"] == []
+    assert int(pw_audit["checked_default_packages"]) >= 35
 
     manifest = _load_manifest()
     assert manifest.get("clean_sota_harness") == rep

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
 import duckdb
+import polars as pl
 import pytest
+from alpaca.trading.enums import OrderClass
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from tier0_sota.live import (
     ALPACA_LANE_PROFILES,
@@ -22,6 +27,16 @@ from tier0_sota.live import (
     aggregate_paper_farm_performance,
     select_short_or_inverse_fallback,
 )
+from tier0_sota.live.paper_farm import (
+    IBKR_PAPER_MAX_RPM,
+    borrow_accrual_days,
+    compute_short_borrow_accrual,
+    compute_tca_record,
+    join_fills_with_quotes_asof,
+    round_lot_up,
+)
+from tier0_sota.live.performance import record_paper_farm_telemetry
+from tier0_sota.risk import MAX_STOP_LOSS_PCT
 
 
 def _make_bar(open_px: float, close_px: float, vol: float) -> SimpleNamespace:
@@ -253,3 +268,453 @@ def test_performance_aggregator_parses_v10_alpaca_status_fields(tmp_path: Path) 
     assert manifest["summary"]["reverses"] == 3
     assert manifest["summary"]["reentries"] == 3
     assert manifest["per_lane"]["ALPACA_PA1"]["lane_id"] == "PROF_ALPACA_PA1"
+
+
+def test_tca_implementation_shortfall_decimal_and_borrow_accrual() -> None:
+    @given(
+        side=st.sampled_from(["BUY", "SELL"]),
+        decision_px=st.decimals(min_value="5.00", max_value="500.00", places=2),
+        arrival_delta=st.decimals(min_value="-1.00", max_value="1.00", places=2),
+        fill_delta=st.decimals(min_value="-1.00", max_value="1.00", places=2),
+        horizon_delta=st.decimals(min_value="-1.00", max_value="1.00", places=2),
+        order_qty=st.integers(min_value=10, max_value=500),
+        fill_ratio=st.sampled_from([Decimal("0.5"), Decimal("1.0")]),
+        comm_usd=st.decimals(min_value="0.00", max_value="5.00", places=2),
+        borrow_rate=st.decimals(min_value="0.00", max_value="0.25", places=2),
+    )
+    @settings(max_examples=40, deadline=None)
+    def _check_perold_identity(
+        side: str,
+        decision_px: Decimal,
+        arrival_delta: Decimal,
+        fill_delta: Decimal,
+        horizon_delta: Decimal,
+        order_qty: int,
+        fill_ratio: Decimal,
+        comm_usd: Decimal,
+        borrow_rate: Decimal,
+    ) -> None:
+        arrival_px = max(Decimal("1.00"), decision_px + arrival_delta)
+        fill_px = max(Decimal("1.00"), arrival_px + fill_delta)
+        horizon_px = max(Decimal("1.00"), decision_px + horizon_delta)
+        filled_qty = int(Decimal(order_qty) * fill_ratio)
+        unfilled_qty = order_qty - filled_qty
+
+        rec = compute_tca_record(
+            account="ALPACA_PA1",
+            lane_id="L1_ORB_BURST",
+            broker_order_id="prop-1",
+            symbol="NVDA",
+            side=side,
+            order_qty=order_qty,
+            filled_qty=filled_qty,
+            decision_price=decision_px,
+            arrival_price=arrival_px,
+            fill_price=fill_px,
+            horizon_price=horizon_px,
+            commission_usd=comm_usd,
+            borrow_tier="HTB" if (side == "SELL" and borrow_rate > 0) else "ETB",
+            annual_borrow_rate=borrow_rate if side == "SELL" else Decimal("0"),
+            prior_close=decision_px,
+            trade_date=date(2026, 10, 9),
+        )
+        s = Decimal("1") if side == "BUY" else Decimal("-1")
+        expected_usd = (
+            s * (fill_px - decision_px) * Decimal(filled_qty)
+            + rec.commission_usd
+            + rec.borrow_fee_usd
+            + s * (horizon_px - decision_px) * Decimal(unfilled_qty)
+        ).quantize(Decimal("0.000001"))
+        assert rec.total_is_usd == expected_usd
+        assert rec.total_net_cost_bps == (
+            rec.delay_bps
+            + rec.execution_bps
+            + rec.commission_bps
+            + rec.borrow_bps
+            + rec.opportunity_bps
+        )
+
+    _check_perold_identity()
+
+    # BUY/SELL sign convention: worse fill -> positive IS bps cost; better fill -> negative IS bps.
+    buy_cost = compute_tca_record(
+        account="ALPACA_PA1",
+        lane_id="L1_ORB_BURST",
+        broker_order_id="b-1",
+        symbol="SOXL",
+        side="BUY",
+        order_qty=100,
+        arrival_price=Decimal("100.00"),
+        fill_price=Decimal("100.10"),
+    )
+    assert buy_cost.implementation_shortfall_bps == Decimal("10.000000")
+
+    buy_improve = compute_tca_record(
+        account="ALPACA_PA1",
+        lane_id="L1_ORB_BURST",
+        broker_order_id="b-2",
+        symbol="SOXL",
+        side="BUY",
+        order_qty=100,
+        arrival_price=Decimal("100.00"),
+        fill_price=Decimal("99.95"),
+    )
+    assert buy_improve.implementation_shortfall_bps == Decimal("-5.000000")
+
+    sell_cost = compute_tca_record(
+        account="ALPACA_PA1",
+        lane_id="L1_ORB_BURST",
+        broker_order_id="s-1",
+        symbol="SOXL",
+        side="SELL",
+        order_qty=100,
+        arrival_price=Decimal("100.00"),
+        fill_price=Decimal("99.90"),
+    )
+    assert sell_cost.implementation_shortfall_bps == Decimal("10.000000")
+
+    sell_improve = compute_tca_record(
+        account="ALPACA_PA1",
+        lane_id="L1_ORB_BURST",
+        broker_order_id="s-2",
+        symbol="SOXL",
+        side="SELL",
+        order_qty=100,
+        arrival_price=Decimal("100.00"),
+        fill_price=Decimal("100.05"),
+    )
+    assert sell_improve.implementation_shortfall_bps == Decimal("-5.000000")
+
+    # Round-lot rounding and Friday 3-day borrow accrual vs Thursday 1-day accrual.
+    assert round_lot_up(0) == 0
+    assert round_lot_up(1) == 100
+    assert round_lot_up(100) == 100
+    assert round_lot_up(101) == 200
+    assert borrow_accrual_days(trade_date=date(2026, 10, 8)) == 1  # Thursday
+    assert borrow_accrual_days(trade_date=date(2026, 10, 9)) == 3  # Friday -> 3 calendar days
+
+    etb_usd, etb_bps, _ = compute_short_borrow_accrual(
+        qty=150,
+        prior_close=Decimal("40.00"),
+        annual_borrow_rate=Decimal("0"),
+        trade_date=date(2026, 10, 9),
+        borrow_tier="ETB",
+    )
+    assert etb_usd == Decimal("0") and etb_bps == Decimal("0")
+
+    fri_usd, fri_bps, fri_days = compute_short_borrow_accrual(
+        qty=150,
+        prior_close=Decimal("36.00"),
+        annual_borrow_rate=Decimal("0.18"),
+        trade_date=date(2026, 10, 9),
+        borrow_tier="HTB",
+    )
+    # round_lot_up(150)=200 -> 200 * 36 * 0.18 / 360 * 3 = 10.800000 USD
+    assert fri_days == 3
+    assert fri_usd == Decimal("10.800000")
+    assert fri_bps == Decimal("20.000000")
+
+    # Causal Polars backward ASOF join drops stale quotes & never matches future quotes.
+    t0 = 1_760_000_000_000_000_000
+    fills_df = pl.DataFrame(
+        {
+            "broker_order_id": ["fresh", "stale", "future_only"],
+            "symbol": ["NVDA", "NVDA", "SMCI"],
+            "ts_ns": [t0 + 2_000_000_000, t0 + 20_000_000_000, t0 + 1_000_000_000],
+        }
+    )
+    quotes_df = pl.DataFrame(
+        {
+            "symbol": ["NVDA", "SMCI"],
+            "ts_ns": [t0, t0 + 3_000_000_000],
+            "bid_px": [Decimal("100.00"), Decimal("40.00")],
+            "ask_px": [Decimal("100.04"), Decimal("40.04")],
+        }
+    )
+    matched = join_fills_with_quotes_asof(fills_df, quotes_df, max_staleness_ns=5_000_000_000)
+    assert matched["broker_order_id"].to_list() == ["fresh"]
+    assert matched["arrival_mid"].to_list() == [Decimal("100.02")]
+
+
+def test_extended_hours_stop_supervision_and_submit_vs_fill_separation(tmp_path: Path) -> None:
+    client = _FakeTradingClient()
+    lock = CrossLaneSymbolLock()
+    lane = AlpacaPaperLane("ALPACA_PA1", tmp_path, client, lock)
+
+    rth_res = lane.submit_guarded_entry(
+        symbol="NVDA", side="LONG", ref_price=Decimal("100.00"), session="RTH", now_s=1000.0
+    )
+    pre_res = lane.submit_guarded_entry(
+        symbol="SOXL", side="LONG", ref_price=Decimal("40.00"), session="PRE_MARKET", now_s=1001.0
+    )
+    aft_res = lane.submit_guarded_entry(
+        symbol="SMCI", side="SHORT", ref_price=Decimal("50.00"), session="AFTER_HOURS", now_s=1002.0
+    )
+    assert rth_res is not None and pre_res is not None and aft_res is not None
+
+    # Submit-vs-fill separation: 3 orders submitted, 0 confirmed fills until broker confirmation!
+    assert lane.counters["orders_submitted"] == 3
+    assert lane.counters["fills"] == 0
+    assert lane.counters["extended_hours_orders"] == 2
+    assert lane.counters["extended_hours_protected"] == 2
+
+    # RTH attaches native OTO stop; PRE_MARKET & AFTER_HOURS attach fail-closed supervision.
+    assert rth_res["protective_stop_mode"] == "NATIVE_OTO_STOP"
+    assert getattr(client.orders[0], "order_class", None) == OrderClass.OTO
+    assert getattr(client.orders[0], "extended_hours", None) is False
+
+    for idx, res, ref_px in (
+        (1, pre_res, Decimal("40.00")),
+        (2, aft_res, Decimal("50.00")),
+    ):
+        assert res["protective_stop_mode"] == "COLLARED_STOP_LIMIT_SUPERVISED"
+        assert getattr(client.orders[idx], "extended_hours", None) is True
+        assert getattr(client.orders[idx], "order_class", None) is None
+        sup = lane.supervised_stops[res["broker_order_id"]]
+        assert sup.protective_stop_mode == "COLLARED_STOP_LIMIT_SUPERVISED"
+        assert sup.collar_bps == Decimal("35")
+        loss_pct = abs(ref_px - sup.stop_price) / ref_px
+        assert Decimal("0") < loss_pct <= MAX_STOP_LOSS_PCT
+        if sup.side == "LONG":
+            assert sup.stop_limit_price < sup.stop_price < ref_px
+        else:
+            assert sup.stop_limit_price > sup.stop_price > ref_px
+
+    # Confirming one broker fill increments confirmed fills strictly to 1 (not 3).
+    tca = lane.record_broker_fill(
+        broker_order_id=pre_res["broker_order_id"],
+        symbol="SOXL",
+        side="LONG",
+        order_qty=pre_res["qty"],
+        arrival_price=Decimal("40.00"),
+        fill_price=Decimal("40.04"),
+        session="PRE_MARKET",
+    )
+    assert lane.counters["fills"] == 1
+    assert tca.protective_stop_mode == "COLLARED_STOP_LIMIT_SUPERVISED"
+
+    # Triggering supervised stop submits a collared extended-hours protective exit order.
+    pre_sup = lane.supervised_stops[pre_res["broker_order_id"]]
+    assert (
+        lane.trigger_supervised_stop(
+            pre_res["broker_order_id"],
+            trigger_px=pre_sup.stop_price + Decimal("0.20"),
+            now_s=1003.0,
+        )
+        is None
+    )
+    exit_res = lane.trigger_supervised_stop(
+        pre_res["broker_order_id"],
+        trigger_px=pre_sup.stop_price,
+        now_s=1004.0,
+    )
+    assert exit_res is not None
+    assert exit_res["protective_stop_mode"] == "COLLARED_STOP_LIMIT_SUPERVISED"
+    assert lane.supervised_stops[pre_res["broker_order_id"]].status == "TRIGGERED"
+
+    with duckdb.connect(str(lane.duckdb_path), read_only=True) as conn:
+        sup_cnt = conn.execute("SELECT COUNT(*) FROM paper_supervised_stops").fetchone()
+        assert sup_cnt is not None and sup_cnt[0] >= 3
+
+
+def test_ibkr_rate_budget_alignment_and_zero_live_port_guard(tmp_path: Path) -> None:
+    ibkr = IbkrPaperAdapter(tmp_path)
+    assert ibkr.paper_only is True
+    assert ibkr.live_execution_enabled is False
+    assert ibkr.port == 4002
+    assert ibkr.connection_spec["port"] == 4002
+    assert ibkr.rate_budget_max_rpm == IBKR_PAPER_MAX_RPM == 3000
+    assert ibkr.rate_budget.max_rpm == 3000
+    assert ibkr.rate_budget.exit_reserve_rpm == 300
+    assert ibkr.node_config.risk_engine is not None
+    assert ibkr.node_config.risk_engine.bypass is False
+    assert ibkr.node_config.risk_engine.max_order_submit_rate == "50/00:00:01"
+
+    # Entry traffic cannot consume the 10% (300 rpm) protective exit reserve.
+    for i in range(2700):
+        assert ibkr.rate_budget.try_consume(2000.0 + i * 0.001, is_exit=False) is True
+    assert ibkr.rate_budget.try_consume(2003.0, is_exit=False) is False
+    assert ibkr.rate_budget.try_consume(2003.0, is_exit=True) is True
+
+    # Zero live ports and zero live-execution override.
+    for forbidden_port in (4001, 7496, 8798, 8796):
+        with pytest.raises(ValueError, match="Refused IBKR port"):
+            IbkrPaperAdapter(tmp_path, port=forbidden_port)
+    with pytest.raises(PermissionError):
+        IbkrPaperAdapter(tmp_path, paper_only=False)
+    with pytest.raises(PermissionError):
+        IbkrPaperAdapter(tmp_path, live_execution_enabled=True)
+
+
+def test_otel_prometheus_telemetry_export_without_custom_http_server(tmp_path: Path) -> None:
+    clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
+    pa1 = coord.lanes["ALPACA_PA1"]
+    sub = pa1.submit_guarded_entry(
+        symbol="SOXL", side="LONG", ref_price=Decimal("40.00"), session="PRE_MARKET", now_s=3000.0
+    )
+    assert sub is not None
+    pa1.record_broker_fill(
+        broker_order_id=sub["broker_order_id"],
+        symbol="SOXL",
+        side="LONG",
+        order_qty=sub["qty"],
+        arrival_price=Decimal("40.00"),
+        fill_price=Decimal("40.02"),
+        commission_usd=Decimal("0.20"),
+        session="PRE_MARKET",
+    )
+    pa1.write_status(equity=100_500.0, session="PRE_MARKET")
+    coord.ibkr.write_status(gateway_ready=True, equity=200_000.0)
+
+    prom_path = tmp_path / "paper_farm_metrics.prom"
+    manifest = aggregate_paper_farm_performance(tmp_path, prom_output_path=prom_path)
+    telemetry = record_paper_farm_telemetry(manifest, prom_output_path=prom_path)
+
+    assert telemetry["paper_only"] is True
+    assert telemetry["live_execution_enabled"] is False
+    assert telemetry["custom_http_server"] is False
+    assert telemetry["otel_otlp_exported"] is False
+    assert prom_path.is_file()
+
+    prom_text = telemetry["prometheus_text"]
+    assert prom_text == prom_path.read_text(encoding="utf-8")
+    for metric_name in (
+        "tier0_paper_farm_combined_equity_usd",
+        "tier0_paper_farm_combined_tca_mean_is_bps",
+        "tier0_paper_farm_combined_tca_p95_is_bps",
+        "tier0_paper_farm_combined_tca_borrow_fee_usd",
+        "tier0_paper_farm_combined_extended_hours_protected_ratio",
+        "tier0_paper_farm_combined_submitted_vs_filled_ratio",
+        "tier0_paper_farm_orders_submitted_total",
+        "tier0_paper_farm_fills_confirmed_total",
+    ):
+        assert metric_name in prom_text
+
+    expected_otel = {
+        "tier0.paper_farm.equity_usd",
+        "tier0.paper_farm.tca.mean_is_bps",
+        "tier0.paper_farm.tca.p95_is_bps",
+        "tier0.paper_farm.tca.borrow_fee_usd",
+        "tier0.paper_farm.extended_hours.protected_ratio",
+        "tier0.paper_farm.submitted_vs_filled_ratio",
+        "tier0.paper_farm.orders_submitted",
+        "tier0.paper_farm.fills_confirmed",
+    }
+    assert expected_otel <= set(telemetry["otel_metric_names"])
+    assert telemetry["otel_data_points"] >= len(expected_otel)
+
+    perf_src = (
+        Path(__file__).resolve().parent.parent / "src" / "tier0_sota" / "live" / "performance.py"
+    ).read_text(encoding="utf-8")
+    for forbidden in ("start_http_server", "HTTPServer", "http.server", "fastapi", "uvicorn"):
+        assert forbidden not in perf_src
+
+
+def test_tca_duckdb_persistence_and_performance_manifest_aggregation(tmp_path: Path) -> None:
+    import json
+
+    clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
+
+    pa1 = coord.lanes["ALPACA_PA1"]
+    pa2 = coord.lanes["ALPACA_PA2"]
+    pa3 = coord.lanes["ALPACA_PA3"]
+
+    s1 = pa1.submit_guarded_entry(
+        symbol="NVDA", side="LONG", ref_price=Decimal("100.00"), session="RTH", now_s=4000.0
+    )
+    s2 = pa2.submit_guarded_entry(
+        symbol="SOXL", side="LONG", ref_price=Decimal("40.00"), session="PRE_MARKET", now_s=4001.0
+    )
+    s3 = pa3.submit_guarded_entry(
+        symbol="SMCI", side="SHORT", ref_price=Decimal("50.00"), session="AFTER_HOURS", now_s=4002.0
+    )
+    # Submit an additional order that remains unfilled to prove submitted_vs_filled_ratio < 1.0.
+    s4 = pa1.submit_guarded_entry(
+        symbol="AMD", side="LONG", ref_price=Decimal("150.00"), session="RTH", now_s=4003.0
+    )
+    assert s1 and s2 and s3 and s4
+
+    pa1.record_broker_fill(
+        broker_order_id=s1["broker_order_id"],
+        symbol="NVDA",
+        side="LONG",
+        order_qty=100,
+        arrival_price=Decimal("100.00"),
+        fill_price=Decimal("100.02"),  # +2.0 bps IS
+        commission_usd=Decimal("0.40"),
+        session="RTH",
+        markout_60s_bps=Decimal("3.5"),
+    )
+    pa2.record_broker_fill(
+        broker_order_id=s2["broker_order_id"],
+        symbol="SOXL",
+        side="LONG",
+        order_qty=100,
+        arrival_price=Decimal("40.00"),
+        fill_price=Decimal("40.02"),  # +5.0 bps IS
+        commission_usd=Decimal("0.16"),
+        session="PRE_MARKET",
+        markout_60s_bps=Decimal("1.5"),
+    )
+    pa3.record_broker_fill(
+        broker_order_id=s3["broker_order_id"],
+        symbol="SMCI",
+        side="SHORT",
+        order_qty=150,
+        arrival_price=Decimal("50.00"),
+        fill_price=Decimal("49.95"),  # +10.0 bps IS (sold below arrival)
+        commission_usd=Decimal("0.30"),
+        borrow_tier="HTB",
+        annual_borrow_rate=Decimal("0.18"),
+        prior_close=Decimal("50.00"),
+        trade_date=date(2026, 10, 9),  # Friday -> 3 days, round_lot_up(150)=200 -> $15.00
+        session="AFTER_HOURS",
+        markout_60s_bps=Decimal("-2.0"),
+    )
+
+    pa1.write_status(equity=101_000.0, session="RTH")
+    pa2.write_status(equity=102_000.0, session="PRE_MARKET")
+    pa3.write_status(equity=103_000.0, session="AFTER_HOURS")
+    coord.ibkr.write_status(gateway_ready=True, equity=200_000.0)
+
+    # Verify isolated DuckDB DECIMAL(18, 6) persistence on PA3.
+    with duckdb.connect(str(pa3.duckdb_path), read_only=True) as conn:
+        row = conn.execute(
+            "SELECT implementation_shortfall_bps, borrow_fee_usd, borrow_days, "
+            "protective_stop_mode FROM paper_tca_fills"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == Decimal("10.000000")
+        assert row[1] == Decimal("15.000000")
+        assert row[2] == 3
+        assert row[3] == "COLLARED_STOP_LIMIT_SUPERVISED"
+
+    manifest = aggregate_paper_farm_performance(tmp_path)
+    summary = manifest["summary"]
+    tca_summary = manifest["tca_summary"]
+    finos = json.loads((tmp_path / "finos_paper_farm_performance.json").read_text(encoding="utf-8"))
+
+    # IS samples = [2.0, 5.0, 10.0] -> mean = 17/3 = 5.666667, p95 = 5 + 0.9*(10-5) = 9.5
+    assert summary["orders_submitted"] == 4
+    assert summary["fills"] == 3
+    assert summary["tca_fills_count"] == 3
+    assert summary["mean_is_bps"] == pytest.approx(5.666667, rel=1e-5)
+    assert summary["p95_is_bps"] == pytest.approx(9.5, rel=1e-5)
+    assert summary["total_borrow_fee_usd"] == pytest.approx(15.0, rel=1e-6)
+    assert summary["extended_hours_protected_ratio"] == pytest.approx(1.0, rel=1e-6)
+    assert summary["submitted_vs_filled_ratio"] == pytest.approx(0.75, rel=1e-6)
+
+    assert tca_summary["mean_is_bps"] == summary["mean_is_bps"]
+    assert tca_summary["p95_is_bps"] == summary["p95_is_bps"]
+    assert tca_summary["total_borrow_fee_usd"] == summary["total_borrow_fee_usd"]
+    assert tca_summary["extended_hours_protected_ratio"] == 1.0
+    assert tca_summary["submitted_vs_filled_ratio"] == 0.75
+
+    assert finos["summary"]["mean_is_bps"] == summary["mean_is_bps"]
+    assert finos["summary"]["p95_is_bps"] == summary["p95_is_bps"]
+    assert finos["summary"]["total_borrow_fee_usd"] == summary["total_borrow_fee_usd"]
+    assert finos["summary"]["extended_hours_protected_ratio"] == 1.0
+    assert finos["summary"]["submitted_vs_filled_ratio"] == 0.75
+    assert finos["tca_summary"]["tca_fills_count"] == 3

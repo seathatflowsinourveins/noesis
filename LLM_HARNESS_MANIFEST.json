@@ -42,8 +42,11 @@
     "standards": [
       "AAIF AGENTS.md",
       "MADR 4.0 (living evolvable ADRs)",
+      "ISO/IEC/IEEE 42010:2022 (architecture rationale & viewpoints)",
+      "Evolutionary Architecture Fitness Functions",
       "PEP 735 (uv.lock default-groups)",
       "SPDX OSI License Firewall",
+      "AFML/ML4T Causal Statistical Falsification",
       "Conventional Commits"
     ],
     "reflection_stack": [

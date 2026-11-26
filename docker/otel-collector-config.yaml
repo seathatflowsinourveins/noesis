@@ -1,3 +1,6 @@
+# Official upstream OpenTelemetry Collector Contrib config (v0.166.0).
+# Routes live application OTLP metrics (gRPC :4317, HTTP :4318) and collector self-telemetry
+# (:8888) through memory_limiter + batch into the Prometheus scrape exporter (:9464/metrics).
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133
@@ -32,8 +35,6 @@ exporters:
     send_timestamps: true
     metric_expiration: 5m
     enable_open_metrics: true
-    resource_to_telemetry_conversion:
-      enabled: true
 
 service:
   extensions: [health_check]

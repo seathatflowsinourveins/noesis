@@ -13,11 +13,15 @@ from typing import Any, Self
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
+import lightgbm as lgb
 import numpy as np
 import pandera.polars as pa
 import polars as pl
 import ruptures as rpt
+import shap
 import stumpy
+from catboost import CatBoostRegressor
+from fredapi import Fred
 from ml4t.engineer import StandardScaler, compute_features
 from ml4t.engineer.features.regime import market_regime_classifier
 from nautilus_trader import model as nm
@@ -470,3 +474,170 @@ def generate_upstream_reversal_signals(bars_df: pl.DataFrame, **o: Any) -> dict[
                 signals[ts_i] = 1
         prev_vw = vw_i
     return signals
+
+
+def fit_causal_gbdt_ranker_with_shap(
+    features_df: pl.DataFrame,
+    *,
+    feature_cols: Sequence[str] = FEATURE_COLS,
+    target_col: str = "fwd_return",
+    ts_col: str = "t_close_ns",
+    train_fraction: float = 0.70,
+    random_state: int = 42,
+) -> dict[str, Any]:
+    """Fit causal pre-wall LightGBM + CatBoost cross-sectional ranker with TreeExplainer SHAP."""
+    fcols = list(feature_cols)
+    required = {ts_col, target_col, *fcols}
+    if missing := sorted(required - set(features_df.columns)):
+        raise ValueError(f"features_df missing required columns: {missing}")
+    if not (0.2 <= train_fraction <= 0.9):
+        raise ValueError(f"train_fraction must lie in [0.2, 0.9], got {train_fraction}")
+
+    ordered = features_df.sort(ts_col)
+    n_rows = ordered.height
+    if n_rows < 20:
+        raise ValueError(f"Need >= 20 pre-wall rows for causal GBDT split, got {n_rows}")
+
+    ts_arr = ordered[ts_col].to_numpy().astype(np.int64)
+    assert_pre_wall_ns(int(np.max(ts_arr)))
+
+    split_idx = max(10, min(n_rows - 5, int(n_rows * train_fraction)))
+    train_max_ts = int(ts_arr[split_idx - 1])
+    oos_min_ts = int(ts_arr[split_idx])
+    if oos_min_ts < train_max_ts:
+        raise ValueError("Causal timestamp ordering violated across train/OOS split")
+
+    x_all = ordered.select(fcols).to_numpy().astype(float)
+    y_all = ordered[target_col].to_numpy().astype(float)
+    if not (bool(np.all(np.isfinite(x_all))) and bool(np.all(np.isfinite(y_all)))):
+        raise ValueError("features_df contains non-finite feature or target values")
+
+    x_tr, y_tr = x_all[:split_idx], y_all[:split_idx]
+    x_oos, y_oos = x_all[split_idx:], y_all[split_idx:]
+
+    lgbm_model = lgb.LGBMRegressor(
+        n_estimators=24,
+        max_depth=3,
+        learning_rate=0.05,
+        num_leaves=7,
+        min_child_samples=5,
+        random_state=random_state,
+        verbosity=-1,
+    )
+    lgbm_model.fit(x_tr, y_tr)
+    lgbm_pred = np.asarray(lgbm_model.predict(x_oos), dtype=float)
+
+    cb_task = os.environ.get("TIER0_CATBOOST_TASK_TYPE", "CPU").strip() or "CPU"
+    cb_model = CatBoostRegressor(
+        iterations=24,
+        depth=3,
+        learning_rate=0.05,
+        random_seed=random_state,
+        verbose=False,
+        allow_writing_files=False,
+        task_type=cb_task,
+    )
+    cb_model.fit(x_tr, y_tr)
+    cb_pred = np.asarray(cb_model.predict(x_oos), dtype=float)
+    ens_pred = 0.5 * (lgbm_pred + cb_pred)
+
+    explainer = shap.TreeExplainer(lgbm_model)
+    shap_vals = np.asarray(explainer.shap_values(x_oos), dtype=float)
+    mean_abs = np.mean(np.abs(shap_vals), axis=0)
+    shap_map = {col: round(float(val), 6) for col, val in zip(fcols, mean_abs, strict=True)}
+    top_feature = max(shap_map, key=lambda k: shap_map[k])
+
+    def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
+        if float(np.std(a)) <= 1e-12 or float(np.std(b)) <= 1e-12:
+            return 0.0
+        val = float(np.corrcoef(a, b)[0, 1])
+        return round(val, 6) if math.isfinite(val) else 0.0
+
+    return {
+        "prewall_cutoff_iso": DISCOVERY_WALL_ISO,
+        "train_rows": int(split_idx),
+        "oos_rows": int(n_rows - split_idx),
+        "train_max_ts_ns": train_max_ts,
+        "oos_min_ts_ns": oos_min_ts,
+        "lgbm_oos_corr": _safe_corr(lgbm_pred, y_oos),
+        "catboost_oos_corr": _safe_corr(cb_pred, y_oos),
+        "ensemble_oos_corr": _safe_corr(ens_pred, y_oos),
+        "ensemble_oos_scores": [round(float(v), 6) for v in ens_pred.tolist()],
+        "shap_mean_abs_importance": shap_map,
+        "top_feature": top_feature,
+    }
+
+
+def load_causal_fred_vintages(
+    *,
+    series_ids: Sequence[str] | None = None,
+    cutoff_date: date | str = DISCOVERY_WALL_ISO,
+    snapshot_path: Path | None = None,
+    allow_network: bool = False,
+    api_key: str | None = None,
+) -> pl.DataFrame:
+    """Load offline-first causal ALFRED/FRED macro vintages strictly <= cutoff_date (PIT)."""
+    wall = assert_pre_wall_date(cutoff_date)
+    resolved = (
+        snapshot_path
+        if snapshot_path is not None
+        else (DEFAULT_MARKET_DATA_ROOT / "public-tables" / "alfred_macro_vintages.parquet")
+    )
+    want_ids = [s.strip().upper() for s in series_ids] if series_ids is not None else None
+
+    if resolved.is_file():
+        if resolved.suffix.lower() == ".csv":
+            raw_df = pl.read_csv(resolved, try_parse_dates=True)
+        else:
+            raw_df = pl.read_parquet(resolved)
+    elif allow_network:
+        if not want_ids:
+            raise ValueError("series_ids must be provided when fetching live ALFRED vintages")
+        resolved_key = api_key or os.environ.get("FRED_API_KEY", "").strip()
+        if not resolved_key:
+            raise ValueError("FRED_API_KEY required when allow_network=True")
+        fred_client = Fred(api_key=resolved_key)
+        rows: list[dict[str, Any]] = []
+        for sid in want_ids:
+            ser = fred_client.get_series_as_of_date(sid, wall.isoformat())
+            for _, rec in ser.dropna().iterrows():
+                obs_d = parse_iso_date(rec["date"])
+                vin_d = parse_iso_date(rec["realtime_start"])
+                rows.append(
+                    {
+                        "series_id": sid,
+                        "observation_date": obs_d,
+                        "vintage_date": vin_d,
+                        "value": float(rec["value"]),
+                    }
+                )
+        raw_df = pl.DataFrame(rows)
+    else:
+        raise FileNotFoundError(
+            f"Offline ALFRED snapshot missing at {resolved} (allow_network=False)"
+        )
+
+    required = {"series_id", "observation_date", "vintage_date", "value"}
+    if missing := sorted(required - set(raw_df.columns)):
+        raise ValueError(f"ALFRED vintage table missing required columns: {missing}")
+
+    c = pl.col
+    df = raw_df.with_columns(
+        c("series_id").cast(pl.String).str.to_uppercase(),
+        c("observation_date").cast(pl.Date),
+        c("vintage_date").cast(pl.Date),
+        c("value").cast(pl.Float64),
+    )
+    if want_ids is not None:
+        df = df.filter(c("series_id").is_in(want_ids))
+
+    # Strict PIT: keep only observations published on or before wall, selecting latest pre-wall
+    df = df.filter((c("vintage_date") <= wall) & (c("observation_date") <= wall))
+    if df.height == 0:
+        return df
+    return (
+        df.sort(["series_id", "observation_date", "vintage_date"])
+        .group_by(["series_id", "observation_date"], maintain_order=True)
+        .last()
+        .select(["series_id", "observation_date", "vintage_date", "value"])
+    )

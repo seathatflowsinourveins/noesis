@@ -84,3 +84,67 @@ def test_paper_farm_performance_snapshot_nested_and_legacy_schemas(
     assert legacy_rep["live_execution_enabled"] is False
     assert legacy_rep["combined_equity_usd"] == 250000.0
     assert legacy_rep["accounts_count"] == 2
+
+
+def test_active_dagster_compounding_assets_and_frontier_telemetry(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import duckdb
+    from dagster import AssetsDefinition
+
+    from tier0_sota.definitions import (
+        adr_governance_and_graph_sync,
+        compounding_self_reflection_snapshot,
+        frontier_trigger_telemetry,
+        sim_vs_paper_parity_reconciliation,
+    )
+
+    monkeypatch.setenv("TIER0_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("TIER0_DAGSTER_ACTIVE_REFLECT", "1")
+    monkeypatch.setenv("TIER0_DAGSTER_OFFLINE", "1")
+
+    asset_names = sorted(
+        a.key.to_user_string() for a in (defs.assets or []) if isinstance(a, AssetsDefinition)
+    )
+    assert len(asset_names) == 8
+    assert {
+        "adr_governance_and_graph_sync",
+        "sim_vs_paper_parity_reconciliation",
+        "frontier_trigger_telemetry",
+        "compounding_self_reflection_snapshot",
+    }.issubset(set(asset_names))
+
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    db_path = manifests_dir / "paper_lane_pa1.duckdb"
+    con = duckdb.connect(str(db_path))
+    try:
+        con.execute("CREATE TABLE paper_tca_fills (implementation_shortfall_bps DOUBLE)")
+        con.execute("INSERT INTO paper_tca_fills VALUES (3.2), (4.8)")
+    finally:
+        con.close()
+
+    adr_rep = adr_governance_and_graph_sync()
+    assert isinstance(adr_rep, dict)
+    assert int(adr_rep["total_adrs"]) >= 24
+    assert adr_rep["catalog_and_zensical_in_sync"] is True
+    assert adr_rep["clean_sota_harness_ok"] is True
+
+    tca_rep = sim_vs_paper_parity_reconciliation()
+    assert isinstance(tca_rep, dict)
+    assert tca_rep["duckdb_tca_rows"] == 2
+    assert tca_rep["realized_mean_is_bps"] == 4.0
+    assert (manifests_dir / "tca_calibration_manifest.json").is_file()
+
+    frontier_rep = frontier_trigger_telemetry()
+    assert isinstance(frontier_rep, dict)
+    assert int(frontier_rep["adr_count"]) >= 24
+    assert int(frontier_rep["spdx_firewall_count"]) >= 7
+    assert (manifests_dir / "frontier_trigger_status.json").is_file()
+
+    refl_rep = compounding_self_reflection_snapshot()
+    assert isinstance(refl_rep, dict)
+    assert refl_rep["present"] is True
+    assert refl_rep["active_materialized"] is True
+    assert refl_rep["risk_sha256_match"] is True
+    assert (manifests_dir / "compounding_self_reflection_manifest.json").is_file()

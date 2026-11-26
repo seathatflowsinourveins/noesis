@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 146,
+    "repository_files_count": 147,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -170,10 +170,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 24,
+    "total_adrs": 25,
     "counts_by_status": {
-      "accepted": 19,
-      "proposed": 1,
+      "accepted": 21,
       "superseded": 4
     },
     "supersession_edges": [
@@ -208,7 +207,8 @@
         "ADR-0012",
         "ADR-0017",
         "ADR-0022",
-        "ADR-0023"
+        "ADR-0023",
+        "ADR-0025"
       ],
       "L1": [
         "ADR-0001",
@@ -282,7 +282,8 @@
         "ADR-0015",
         "ADR-0016",
         "ADR-0019",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0025"
       ],
       "L6": [
         "ADR-0001",
@@ -303,13 +304,15 @@
         "ADR-0018",
         "ADR-0020",
         "ADR-0023",
-        "ADR-0024"
+        "ADR-0024",
+        "ADR-0025"
       ],
       "L8": [
         "ADR-0001",
         "ADR-0002",
         "ADR-0018",
-        "ADR-0024"
+        "ADR-0024",
+        "ADR-0025"
       ],
       "L9": [
         "ADR-0001",
@@ -318,12 +321,13 @@
         "ADR-0018",
         "ADR-0022",
         "ADR-0023",
-        "ADR-0024"
+        "ADR-0024",
+        "ADR-0025"
       ]
     },
-    "fitness_bound_accepted_ratio": "19/19",
+    "fitness_bound_accepted_ratio": "21/21",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "8ffe95b4809304d85f930fc9b184f071c789b9bda255de3c6e80914293799216"
+    "corpus_sha256": "23f61ef5e5166690eb48c5bbfdb7f5e96159b34043955b199776c368f6e4c58f"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -331,7 +335,25 @@
     "zero_winner_overlap_with_rejected": true,
     "zero_pre_commit_overlap": true,
     "spdx_firewall_count": 7,
-    "src_files_mapped_ratio": "13/13"
+    "src_files_mapped_ratio": "13/13",
+    "zero_paper_winners_audit": {
+      "ok": true,
+      "checked_default_packages": 45,
+      "imported_packages_count": 35,
+      "cli_mcp_portal_mapped": [
+        "ast-grep-cli",
+        "dagster-webserver",
+        "deptry",
+        "edgartools",
+        "optuna-dashboard",
+        "pyarrow",
+        "pytest",
+        "ruff",
+        "ty",
+        "zensical"
+      ],
+      "unwired_packages": []
+    }
   },
   "layers": {
     "L0": {
@@ -375,8 +397,7 @@
         "pydantic",
         "exchange_calendars",
         "edgartools",
-        "fredapi",
-        "treeverse/dvc"
+        "fredapi"
       ],
       "rejected_overlaps": [
         "pandas-datareader",
@@ -487,6 +508,7 @@
         "prometheus",
         "prometheus-client",
         "opentelemetry-sdk",
+        "opentelemetry-exporter-otlp",
         "otel-collector-contrib",
         "grafana",
         "caddy"
@@ -539,7 +561,8 @@
         "docs/adr/ADR-0021.md",
         "docs/adr/ADR-0022.md",
         "docs/adr/ADR-0023.md",
-        "docs/adr/ADR-0024.md"
+        "docs/adr/ADR-0024.md",
+        "docs/adr/ADR-0025.md"
       ]
     },
     "L7": {
@@ -824,6 +847,7 @@
     "docs/adr/ADR-0022.md",
     "docs/adr/ADR-0023.md",
     "docs/adr/ADR-0024.md",
+    "docs/adr/ADR-0025.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",

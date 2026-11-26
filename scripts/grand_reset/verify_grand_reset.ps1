@@ -331,7 +331,7 @@ if (Test-Path -LiteralPath $LockPath) {
 }
 
 $LegacyRegex = [string]::Join("|", @(
-    ("tier0" + "-quant"),
+    ("tier0" + "-quant(?!-falsification)"),
     ("CLEAN" + " LIVE"),
     ("sota-live-tv" + "-harness"),
     ("sota_compounding_1000rpm" + "_harness")

@@ -772,6 +772,112 @@ def parse_and_validate_adrs(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     }
 
 
+_CLI_MCP_PORTAL_PACKAGE_ANCHORS: dict[str, str] = {
+    "ast-grep-cli": "sgconfig.yml",
+    "dagster-webserver": "docker/compose.sota.yml",
+    "deptry": "justfile",
+    "edgartools": ".mcp.json",
+    "optuna-dashboard": "docker/compose.sota.yml",
+    "pyarrow": "src/tier0_sota/discovery.py",
+    "pytest": "justfile",
+    "ruff": "justfile",
+    "ty": "justfile",
+    "zensical": "zensical.toml",
+}
+
+_DIST_TO_IMPORT_OVERRIDES: dict[str, str] = {
+    "alpaca-py": "alpaca",
+    "exchange-calendars": "exchange_calendars",
+    "inspect-ai": "inspect_ai",
+    "ml4t-diagnostic": "ml4t",
+    "ml4t-engineer": "ml4t",
+    "nautilus-trader": "nautilus_trader",
+    "opentelemetry-api": "opentelemetry",
+    "opentelemetry-exporter-otlp": "opentelemetry",
+    "opentelemetry-sdk": "opentelemetry",
+    "prometheus-client": "prometheus_client",
+    "pyyaml": "yaml",
+    "z3-solver": "z3",
+}
+
+
+def _collect_ast_imported_modules(repo_root: Path) -> set[str]:
+    """Collect every top-level Python module imported across src, scripts, evals, and tests."""
+    imported: set[str] = set()
+    for base_name in ("src", "scripts", "evals", "tests"):
+        base_dir = repo_root / base_name
+        if not base_dir.is_dir():
+            continue
+        for py_path in sorted(base_dir.rglob("*.py")):
+            if "__pycache__" in py_path.parts:
+                continue
+            tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imported.add(alias.name.split(".", 1)[0])
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    imported.add(node.module.split(".", 1)[0])
+    return imported
+
+
+def audit_zero_paper_winners(
+    repo_root: Path,
+    pyproject: dict[str, Any],
+) -> dict[str, Any]:
+    """Verify every default-installed Python winner is AST-imported or CLI/MCP/portal anchored."""
+    imported_modules = _collect_ast_imported_modules(repo_root)
+    pkg_map = {
+        k.lower().replace("_", "-"): str(v)
+        for k, v in pyproject.get("tool", {})
+        .get("deptry", {})
+        .get("package_module_name_map", {})
+        .items()
+    }
+
+    default_specs: list[str] = list(pyproject.get("project", {}).get("dependencies", []))
+    dep_groups = pyproject.get("dependency-groups", {})
+    default_groups = list(pyproject.get("tool", {}).get("uv", {}).get("default-groups", []))
+    for grp in default_groups:
+        grp_deps = dep_groups.get(grp, [])
+        if isinstance(grp_deps, list):
+            default_specs.extend(str(d) for d in grp_deps)
+
+    checked = sorted(
+        {
+            re.split(r"[<>=!~;\[\s]", spec.strip(), maxsplit=1)[0].lower().replace("_", "-")
+            for spec in default_specs
+            if spec.strip()
+        }
+    )
+
+    imported_winners: list[str] = []
+    cli_mcp_portal_mapped: list[str] = []
+    unwired_packages: list[str] = []
+
+    for pkg in checked:
+        if pkg in _CLI_MCP_PORTAL_PACKAGE_ANCHORS:
+            anchor = _CLI_MCP_PORTAL_PACKAGE_ANCHORS[pkg]
+            if (repo_root / anchor).exists():
+                cli_mcp_portal_mapped.append(pkg)
+            else:
+                unwired_packages.append(pkg)
+            continue
+        mod = _DIST_TO_IMPORT_OVERRIDES.get(pkg) or pkg_map.get(pkg) or pkg.replace("-", "_")
+        if mod in imported_modules:
+            imported_winners.append(pkg)
+        else:
+            unwired_packages.append(pkg)
+
+    return {
+        "ok": len(unwired_packages) == 0,
+        "checked_default_packages": len(checked),
+        "imported_packages_count": len(imported_winners),
+        "cli_mcp_portal_mapped": cli_mcp_portal_mapped,
+        "unwired_packages": unwired_packages,
+    }
+
+
 def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     """Enforce zero-overlap single-winner discipline, SPDX OSI firewall, and 100% src mapping."""
     upstream = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
@@ -864,6 +970,13 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             f"Unmapped src/tier0_sota Python files in upstream-map.toml: {unmapped_src}"
         )
 
+    paper_winners_audit = audit_zero_paper_winners(repo_root, pyproject)
+    if not paper_winners_audit["ok"]:
+        raise ValueError(
+            "Zero-paper-winners violation — default-group packages with 0 Python imports and "
+            f"no active CLI/MCP/portal anchor: {paper_winners_audit['unwired_packages']}"
+        )
+
     return {
         "ok": True,
         "zero_banned_in_uv_lock": True,
@@ -871,6 +984,7 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "zero_pre_commit_overlap": True,
         "spdx_firewall_count": len(up_fw),
         "src_files_mapped_ratio": f"{len(src_py_files) - len(unmapped_src)}/{len(src_py_files)}",
+        "zero_paper_winners_audit": paper_winners_audit,
     }
 
 

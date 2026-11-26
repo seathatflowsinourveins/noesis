@@ -5,8 +5,10 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from decimal import Decimal
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 from statistics import NormalDist
-from typing import Any
+from typing import Any, Literal
 
 import hftbacktest as hft
 import mlflow
@@ -16,7 +18,9 @@ import statsmodels.api as sm
 from arch.bootstrap import SPA
 from ml4t.diagnostic.evaluation import stats as mstats
 from scipy.stats import kurtosis, skew
+from skfolio import RiskMeasure
 from skfolio.model_selection import CombinatorialPurgedCV
+from skfolio.optimization import HierarchicalRiskParity, MeanRisk
 
 from tier0_sota.discovery import assert_pre_wall_ns
 from tier0_sota.engine import run_nautilus_signal_backtest
@@ -250,6 +254,86 @@ def log_falsification_to_mlflow(
         return str(run.info.run_id)
 
 
+def compute_skfolio_portfolio_weights(
+    returns: pl.DataFrame | np.ndarray,
+    *,
+    asset_names: Sequence[str] | None = None,
+    method: Literal["mean_risk_clarabel", "hrp"] = "mean_risk_clarabel",
+    risk_measure: RiskMeasure = RiskMeasure.VARIANCE,
+    min_weights: float = 0.0,
+    max_weights: float = 1.0,
+) -> dict[str, Any]:
+    """Optimize long-only sleeve weights via upstream skfolio + Clarabel.rs conic solver."""
+    if isinstance(returns, pl.DataFrame):
+        names = list(asset_names) if asset_names is not None else list(returns.columns)
+        arr = returns.to_numpy().astype(float)
+    else:
+        arr = np.asarray(returns, dtype=float)
+        if arr.ndim != 2:
+            raise ValueError(f"Expected 2D returns matrix (n_obs, n_assets), got shape {arr.shape}")
+        names = (
+            list(asset_names)
+            if asset_names is not None
+            else [f"asset_{idx}" for idx in range(arr.shape[1])]
+        )
+    if arr.shape[0] < 2 or arr.shape[1] < 2:
+        raise ValueError(f"Need >= 2 observations and >= 2 assets, got shape {arr.shape}")
+    if len(names) != arr.shape[1]:
+        raise ValueError(f"asset_names length {len(names)} != matrix cols {arr.shape[1]}")
+    if not bool(np.all(np.isfinite(arr))):
+        raise ValueError("returns matrix contains non-finite values")
+    if min_weights < 0.0 or max_weights > 1.0 or min_weights > max_weights:
+        raise ValueError(f"Invalid weight bounds [{min_weights}, {max_weights}]")
+
+    if method == "mean_risk_clarabel":
+        model: Any = MeanRisk(
+            risk_measure=risk_measure,
+            min_weights=min_weights,
+            max_weights=max_weights,
+            solver="CLARABEL",
+        )
+        solver_name = "clarabel"
+    elif method == "hrp":
+        model = HierarchicalRiskParity(
+            risk_measure=risk_measure,
+            min_weights=min_weights,
+            max_weights=max_weights,
+        )
+        solver_name = "hrp_hierarchical"
+    else:
+        raise ValueError(f"Unsupported portfolio method: {method!r}")
+
+    model.fit(arr)
+    raw_w = np.asarray(model.weights_, dtype=float)
+    if not bool(np.all(np.isfinite(raw_w))):
+        raise ValueError("skfolio optimizer returned non-finite weights")
+    if float(np.min(raw_w)) < -1e-5:
+        raise ValueError(f"Negative weight produced under long-only constraint: {raw_w}")
+    clean_w = np.clip(raw_w, 0.0, 1.0)
+    total = float(np.sum(clean_w))
+    if not math.isfinite(total) or total <= 0.0:
+        raise ValueError(f"Invalid portfolio weight sum: {total}")
+    norm_w = clean_w / total
+
+    try:
+        clarabel_ver = pkg_version("clarabel")
+    except PackageNotFoundError:
+        clarabel_ver = "unknown"
+
+    return {
+        "method": method,
+        "solver": solver_name,
+        "clarabel_version": clarabel_ver,
+        "risk_measure": str(risk_measure.value),
+        "assets": names,
+        "weights": {name: round(float(w), 6) for name, w in zip(names, norm_w, strict=True)},
+        "weights_sum": round(float(np.sum(norm_w)), 6),
+        "min_weight": round(float(np.min(norm_w)), 6),
+        "max_weight": round(float(np.max(norm_w)), 6),
+        "n_observations": int(arr.shape[0]),
+    }
+
+
 def evaluate_six_gate_falsification(
     *,
     bars_df: pl.DataFrame,
@@ -259,6 +343,8 @@ def evaluate_six_gate_falsification(
     cost_bps_2x: Decimal = Decimal("8.0"),
     l1_quotes_df: pl.DataFrame | None = None,
     l1_trades_df: pl.DataFrame | None = None,
+    l1_side: str = "BUY",
+    backtest_kwargs: dict[str, Any] | None = None,
     mlflow_tracking_uri: str | None = None,
     experiment_name: str = "tier0-sota-falsification",
     run_name: str | None = None,
@@ -266,8 +352,13 @@ def evaluate_six_gate_falsification(
     trial_returns: Sequence[np.ndarray] | None = None,
 ) -> dict[str, Any]:
     """Execute full 6-gate falsification (hftbacktest L1, 1x/2x, CPCV, DSR/PBO, SPA, HAC)."""
-    bt1 = run_nautilus_signal_backtest(bars_df, signals_by_ts, cost_bps_per_side=cost_bps_1x)
-    bt2 = run_nautilus_signal_backtest(bars_df, signals_by_ts, cost_bps_per_side=cost_bps_2x)
+    bt_extra = dict(backtest_kwargs or {})
+    bt1 = run_nautilus_signal_backtest(
+        bars_df, signals_by_ts, cost_bps_per_side=cost_bps_1x, **bt_extra
+    )
+    bt2 = run_nautilus_signal_backtest(
+        bars_df, signals_by_ts, cost_bps_per_side=cost_bps_2x, **bt_extra
+    )
     kw: dict[str, Any] = {
         "n_trials_total": n_trials_total,
         "pbo": pbo,
@@ -278,7 +369,9 @@ def evaluate_six_gate_falsification(
     l1: dict[str, Any] | None = None
     if l1_quotes_df is not None and l1_trades_df is not None:
         sym = str(bars_df["symbol"][0] if "symbol" in bars_df.columns else "TEST").upper()
-        l1 = evaluate_hftbacktest_queue_markout(l1_quotes_df, l1_trades_df, symbol=sym)
+        l1 = evaluate_hftbacktest_queue_markout(
+            l1_quotes_df, l1_trades_df, symbol=sym, side=l1_side
+        )
     g1 = l1 is None or (l1["passive_order_submitted"] and l1["markout_bps"] >= -20.0)
     g2 = (
         bt1.total_return_pct > 0.0

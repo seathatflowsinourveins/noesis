@@ -13,8 +13,20 @@ import polars as pl
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from nautilus_trader.common import Environment
-from nautilus_trader.model import TrailingOffsetType
+from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+from nautilus_trader.common import Environment, LoggerConfig, LogLevel
+from nautilus_trader.execution import MakerTakerFeeModel
+from nautilus_trader.model import (
+    AccountType,
+    ClientId,
+    Currency,
+    Money,
+    OmsType,
+    OrderType,
+    Price,
+    TimeInForce,
+    TrailingOffsetType,
+)
 
 from tier0_sota.discovery import (
     BAR_DURATION_NS,
@@ -24,20 +36,26 @@ from tier0_sota.discovery import (
     assert_pre_wall_date,
     assert_pre_wall_ns,
     compute_causal_market_regime,
+    df_to_equity_and_bars,
     generate_upstream_reversal_signals,
     previous_xnys_session,
     validate_causal_bars,
 )
 from tier0_sota.engine import (
     EXECUTION_VENUE_PROFILES,
+    EXIT_TAG,
     IBKR_OUTSIDE_RTH_TAG,
     SESSION_PROTECTION_24X5,
     SIP_23X5_CUTOVER_DATE,
+    VENUE_XNAS,
+    SignalExecutionConfig,
+    SignalExecutionStrategy,
     build_ibkr_paper_connection_spec,
     build_sandbox_live_node,
     build_venue_live_node_config,
     build_venue_risk_engine_config,
     classify_us_equity_session_et,
+    compute_collared_entry_limit_price,
     compute_collared_limit_price,
     compute_dynamic_trailing_stop,
     compute_progressive_trailing_stop,
@@ -77,11 +95,12 @@ def _synth_bars(
     symbol: str,
     closes: list[float],
     *,
+    day: tuple[int, int, int] = (2026, 10, 15),
     start_et: tuple[int, int] = (9, 30),
     step_s: int = 60,
     wick: float = 0.001,
 ) -> pl.DataFrame:
-    t0 = _et_ns(2026, 10, 15, start_et[0], start_et[1])
+    t0 = _et_ns(day[0], day[1], day[2], start_et[0], start_et[1])
     rows = []
     for i, c in enumerate(closes):
         t_ns = t0 + i * step_s * 1_000_000_000
@@ -356,3 +375,108 @@ def test_rsp_regime_benchmark_and_sip_23x5_dark_boats_window() -> None:
     assert is_sip_dark_boats_overnight_window_et(_et_ns(2026, 12, 7, 20, 30))
     assert not is_sip_dark_boats_overnight_window_et(_et_ns(2026, 12, 7, 21, 5))
     assert not is_sip_dark_boats_overnight_window_et(_et_ns(2026, 12, 12, 20, 30))
+
+
+def test_outside_rth_entry_uses_collared_limit_not_market() -> None:
+    pre = get_session_protection_profile("PRE_MARKET")
+    aft = get_session_protection_profile("AFTER_HOURS")
+    ovn = get_session_protection_profile("OVERNIGHT")
+    assert pre.limit_collar_bps == Decimal("35")
+    assert aft.limit_collar_bps == Decimal("35")
+    assert ovn.limit_collar_bps == Decimal("50")
+
+    assert compute_collared_entry_limit_price(
+        Decimal("100.00"), "LONG", pre.limit_collar_pct
+    ) == Decimal("100.35")
+    assert compute_collared_entry_limit_price(
+        Decimal("100.00"), "SHORT", aft.limit_collar_pct
+    ) == Decimal("99.65")
+    assert compute_collared_entry_limit_price(
+        Decimal("100.01"), "LONG", pre.limit_collar_pct
+    ) == Decimal("100.36")
+    assert compute_collared_entry_limit_price(
+        Decimal("100.01"), "SHORT", aft.limit_collar_pct
+    ) == Decimal("99.66")
+    assert compute_collared_entry_limit_price(
+        Decimal("100.00"), "LONG", ovn.limit_collar_pct
+    ) == Decimal("100.50")
+    assert compute_collared_entry_limit_price(
+        Decimal("100.00"), "SHORT", ovn.limit_collar_pct
+    ) == Decimal("99.50")
+
+    for start_et, sig_dir, expected_price in (
+        ((5, 0), 1, "100.35"),
+        ((17, 0), -1, "99.65"),
+        ((21, 0), 1, "100.50"),
+    ):
+        df = _synth_bars(
+            "NVDA",
+            [100.0, 100.0, 100.0, 100.0],
+            day=(2026, 10, 14),
+            start_et=start_et,
+            wick=0.0,
+        )
+        ts_list = df["t_close_ns"].to_list()
+        signals = {ts_list[0]: sig_dir}
+
+        res = run_nautilus_signal_backtest(df, signals, fixed_qty=10, enable_24x5_trailing=True)
+        assert res.outside_rth_limit_entries == 1
+        assert res.outside_rth_market_entries == 0
+        assert res.rth_market_entries == 0
+        assert res.fills_total >= 1
+        assert res.stops_attached >= 1
+
+        # Directly inspect real NautilusTrader v2 BacktestEngine cache orders.
+        usd = Currency.from_str("USD")
+        inst, btype, bars, prec = df_to_equity_and_bars(df, "NVDA", usd)
+        re_cfg = build_venue_risk_engine_config("IBKR_PAPER_4002")
+        ql = LoggerConfig(stdout_level=LogLevel.OFF, bypass_logging=True)
+        bt_engine = BacktestEngine(
+            BacktestEngineConfig(logging=ql, risk_engine=re_cfg, run_analysis=False)
+        )
+        try:
+            bt_engine.add_venue(
+                VENUE_XNAS,
+                OmsType.NETTING,
+                AccountType.MARGIN,
+                [Money(100_000.0, usd)],
+                usd,
+                fee_model=MakerTakerFeeModel(Decimal("0.0004"), Decimal("0.0004")),
+                use_reduce_only=False,
+            )
+            bt_engine.add_instrument(inst)
+            bt_engine.add_data(bars, client_id=ClientId("SIM"))
+            bt_engine.add_strategy(
+                SignalExecutionStrategy(
+                    SignalExecutionConfig(
+                        btype,
+                        signals,
+                        Decimal("100000"),
+                        prec,
+                        venue_profile="IBKR_PAPER_4002",
+                        fixed_qty=10,
+                        enable_24x5_trailing=True,
+                    )
+                )
+            )
+            bt_engine.run()
+            entry_orders = [
+                o for o in bt_engine.cache.orders() if EXIT_TAG not in tuple(o.tags or ())
+            ]
+            assert len(entry_orders) == 1
+            entry_ord = entry_orders[0]
+            assert entry_ord.order_type == OrderType.LIMIT
+            assert entry_ord.price == Price.from_str(expected_price)
+            assert entry_ord.time_in_force == TimeInForce.GTC
+            assert IBKR_OUTSIDE_RTH_TAG in tuple(entry_ord.tags or ())
+        finally:
+            bt_engine.dispose()
+
+    rth_df = _synth_bars("NVDA", [100.0, 100.1, 100.2, 100.3], start_et=(10, 0), wick=0.0)
+    rth_ts = rth_df["t_close_ns"].to_list()
+    rth_res = run_nautilus_signal_backtest(
+        rth_df, {rth_ts[0]: 1}, fixed_qty=10, enable_24x5_trailing=True
+    )
+    assert rth_res.rth_market_entries == 1
+    assert rth_res.outside_rth_limit_entries == 0
+    assert rth_res.outside_rth_market_entries == 0

@@ -147,10 +147,11 @@ def test_madr_adrs_catalog_and_zensical_toml() -> None:
     assert "superseded by adr-" in catalog.lower()
 
     adr_paths = sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
-    assert len(adr_paths) >= 24
+    assert len(adr_paths) >= 25
     assert (REPO_ROOT / "docs" / "adr" / "ADR-0022.md").is_file()
     assert (REPO_ROOT / "docs" / "adr" / "ADR-0023.md").is_file()
     assert (REPO_ROOT / "docs" / "adr" / "ADR-0024.md").is_file()
+    assert (REPO_ROOT / "docs" / "adr" / "ADR-0025.md").is_file()
     nav_targets = [next(iter(item.values())) for item in z_cfg["project"]["nav"]]
     for adr_path in adr_paths:
         assert f"adr/{adr_path.name}" in nav_targets, f"{adr_path.name} missing from zensical.toml"
@@ -181,6 +182,16 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
                 assert bad_port not in host_container, (
                     f"{svc_name} binds forbidden live port {bad_port}"
                 )
+
+    finos_svc = services["finos-workspace"]
+    assert "command" in finos_svc and finos_svc["command"], "finos-workspace must declare a command"
+    assert all(":6900" not in str(p) for p in finos_svc.get("ports", [])), (
+        "finos-workspace must not collide with WSL2 tier0-openbb-backend :6900"
+    )
+    assert services["tearsheets"]["image"] == "caddy:2.11.9-alpine"
+    assert services["telemetry-exporter"]["image"] == "otel/opentelemetry-collector-contrib:0.166.0"
+    assert services["prometheus"]["image"] == "prom/prometheus:v3.16.0"
+    assert services["grafana"]["image"] == "grafana/grafana:13.3.1"
 
     for rel in (
         "docker/Dockerfile.research",
@@ -326,6 +337,8 @@ def test_preflight_resume_kit_scripts_and_playbook() -> None:
         "seathatflowsinourveins/noesis",
         "workstation_preflight_resume_manifest.json",
         "tier0.workstation-preflight-resume.v1",
+        "WSL_AGY_MCP_PATH",
+        "scope=wsl2_agy",
     ):
         assert token in sh_txt, f"preflight_resume.sh missing required token {token!r}"
     assert all(port in sh_txt for port in LIVE_PORTS)
