@@ -227,6 +227,7 @@ class PaperPerformanceAggregator:
             "paper_only": True,
             "live_execution_enabled": False,
             "equity": round(float(status.get("equity") or 0.0), 2),
+            "open_positions_count": int(status.get("open_positions_count") or 0),
             "drawdown_pct": round(float(status.get("daily_drawdown_pct") or 0.0), 6),
             "entries": entries,
             "orders_submitted": orders_submitted,

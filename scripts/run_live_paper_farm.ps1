@@ -80,33 +80,59 @@ print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])
     if (-not $ConfirmPaper) {
       throw "Refused live paper submission without -ConfirmPaper switch (fail-closed)."
     }
+    $ibkrReady = $false
+    try {
+      $tcp = [System.Net.Sockets.TcpClient]::new()
+      try {
+        $iar = $tcp.BeginConnect("127.0.0.1", 4002, $null, $null)
+        if ($iar.AsyncWaitHandle.WaitOne(250, $false)) {
+          $tcp.EndConnect($iar)
+          $ibkrReady = $true
+        }
+      } finally {
+        $tcp.Dispose()
+      }
+    } catch {
+      $ibkrReady = $false
+    }
+    $ibkrPyBool = if ($ibkrReady) { "True" } else { "False" }
     & $PyExe -c @"
+import os
 from pathlib import Path
 from tier0_sota.live.paper_farm import PaperFarmCoordinator
 from tier0_sota.live.performance import aggregate_paper_farm_performance
 mdir = Path(r'$ManifestDir')
 coord = PaperFarmCoordinator(mdir)
-for acct, lane in coord.lanes.items():
-    if '$Account' in ('ALL', acct):
-        lane.write_status()
-if '$Account' in ('ALL', 'IBKR_DU_4002'):
-    coord.ibkr.write_status()
-perf = aggregate_paper_farm_performance(mdir)
-print('PAPER_FARM_OK', list(coord.lanes.keys()), perf['summary'])
+sync_rep = coord.sync_all_lanes(account='$Account', ibkr_gateway_ready=$ibkrPyBool)
+otlp_url = os.environ.get('TIER0_OTLP_METRICS_URL', 'http://127.0.0.1:4318/v1/metrics').strip() or None
+perf = aggregate_paper_farm_performance(
+    mdir,
+    prom_output_path=mdir / 'paper_farm_metrics.prom',
+    otlp_endpoint=otlp_url,
+)
+print('PAPER_FARM_OK', list(coord.lanes.keys()), perf['summary'], {k: v.get('total_tca_fills_duckdb', 0) for k, v in sync_rep.items() if isinstance(v, dict)})
 "@
     exit $LASTEXITCODE
   }
   "performance" {
     & $PyExe -c @"
-import json
+import json, os
 from pathlib import Path
 from tier0_sota.live.performance import aggregate_paper_farm_performance
 mdir = Path(r'$ManifestDir')
-perf = aggregate_paper_farm_performance(mdir)
+otlp_url = os.environ.get('TIER0_OTLP_METRICS_URL', 'http://127.0.0.1:4318/v1/metrics').strip() or None
+perf = aggregate_paper_farm_performance(
+    mdir,
+    prom_output_path=mdir / 'paper_farm_metrics.prom',
+    otlp_endpoint=otlp_url,
+)
 lanes = {
     k: {
         'equity': v['equity'],
         'entries': v['entries'],
+        'fills': v['fills'],
+        'tca_fills_count': v['tca_fills_count'],
+        'mean_is_bps': v['mean_is_bps'],
         'auto_shorts': v['auto_shorts'],
         'reverses': v['reverses'],
         'reentries': v['reentries'],

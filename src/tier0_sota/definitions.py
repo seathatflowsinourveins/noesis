@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import os
-import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +21,11 @@ from dagster import (
 from evals.dspy_self_reflect import verify_dspy_reflection_module
 from evals.tier0_inspect_eval import verify_inspect_safety_suite
 from scripts.run_compounding_reflection import run_compounding_reflection
-from scripts.sync_manifest import parse_and_validate_adrs, validate_clean_sota_harness
+from scripts.sync_manifest import (
+    audit_zero_paper_winners,
+    parse_and_validate_adrs,
+    validate_clean_sota_harness,
+)
 
 from tier0_sota.discovery import DISCOVERY_WALL_ISO
 from tier0_sota.risk import (
@@ -217,24 +219,23 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
     return {**payload, "manifest_path": str(out_path)}
 
 
-def _collect_imported_top_modules(repo_root: Path) -> set[str]:
-    mods: set[str] = set()
-    for sub in ("src", "evals", "scripts"):
-        base = repo_root / sub
-        if not base.is_dir():
-            continue
-        for py_file in base.rglob("*.py"):
-            try:
-                tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-            except SyntaxError:
+def _measure_prewall_lake_disk_gb(lake_dir: Path) -> float:
+    """Measure non-symlink byte footprint of local prewall-lake directory in GiB."""
+    if not lake_dir.is_dir():
+        return 0.0
+    total_bytes = 0
+    for root_str, dirnames, filenames in os.walk(lake_dir, followlinks=False):
+        root_p = Path(root_str)
+        dirnames[:] = [d for d in dirnames if not (root_p / d).is_symlink()]
+        for fname in filenames:
+            fp = root_p / fname
+            if fp.is_symlink():
                 continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        mods.add(alias.name.split(".", 1)[0].lower())
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    mods.add(node.module.split(".", 1)[0].lower())
-    return mods
+            try:
+                total_bytes += fp.stat().st_size
+            except OSError:
+                continue
+    return round(total_bytes / (1024.0**3), 4)
 
 
 @asset(deps=[prewall_pit_audit, adr_governance_and_graph_sync])
@@ -242,14 +243,20 @@ def frontier_trigger_telemetry() -> dict[str, object]:
     """Measure quantified L11..L15 earned-trigger counters and emit status manifest."""
     data_root = _resolve_data_root()
     manifests_dir = data_root / "manifests"
-    lake_manifest = data_root / "prewall-lake" / "PREWALL_LAKE_MANIFEST.json"
+    lake_dir = data_root / "prewall-lake"
+    lake_manifest = lake_dir / "PREWALL_LAKE_MANIFEST.json"
 
-    prewall_lake_gb = 0.0
+    prewall_lake_manifest_gb = 0.0
     if lake_manifest.is_file():
         lm_doc = json.loads(lake_manifest.read_text(encoding="utf-8"))
         tar_bytes = lm_doc.get("tar_bytes")
         if isinstance(tar_bytes, (int, float)):
-            prewall_lake_gb = round(float(tar_bytes) / (1024.0**3), 4)
+            prewall_lake_manifest_gb = round(float(tar_bytes) / (1024.0**3), 4)
+
+    prewall_lake_disk_gb = _measure_prewall_lake_disk_gb(lake_dir)
+    prewall_lake_gb = (
+        prewall_lake_disk_gb if prewall_lake_disk_gb > 0.0 else prewall_lake_manifest_gb
+    )
 
     max_concurrent_positions = 0
     perf_path = manifests_dir / "paper_farm_live_performance_manifest.json"
@@ -265,61 +272,48 @@ def frontier_trigger_telemetry() -> dict[str, object]:
 
     upstream = tomllib.loads((REPO_ROOT / "upstream-map.toml").read_text(encoding="utf-8"))
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    imported_mods = _collect_imported_top_modules(REPO_ROOT)
-
-    pkg_to_mod = {
-        "alpaca-py": "alpaca",
-        "exchange-calendars": "exchange_calendars",
-        "ml4t-diagnostic": "ml4t",
-        "ml4t-engineer": "ml4t",
-        "nautilus-trader": "nautilus_trader",
-        "opentelemetry-api": "opentelemetry",
-        "opentelemetry-sdk": "opentelemetry",
-        "opentelemetry-exporter-otlp": "opentelemetry",
-        "prometheus-client": "prometheus_client",
-        "z3-solver": "z3",
-        "inspect-ai": "inspect_ai",
-        "pyyaml": "yaml",
-    }
-    cli_only = {
-        "ast-grep-cli",
-        "dagster-webserver",
-        "deptry",
-        "dvc",
-        "hypothesis",
-        "optuna-dashboard",
-        "pytest",
-        "ruff",
-        "ty",
-        "zensical",
-    }
-    declared_pkgs: list[str] = list(pyproject.get("project", {}).get("dependencies", []))
-    for grp in ("research", "evals", "observability"):
-        declared_pkgs.extend(pyproject.get("dependency-groups", {}).get(grp, []))
-
-    unwired_lock_packages: list[str] = []
-    for spec in declared_pkgs:
-        pkg = re.split(r"[<>=!~;\[\s]", str(spec).strip(), maxsplit=1)[0].lower().replace("_", "-")
-        if not pkg or pkg in cli_only:
-            continue
-        mod = pkg_to_mod.get(pkg, pkg.replace("-", "_"))
-        if mod not in imported_mods:
-            unwired_lock_packages.append(pkg)
+    pw_audit = audit_zero_paper_winners(REPO_ROOT, pyproject)
+    unwired_lock_packages = sorted(pw_audit.get("unwired_packages") or [])
 
     adr_count = len(list((REPO_ROOT / "docs" / "adr").glob("ADR-*.md")))
     spdx_firewall_count = len(upstream.get("rules", {}).get("spdx_license_firewall", []))
+
+    gepa_manifest = manifests_dir / "dspy_gepa_compiled_reflection.json"
+    gepa_compiled = False
+    if gepa_manifest.is_file():
+        try:
+            gepa_doc = json.loads(gepa_manifest.read_text(encoding="utf-8"))
+            gepa_compiled = bool(gepa_doc.get("compiled", False))
+        except (OSError, json.JSONDecodeError):
+            gepa_compiled = False
+
+    tca_manifest = manifests_dir / "tca_calibration_manifest.json"
+    tca_rows_calibrated = 0
+    if tca_manifest.is_file():
+        try:
+            tca_doc = json.loads(tca_manifest.read_text(encoding="utf-8"))
+            tca_rows_calibrated = int(tca_doc.get("duckdb_tca_rows") or 0)
+        except (OSError, json.JSONDecodeError):
+            tca_rows_calibrated = 0
 
     payload: dict[str, Any] = {
         "schema_version": "tier0.frontier-trigger-telemetry.v1",
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "prewall_lake_gb": prewall_lake_gb,
+        "prewall_lake_disk_gb": prewall_lake_disk_gb,
+        "prewall_lake_manifest_gb": prewall_lake_manifest_gb,
         "max_concurrent_positions": max_concurrent_positions,
         "adr_count": adr_count,
         "spdx_firewall_count": spdx_firewall_count,
-        "unwired_lock_packages": sorted(set(unwired_lock_packages)),
+        "checked_default_packages": int(pw_audit.get("checked_default_packages") or 0),
+        "unwired_lock_packages": unwired_lock_packages,
+        "tca_rows_calibrated": tca_rows_calibrated,
         "triggers": {
             "l11_vortex_lake_gt_100gb": prewall_lake_gb > 100.0,
+            "l12_tabicl_benchmark_pending": False,
             "l13_multi_day_positions_gt_10": max_concurrent_positions > 10,
+            "l14_observability_tca_calibrated": tca_rows_calibrated > 0,
+            "l15_dspy_gepa_compiled": gepa_compiled,
         },
     }
     out_path = manifests_dir / "frontier_trigger_status.json"

@@ -718,3 +718,102 @@ def test_tca_duckdb_persistence_and_performance_manifest_aggregation(tmp_path: P
     assert finos["summary"]["extended_hours_protected_ratio"] == 1.0
     assert finos["summary"]["submitted_vs_filled_ratio"] == 0.75
     assert finos["tca_summary"]["tca_fills_count"] == 3
+
+
+def test_sync_broker_fills_idempotent_with_sip_quotes_and_29col_duckdb(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    t_sub = datetime(2026, 10, 15, 15, 0, 0, tzinfo=UTC)
+    t_fill = t_sub + timedelta(seconds=10)
+    t_mk60 = t_fill + timedelta(seconds=60)
+
+    class _SyncTradingClient(_FakeTradingClient):
+        def get_account(self) -> SimpleNamespace:
+            return SimpleNamespace(equity="105432.10", last_equity="105000.00")
+
+        def get_all_positions(self) -> list[SimpleNamespace]:
+            return [SimpleNamespace(symbol="SOXL", qty="100")]
+
+        def get_orders(self, _req: object) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id="fill-ord-1",
+                    symbol="SOXL",
+                    side="buy",
+                    qty="100",
+                    filled_qty="100",
+                    filled_avg_price="40.02",
+                    status="filled",
+                    submitted_at=t_sub,
+                    filled_at=t_fill,
+                    type="market",
+                    extended_hours=False,
+                ),
+                SimpleNamespace(
+                    id="canceled-ord-2",
+                    symbol="NVDA",
+                    side="buy",
+                    qty="10",
+                    filled_qty="0",
+                    filled_avg_price=None,
+                    status="canceled",
+                    submitted_at=t_sub,
+                    filled_at=None,
+                    type="limit",
+                    extended_hours=False,
+                ),
+            ]
+
+    class _SyncDataClient:
+        def get_stock_quotes(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "SOXL": [
+                        SimpleNamespace(timestamp=t_sub, bid_price=39.99, ask_price=40.01),
+                        SimpleNamespace(timestamp=t_fill, bid_price=39.99, ask_price=40.01),
+                        SimpleNamespace(timestamp=t_mk60, bid_price=40.05, ask_price=40.07),
+                    ]
+                }
+            )
+
+    # Pre-create a 29-column paper_tca_fills table (with legacy execution_id) to prove compatibility
+    db_path = tmp_path / "paper_lane_pa1.duckdb"
+    with duckdb.connect(str(db_path)) as conn:
+        conn.execute(
+            "CREATE TABLE paper_tca_fills ("
+            "ts_utc VARCHAR, account VARCHAR, lane_id VARCHAR, broker_order_id VARCHAR, "
+            "symbol VARCHAR, side VARCHAR, session VARCHAR, route VARCHAR, "
+            "protective_stop_mode VARCHAR, order_qty DECIMAL(18, 6), filled_qty DECIMAL(18, 6), "
+            "decision_price DECIMAL(18, 6), arrival_price DECIMAL(18, 6), "
+            "fill_price DECIMAL(18, 6), horizon_price DECIMAL(18, 6), "
+            "delay_bps DECIMAL(18, 6), execution_bps DECIMAL(18, 6), "
+            "implementation_shortfall_bps DECIMAL(18, 6), commission_usd DECIMAL(18, 6), "
+            "commission_bps DECIMAL(18, 6), borrow_fee_usd DECIMAL(18, 6), "
+            "borrow_bps DECIMAL(18, 6), opportunity_bps DECIMAL(18, 6), "
+            "total_net_cost_bps DECIMAL(18, 6), total_is_usd DECIMAL(18, 6), "
+            "borrow_tier VARCHAR, borrow_days INTEGER, markout_60s_bps DECIMAL(18, 6), "
+            "execution_id VARCHAR)"
+        )
+
+    lock = CrossLaneSymbolLock()
+    lane = AlpacaPaperLane("ALPACA_PA1", tmp_path, _SyncTradingClient(), lock)
+    rep1 = lane.sync_broker_fills_and_status(data_client=_SyncDataClient())
+    assert rep1["equity"] == pytest.approx(105432.10)
+    assert rep1["open_positions_count"] == 1
+    assert rep1["newly_recorded_tca_fills"] == 1
+    assert rep1["sip_quoted_fills"] == 1
+    assert rep1["total_tca_fills_duckdb"] == 1
+
+    # Second call is idempotent: 0 newly recorded fills, still 1 total row in DuckDB
+    rep2 = lane.sync_broker_fills_and_status(data_client=_SyncDataClient())
+    assert rep2["newly_recorded_tca_fills"] == 0
+    assert rep2["total_tca_fills_duckdb"] == 1
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        row = conn.execute(
+            "SELECT implementation_shortfall_bps, markout_60s_bps FROM paper_tca_fills"
+        ).fetchone()
+        assert row is not None
+        # BUY fill at 40.02 vs arrival mid 40.00 -> +5.0 bps IS; +60s mid 40.06 -> ~+9.995 bps
+        assert row[0] == Decimal("5.000000")
+        assert row[1] > Decimal("9.0")

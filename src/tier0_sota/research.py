@@ -153,6 +153,22 @@ def _compute_cpcv_pbo(trial_returns: Sequence[np.ndarray]) -> float | None:
     return float(mstats.compute_pbo(np.vstack(is_r), np.vstack(oos_r)).pbo)
 
 
+def _compute_empirical_trial_sr_variance(trial_returns: Sequence[np.ndarray]) -> float | None:
+    """Compute empirical cross-sectional variance of native-frequency trial Sharpe ratios."""
+    srs: list[float] = []
+    for r in trial_returns:
+        a = np.asarray(r, dtype=float)
+        if a.size < MIN_CPCV_SAMPLES or not bool(np.all(np.isfinite(a))):
+            continue
+        sd = float(np.std(a, ddof=1))
+        if sd > 1e-12:
+            srs.append(float(np.mean(a)) / sd)
+    if len(srs) < 2:
+        return None
+    var = float(np.var(np.asarray(srs, dtype=float), ddof=1))
+    return max(1e-6, var) if math.isfinite(var) else None
+
+
 def falsify_trade_returns(
     trade_returns: np.ndarray, *, n_trials_total: int, **o: Any
 ) -> dict[str, Any]:
@@ -160,7 +176,8 @@ def falsify_trade_returns(
     tr_r = np.asarray(trade_returns, dtype=float)
     n_s, n_t = int(tr_r.size), max(1, int(n_trials_total))
     pbo = o.get("pbo")
-    if (trial_rets := o.get("trial_returns")) is not None and pbo is None:
+    trial_rets = o.get("trial_returns")
+    if trial_rets is not None and pbo is None:
         pbo = _compute_cpcv_pbo(trial_rets)
     worst_pct = round(float(np.min(tr_r)) * 100.0, 4) if n_s > 0 else 0.0
     if n_s < MIN_CPCV_SAMPLES:
@@ -182,7 +199,12 @@ def falsify_trade_returns(
     te_idx = [np.concatenate(te) if isinstance(te, (list, tuple)) else te for _, te in splits]
     cpcv_oos_m = float(np.mean([float(np.mean(tr_r[idx])) for idx in te_idx]))
     mean_r, std_r = float(np.mean(tr_r)), float(np.std(tr_r, ddof=1))
-    vt = max(0.25, float(o.get("variance_trials") or 0.25))
+    if o.get("variance_trials") is not None:
+        vt = max(1e-6, float(o["variance_trials"]))
+    elif trial_rets is not None and (emp_vt := _compute_empirical_trial_sr_variance(trial_rets)):
+        vt = emp_vt
+    else:
+        vt = 0.25
     dsr_val, min_trl = 0.0, None
     if std_r > 1e-12:
         dsr_res = mstats.deflated_sharpe_ratio_from_statistics(

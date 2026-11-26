@@ -140,6 +140,7 @@ def test_active_dagster_compounding_assets_and_frontier_telemetry(
     assert isinstance(frontier_rep, dict)
     assert int(frontier_rep["adr_count"]) >= 24
     assert int(frontier_rep["spdx_firewall_count"]) >= 7
+    assert frontier_rep["unwired_lock_packages"] == []
     assert (manifests_dir / "frontier_trigger_status.json").is_file()
 
     refl_rep = compounding_self_reflection_snapshot()

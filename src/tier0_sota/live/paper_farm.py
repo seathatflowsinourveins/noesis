@@ -6,16 +6,19 @@ import json
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
 
+import alpaca.data as ad
 import alpaca.trading as at
 import duckdb
 import polars as pl
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
-from alpaca.trading.requests import LimitOrderRequest, StopLossRequest
+from alpaca.data.enums import DataFeed
+from alpaca.data.requests import StockQuotesRequest
+from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
+from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest, StopLossRequest
 from pydantic import BaseModel, ConfigDict, Field
 
 from tier0_sota import engine as eng
@@ -376,7 +379,13 @@ def persist_tca_record_duckdb(duckdb_path: Path, record: TcaFillRecord) -> None:
             "borrow_tier VARCHAR, borrow_days INTEGER, markout_60s_bps DECIMAL(18, 6))"
         )
         conn.execute(
-            "INSERT INTO paper_tca_fills VALUES ("
+            "INSERT INTO paper_tca_fills ("
+            "ts_utc, account, lane_id, broker_order_id, symbol, side, session, route, "
+            "protective_stop_mode, order_qty, filled_qty, decision_price, arrival_price, "
+            "fill_price, horizon_price, delay_bps, execution_bps, implementation_shortfall_bps, "
+            "commission_usd, commission_bps, borrow_fee_usd, borrow_bps, opportunity_bps, "
+            "total_net_cost_bps, total_is_usd, borrow_tier, borrow_days, markout_60s_bps"
+            ") VALUES ("
             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.ts_utc,
@@ -841,7 +850,223 @@ class AlpacaPaperLane:
         persist_tca_record_duckdb(self.duckdb_path, record)
         return record
 
-    def write_status(self, *, equity: float | None = None, session: str = "RTH") -> dict[str, Any]:
+    def _existing_tca_order_ids(self) -> set[str]:
+        if not self.duckdb_path.is_file():
+            return set()
+        try:
+            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
+                tables = {str(r[0]).lower() for r in conn.execute("SHOW TABLES").fetchall()}
+                if "paper_tca_fills" not in tables:
+                    return set()
+                rows = conn.execute(
+                    "SELECT DISTINCT broker_order_id FROM paper_tca_fills"
+                ).fetchall()
+                return {str(r[0]) for r in rows if r and r[0] is not None}
+        except (OSError, duckdb.Error):
+            return set()
+
+    def sync_broker_fills_and_status(
+        self,
+        *,
+        data_client: Any | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Idempotently sync live Paper account equity, positions, and SIP-quoted fill TCA."""
+        if not self.paper_only or self.live_execution_enabled:
+            raise PermissionError("Refused non-paper sync; paper_only=True required.")
+
+        acct_obj = self.trading_client.get_account()
+        live_equity = float(getattr(acct_obj, "equity", self.start_equity) or self.start_equity)
+        last_equity = float(getattr(acct_obj, "last_equity", live_equity) or live_equity)
+        if last_equity > 0.0:
+            self.breaker = rk.DailyDrawdownBreaker(start_equity=Decimal(f"{last_equity:.2f}"))
+            self.breaker.update(
+                realized_pnl=Decimal(f"{live_equity - last_equity:.2f}"),
+                unrealized_pnl=_DEC_ZERO,
+            )
+
+        positions = list(self.trading_client.get_all_positions() or ())
+        closed_orders = list(
+            self.trading_client.get_orders(
+                GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=limit)
+            )
+            or ()
+        )
+        existing_ids = self._existing_tca_order_ids()
+
+        filled_orders = [
+            o
+            for o in closed_orders
+            if str(getattr(o, "status", "")).strip().lower().endswith("filled")
+            and getattr(o, "filled_at", None) is not None
+            and float(getattr(o, "filled_qty", 0) or 0) > 0.0
+            and float(getattr(o, "filled_avg_price", 0) or 0) > 0.0
+        ]
+
+        newly_recorded = 0
+        sip_quoted = 0
+        sip_quote_errors = 0
+        for order in filled_orders:
+            oid = str(getattr(order, "id", "")).strip()
+            if not oid or oid in existing_ids:
+                continue
+            sym = str(getattr(order, "symbol", "") or "").strip().upper()
+            if not sym:
+                continue
+            raw_side = str(getattr(order, "side", "buy") or "buy").strip().lower()
+            side_str = "BUY" if raw_side.endswith("buy") else "SELL"
+            order_qty = _to_finite_decimal(
+                getattr(order, "qty", None) or getattr(order, "filled_qty", 1), "order_qty"
+            )
+            filled_qty = _to_finite_decimal(getattr(order, "filled_qty", order_qty), "filled_qty")
+            if filled_qty > order_qty:
+                order_qty = filled_qty
+            fill_px = _to_finite_decimal(getattr(order, "filled_avg_price", "0"), "fill_price")
+            if fill_px <= _DEC_ZERO:
+                continue
+
+            filled_at = order.filled_at
+            if filled_at.tzinfo is None:
+                filled_at = filled_at.replace(tzinfo=UTC)
+            submitted_at = getattr(order, "submitted_at", None) or filled_at
+            if submitted_at.tzinfo is None:
+                submitted_at = submitted_at.replace(tzinfo=UTC)
+
+            fill_ts_ns = int(filled_at.timestamp() * 1_000_000_000)
+            sub_ts_ns = int(submitted_at.timestamp() * 1_000_000_000)
+            sess_raw = eng.classify_us_equity_session_et(fill_ts_ns)
+            if sess_raw == "CLOSED":
+                dt_et = eng._et_dt(fill_ts_ns)
+                sess_str = eng.classify_et_hm(dt_et.hour * 60 + dt_et.minute)
+            else:
+                sess_str = sess_raw
+
+            decision_px = fill_px
+            arrival_px = fill_px
+            markout_60s: Decimal | None = None
+
+            if data_client is not None:
+                try:
+                    q_start = min(submitted_at, filled_at) - timedelta(seconds=15)
+                    q_end = filled_at + timedelta(seconds=75)
+                    q_resp = data_client.get_stock_quotes(
+                        StockQuotesRequest(
+                            symbol_or_symbols=sym,
+                            start=q_start,
+                            end=q_end,
+                            feed=DataFeed.SIP,
+                            limit=500,
+                        )
+                    )
+                    q_list = (getattr(q_resp, "data", None) or {}).get(sym) or []
+                    q_rows: list[dict[str, Any]] = []
+                    for q in q_list:
+                        qts = getattr(q, "timestamp", None)
+                        bp = float(getattr(q, "bid_price", 0.0) or 0.0)
+                        ap = float(getattr(q, "ask_price", 0.0) or 0.0)
+                        if qts is None or bp <= 0.0 or ap <= 0.0 or ap < bp:
+                            continue
+                        if qts.tzinfo is None:
+                            qts = qts.replace(tzinfo=UTC)
+                        q_rows.append(
+                            {
+                                "symbol": sym,
+                                "ts_ns": int(qts.timestamp() * 1_000_000_000),
+                                "bid_px": bp,
+                                "ask_px": ap,
+                            }
+                        )
+                    if q_rows:
+                        q_df = pl.DataFrame(q_rows)
+                        probes = pl.DataFrame(
+                            {
+                                "probe": ["decision", "arrival", "markout_60s"],
+                                "symbol": [sym, sym, sym],
+                                "ts_ns": [sub_ts_ns, fill_ts_ns, fill_ts_ns + 60_000_000_000],
+                            }
+                        )
+                        joined = join_fills_with_quotes_asof(
+                            probes, q_df, max_staleness_ns=30_000_000_000
+                        )
+                        mid_map = {
+                            str(r["probe"]): Decimal(f"{float(r['arrival_mid']):.6f}")
+                            for r in joined.to_dicts()
+                        }
+                        if "arrival" in mid_map and mid_map["arrival"] > _DEC_ZERO:
+                            arrival_px = mid_map["arrival"]
+                            decision_px = mid_map.get("decision", arrival_px)
+                            sip_quoted += 1
+                        elif "decision" in mid_map and mid_map["decision"] > _DEC_ZERO:
+                            decision_px = mid_map["decision"]
+                            arrival_px = decision_px
+                            sip_quoted += 1
+                        if "markout_60s" in mid_map and mid_map["markout_60s"] > _DEC_ZERO:
+                            sign = _DEC_ONE if side_str == "BUY" else -_DEC_ONE
+                            markout_60s = _q6(
+                                (sign * (mid_map["markout_60s"] - fill_px) / fill_px) * _BPS_SCALE
+                            )
+                except Exception:  # noqa: BLE001, S110
+                    sip_quote_errors += 1
+
+            ord_type = str(getattr(order, "type", getattr(order, "order_type", ""))).lower()
+            is_ext = bool(getattr(order, "extended_hours", False)) or sess_str in (
+                "PRE_MARKET",
+                "AFTER_HOURS",
+            )
+            prot_mode = (
+                "COLLARED_STOP_LIMIT_SUPERVISED"
+                if is_ext
+                else ("NATIVE_OTO_STOP" if "stop" not in ord_type else "NATIVE_STOP_EXIT")
+            )
+            self.record_broker_fill(
+                broker_order_id=oid,
+                symbol=sym,
+                side=side_str,
+                order_qty=order_qty,
+                filled_qty=filled_qty,
+                decision_price=decision_px,
+                arrival_price=arrival_px,
+                fill_price=fill_px,
+                session=sess_str,
+                protective_stop_mode=prot_mode,
+                markout_60s_bps=markout_60s,
+                ts_utc=filled_at.isoformat(),
+            )
+            existing_ids.add(oid)
+            newly_recorded += 1
+
+        now_ns = int(datetime.now(UTC).timestamp() * 1_000_000_000)
+        curr_sess = eng.classify_us_equity_session_et(now_ns)
+        self.counters["orders_submitted"] = max(
+            self.counters["orders_submitted"], len(closed_orders)
+        )
+        self.counters["fills"] = max(self.counters["fills"], len(existing_ids))
+        status_doc = self.write_status(
+            equity=live_equity,
+            session=curr_sess,
+            open_positions_count=len(positions),
+        )
+        return {
+            "account": self.account,
+            "equity": live_equity,
+            "open_positions_count": len(positions),
+            "closed_orders_seen": len(closed_orders),
+            "filled_orders_seen": len(filled_orders),
+            "newly_recorded_tca_fills": newly_recorded,
+            "total_tca_fills_duckdb": len(existing_ids),
+            "sip_quoted_fills": sip_quoted,
+            "sip_quote_errors": sip_quote_errors,
+            "status_path": str(self.status_path),
+            "session_24x5": status_doc["session_24x5"],
+        }
+
+    def write_status(
+        self,
+        *,
+        equity: float | None = None,
+        session: str = "RTH",
+        open_positions_count: int = 0,
+    ) -> dict[str, Any]:
         eq_val = float(equity if equity is not None else self.start_equity)
         payload = {
             "schema_version": "tier0.alpaca-paper-lane.v1",
@@ -853,6 +1078,7 @@ class AlpacaPaperLane:
             "live_execution_enabled": False,
             "session_24x5": session,
             "equity": eq_val,
+            "open_positions_count": int(open_positions_count),
             "daily_drawdown_pct": float(self.breaker.drawdown_pct),
             "breaker_tripped": not self.breaker.allow_entry(),
             **self.counters,
@@ -986,10 +1212,12 @@ class PaperFarmCoordinator:
         manifest_dir: Path,
         *,
         alpaca_clients: dict[str, Any] | None = None,
+        data_client: Any | None = None,
         ibkr_port: int = 4002,
     ) -> None:
         self.manifest_dir = manifest_dir
         self.symbol_lock = CrossLaneSymbolLock()
+        self.data_client = data_client
         self.lanes: dict[str, AlpacaPaperLane] = {}
         for acct in ALPACA_LANE_PROFILES:
             client = (alpaca_clients or {}).get(acct)
@@ -999,6 +1227,8 @@ class PaperFarmCoordinator:
                 k, s = resolve_alpaca_env_creds(acct)
                 if k and s:
                     client = at.TradingClient(k, s, paper=True)
+                    if self.data_client is None:
+                        self.data_client = ad.StockHistoricalDataClient(k, s)
             if client is not None:
                 self.lanes[acct] = AlpacaPaperLane(
                     account=acct,
@@ -1009,6 +1239,20 @@ class PaperFarmCoordinator:
         self.ibkr = IbkrPaperAdapter(
             manifest_dir=manifest_dir, port=ibkr_port, symbol_lock=self.symbol_lock
         )
+
+    def sync_all_lanes(
+        self, *, account: str = "ALL", limit: int = 100, ibkr_gateway_ready: bool = False
+    ) -> dict[str, Any]:
+        """Idempotently sync broker equity & SIP-quoted fill TCA across configured Paper lanes."""
+        synced: dict[str, Any] = {}
+        for acct, lane in self.lanes.items():
+            if account in ("ALL", acct):
+                synced[acct] = lane.sync_broker_fills_and_status(
+                    data_client=self.data_client, limit=limit
+                )
+        if account in ("ALL", IBKR_PAPER_ACCOUNT):
+            synced[IBKR_PAPER_ACCOUNT] = self.ibkr.write_status(gateway_ready=ibkr_gateway_ready)
+        return synced
 
     def dispatch_movers(
         self, entries: list[dict[str, Any]], *, macro_regime: int, session: str

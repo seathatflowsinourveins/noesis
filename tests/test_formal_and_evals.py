@@ -253,6 +253,17 @@ def test_dspy_gepa_quantitative_metric_and_live_offline_separation() -> None:
     assert live_skip["status"] == "skipped_offline"
     assert live_skip["metric_score"] is None
 
+    from evals.dspy_self_reflect import compile_gepa_reflection_program
+
+    gepa_skip = compile_gepa_reflection_program(offline=True)
+    assert gepa_skip["compiled"] is False
+    assert gepa_skip["status"] == "skipped_offline"
+    assert gepa_skip["off_execution_hot_path"] is True
+    assert gepa_skip["paper_only"] is True
+    assert gepa_skip["live_execution_enabled"] is False
+    assert gepa_skip["trainset_size"] >= 1
+    assert gepa_skip["valset_size"] >= 1
+
 
 def test_skfolio_clarabel_portfolio_optimization_and_causal_ml_discovery(tmp_path: Path) -> None:
     from datetime import date

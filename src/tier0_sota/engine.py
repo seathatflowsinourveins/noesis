@@ -1050,6 +1050,7 @@ def run_nautilus_signal_backtest(
             engine.add_actor(MarketRegimeActor(MarketRegimeActorConfig(bar_types=ex_bt)))
         opt_keys = (
             "enable_24x5_trailing",
+            "session_protection_24x5",
             "reentry_cooldown_secs",
             "max_reentries",
             "auto_reverse",
