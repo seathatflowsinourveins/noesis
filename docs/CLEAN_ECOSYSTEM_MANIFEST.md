@@ -24,7 +24,7 @@
 | `scripts/launch_clean_lanes.ps1` | Non-overlapping lane launcher | Supports `-DryRun`; orchestrates Pre-Wall Sim Lab (`<= 2026-10-15`), 3-Lane Paper Farm (`ALPACA_PA1..PA3` + `IBKR_DU_4002`), TV Half-Auto Cockpit, and Verifier Gate |
 | `scripts/run_live_paper_farm.ps1` | Paper Farm controller | Supports `preflight`, `scan`, `paper-farm` (requires `-ConfirmPaper`), and `performance` |
 | `scripts/tv_console.ps1` | TradingView Half-Auto console | Display-only Pine v6 + Pydantic v2 (`TvAlertV1`) staging (`qty=1`, `semi_auto_confirmed=false`, zero CDP `:9223`) |
-| `scripts/grand_reset/verify_grand_reset.ps1` | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, `12/12` ADRs, `zensical`, `risk.py`, MCP smoke, `13/13` portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
+| `scripts/grand_reset/verify_grand_reset.ps1` | Grand-Reset Master Verifier | Enforces `12/12` gates (`ARCHITECTURE_MANIFEST.json`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, `hooks_zero=True`, `.claude/mcp-lanes/`, dynamic living ADRs `ADR-0001..ADR-0018+`, `zensical`, `risk.py`, MCP smoke, portals, TV, Paper Farm, `gitleaks`, `0` `yfinance` / standalone skills, Z3 + Inspect AI evals, `0` live ports) |
 | [`docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md`](GRAND_RESET_DISK_Z_WSL_RUNBOOK.md) | Grand-Reset Operator Runbook | Step-by-step zero-hook Disk-Z + WSL2 + fresh AGY + TV + 4-Runtime + Orca reset guide |
 | [`docs/ARCHITECTURE_LAYER_MANIFEST.md`](ARCHITECTURE_LAYER_MANIFEST.md) | Architecture Layer Manifest | Complete `L0`–`L10` upstream stack map, Mermaid flow diagram, and `L11`–`L15` earned-trigger frontier |
 
@@ -38,7 +38,7 @@
 
 ## 2. Hosted SOTA Portals & Paper Farm Readiness
 
-### 13 Hosted Loopback Portals (`127.0.0.1`)
+### 15 Hosted Local Portals (`127.0.0.1`)
 
 | # | Portal | Loopback URL | Upstream Service |
 |---|---|---|---|
@@ -55,8 +55,8 @@
 | 11 | FINOS Workspace | `http://127.0.0.1:1420/` | `workspace-local` |
 | 12 | FINOS API Health | `http://127.0.0.1:8000/health` | `workspace-local` |
 | 13 | OpenBB Backend | `http://127.0.0.1:6900/` | `tier0-openbb-backend` |
-
-*Companion SQL UI:* DuckDB SQL UI (`http://127.0.0.1:4213/`).
+| 14 | DuckDB SQL UI | `http://127.0.0.1:4213/` | `tier0-duckdb-ui` |
+| 15 | OmniRoute LLM Gateway | `http://127.0.0.1:20128/api/health` | `omniroute` (`v2.3.x`, autostart) |
 
 ### 4-Account Clean-Slate Practice Plane (`Z:\sota-data\manifests`)
 

@@ -257,8 +257,13 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
         ".opencode/commands/verify-tier0.md",
         "UPSTREAM_SKILLS_LOCK.json",
         "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
-    } | {f"docs/adr/ADR-{idx:04d}.md" for idx in range(1, 13)}
+    }
     assert required_files.issubset(repo_files)
+    adr_files = sorted(
+        rel for rel in repo_files if rel.startswith("docs/adr/ADR-") and rel.endswith(".md")
+    )
+    assert "docs/adr/ADR-0001.md" in adr_files
+    assert len(adr_files) >= 18
 
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "src/tier0_sota/risk.py" in pyproject["tool"]["ruff"]["format"]["exclude"]

@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 131,
+    "repository_files_count": 137,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -336,7 +336,13 @@
         "docs/adr/ADR-0009.md",
         "docs/adr/ADR-0010.md",
         "docs/adr/ADR-0011.md",
-        "docs/adr/ADR-0012.md"
+        "docs/adr/ADR-0012.md",
+        "docs/adr/ADR-0013.md",
+        "docs/adr/ADR-0014.md",
+        "docs/adr/ADR-0015.md",
+        "docs/adr/ADR-0016.md",
+        "docs/adr/ADR-0017.md",
+        "docs/adr/ADR-0018.md"
       ]
     },
     "L7": {
@@ -607,6 +613,12 @@
     "docs/adr/ADR-0010.md",
     "docs/adr/ADR-0011.md",
     "docs/adr/ADR-0012.md",
+    "docs/adr/ADR-0013.md",
+    "docs/adr/ADR-0014.md",
+    "docs/adr/ADR-0015.md",
+    "docs/adr/ADR-0016.md",
+    "docs/adr/ADR-0017.md",
+    "docs/adr/ADR-0018.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",

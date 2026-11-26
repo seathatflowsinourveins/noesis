@@ -23,8 +23,14 @@ nav = [
   { "ADR-0008: Market-Aligned Short & Extreme-Mover RPM" = "adr/ADR-0008.md" },
   { "ADR-0009: Stationary 4-Account Paper Farm" = "adr/ADR-0009.md" },
   { "ADR-0010: ToU-Compliant TradingView Pine v6 Bridge" = "adr/ADR-0010.md" },
-  { "ADR-0011: Official 13-Portal Observability Stack" = "adr/ADR-0011.md" },
+  { "ADR-0011 (Superseded): 13-Portal Observability" = "adr/ADR-0011.md" },
   { "ADR-0012: Multi-Runtime Harness & Grand-Reset" = "adr/ADR-0012.md" },
+  { "ADR-0013: Multi-Tier Data, Microstructure & Borrow Feeds" = "adr/ADR-0013.md" },
+  { "ADR-0014: Whole-Market Scanning & Potential Ranking" = "adr/ADR-0014.md" },
+  { "ADR-0015: SOTA Multi-Regime Strategy & Portfolio Suite" = "adr/ADR-0015.md" },
+  { "ADR-0016: Backtesting, Queue Sim & Trading Foundation" = "adr/ADR-0016.md" },
+  { "ADR-0017: Native Hosting, 15 Portals & Auto-Resume" = "adr/ADR-0017.md" },
+  { "ADR-0018: Agentic Harness, OmniRoute & L11..L15 Frontier" = "adr/ADR-0018.md" },
 ]
 
 [project.theme]
