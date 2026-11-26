@@ -51,7 +51,7 @@ DEFAULT_MARKET_DATA_ROOT: Path = Path(
 BAR_DURATION_NS: int = 60_000_000_000
 WARMUP_BARS: int = 40
 FEATURE_COLS: list[str] = ["roc", "rsi", "natr", "vol_ratio"]
-REGIME_BENCHMARK_SYMBOLS: tuple[str, ...] = ("SPY", "QQQ", "SOXX", "VIX")
+REGIME_BENCHMARK_SYMBOLS: tuple[str, ...] = ("SPY", "QQQ", "SOXX", "RSP", "VIX")
 _XNYS = xcals.get_calendar("XNYS")
 _NY_TZ = ZoneInfo("America/New_York")
 
@@ -324,7 +324,7 @@ def _pelt_threshold(vals: np.ndarray) -> float:
 
 
 def compute_causal_market_regime(market_bars_df: pl.DataFrame, **o: Any) -> dict[int, int]:
-    """Classify causal SPY/QQQ/SOXX/VIX regime (`+1` bull, `-1` crash/bear, `0` neutral)."""
+    """Classify causal SPY/QQQ/SOXX/RSP/VIX regime (`+1` bull, `-1` crash/bear, `0` neutral)."""
     if market_bars_df.height == 0:
         raise ValueError("Cannot compute market regime on empty market_bars_df")
     tw = int(o.get("trend_window", 30))

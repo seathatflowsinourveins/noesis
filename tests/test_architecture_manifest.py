@@ -263,7 +263,7 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
         rel for rel in repo_files if rel.startswith("docs/adr/ADR-") and rel.endswith(".md")
     )
     assert "docs/adr/ADR-0001.md" in adr_files
-    assert len(adr_files) >= 18
+    assert len(adr_files) >= 21
 
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "src/tier0_sota/risk.py" in pyproject["tool"]["ruff"]["format"]["exclude"]

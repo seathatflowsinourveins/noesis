@@ -40,6 +40,7 @@ __all__ = [
     "IBKR_OUTSIDE_RTH_TAG",
     "POOLED_TRAILING_SCHEDULES",
     "SESSION_PROTECTION_24X5",
+    "SIP_23X5_CUTOVER_DATE",
     "SUPPORTED_TRAILING_OFFSET_TYPES",
     "VENUE_XNAS",
     "ExecutionVenueProfile",
@@ -58,6 +59,7 @@ __all__ = [
     "compute_progressive_trailing_stop",
     "get_session_protection_profile",
     "inspect_venue_capability",
+    "is_sip_dark_boats_overnight_window_et",
     "run_nautilus_signal_backtest",
     "select_pooled_trailing_schedule",
     "step_rth_5m_bar",
@@ -396,6 +398,20 @@ def classify_us_equity_session_et(ts_utc_ns: int) -> SessionOrClosed:
         return "CLOSED"
     inf = _xnys_info(ny_day)
     return classify_et_hm(hm, inf[1] if inf else 960)
+
+
+SIP_23X5_CUTOVER_DATE: date = date(2026, 12, 6)
+
+
+def is_sip_dark_boats_overnight_window_et(ts_utc_ns: int) -> bool:
+    """True iff post-SIP-23x5 cutover, 20:00-21:00 ET, and an OVERNIGHT-classified trading night."""
+    dt_et = _et_dt(ts_utc_ns)
+    hm = dt_et.hour * 60 + dt_et.minute
+    return (
+        dt_et.date() >= SIP_23X5_CUTOVER_DATE
+        and 1200 <= hm < 1260
+        and classify_us_equity_session_et(ts_utc_ns) == "OVERNIGHT"
+    )
 
 
 def compute_collared_limit_price(

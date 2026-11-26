@@ -31,6 +31,9 @@ nav = [
   { "ADR-0016: Backtesting, Queue Sim & Trading Foundation" = "adr/ADR-0016.md" },
   { "ADR-0017: Native Hosting, 15 Portals & Auto-Resume" = "adr/ADR-0017.md" },
   { "ADR-0018: Agentic Harness, OmniRoute & L11..L15 Frontier" = "adr/ADR-0018.md" },
+  { "ADR-0019: Execution TCA, Borrow Fees & 24/5 SOR" = "adr/ADR-0019.md" },
+  { "ADR-0020: Stage 1-5 Promotion, Kill-Switch & DR" = "adr/ADR-0020.md" },
+  { "ADR-0021: L10 Cockpit, FINOS/OpenBB & Workbench" = "adr/ADR-0021.md" },
 ]
 
 [project.theme]

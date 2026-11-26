@@ -43,7 +43,7 @@
         "duckdb/duckdb",
         "unionai-oss/pandera",
         "pydantic/pydantic",
-        "stefanhoelzl/exchange_calendars",
+        "gerrymanoim/exchange_calendars",
         "dgunning/edgartools",
         "mortada/fredapi",
         "treeverse/dvc"
@@ -205,12 +205,12 @@
     "L12": {
       "name": "Tabular Foundation, Time-Series Foundation, Drift & Attribution",
       "candidates": [
-        {"slug": "PriorLabs/TabPFN", "trigger": "tabular baseline benchmark"},
+        {"slug": "PriorLabs/TabPFN", "trigger": "tabular baseline benchmark", "spdx_note": "Code Apache-2.0; weights non-commercial — blocked for production weights per ADR-0014"},
         {"slug": "soda-inria/tabicl", "alias": "TabICLv2", "trigger": "in-context tabular benchmark"},
         {"slug": "yandex-research/tabm", "alias": "TabM", "trigger": "parameter-efficient MLP tabular"},
         {"slug": "autogluon/tabarena", "alias": "TabArena", "trigger": "tabular arena evaluation"},
         {"slug": "amazon-science/chronos-forecasting", "alias": "Chronos-2", "trigger": "L5 proof + pre-wall audit"},
-        {"slug": "SalesforceAIResearch/toto", "alias": "Toto", "trigger": "time-series foundation eval"},
+        {"slug": "DataDog/toto", "alias": "Toto", "trigger": "time-series foundation eval"},
         {"slug": "SalesforceAIResearch/gift-eval", "alias": "GIFT-Eval", "trigger": "time-series benchmark gate"},
         {"slug": "mmschlk/shapiq", "alias": "shapiq", "trigger": "interaction Shapley attribution"},
         {"slug": "evidentlyai/evidently", "alias": "evidently", "trigger": "production feature drift"},
@@ -223,7 +223,7 @@
         {"slug": "eclipse-iceoryx/iceoryx2", "trigger": "zero-copy Rust IPC"},
         {"slug": "microsoft/MarS", "trigger": "generative L2 market simulation"},
         {"slug": "peernagy/LOBS5", "trigger": "state-space LOB simulation"},
-        {"slug": "cvxgrp/cvxportfolio", "trigger": "> 10 concurrent multi-day positions"},
+        {"slug": "cvxgrp/cvxportfolio", "trigger": "> 10 concurrent multi-day positions", "spdx_note": "GPL-3.0 copyleft (reference-only, not imported in src/ per ADR-0015)"},
         {"slug": "oxfordcontrol/Clarabel.rs", "trigger": "conic portfolio solver"},
         {"slug": "ERGO-Code/HiGHS", "trigger": "MILP/LP portfolio constraints"},
         {"slug": "DoubleML/doubleml-for-py", "alias": "DoubleML", "trigger": "causal factor neutralization"},

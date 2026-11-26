@@ -19,6 +19,7 @@ from nautilus_trader.model import TrailingOffsetType
 from tier0_sota.discovery import (
     BAR_DURATION_NS,
     DISCOVERY_WALL_UTC_NS,
+    REGIME_BENCHMARK_SYMBOLS,
     PreWallViolationError,
     assert_pre_wall_date,
     assert_pre_wall_ns,
@@ -31,6 +32,7 @@ from tier0_sota.engine import (
     EXECUTION_VENUE_PROFILES,
     IBKR_OUTSIDE_RTH_TAG,
     SESSION_PROTECTION_24X5,
+    SIP_23X5_CUTOVER_DATE,
     build_ibkr_paper_connection_spec,
     build_sandbox_live_node,
     build_venue_live_node_config,
@@ -41,6 +43,7 @@ from tier0_sota.engine import (
     compute_progressive_trailing_stop,
     get_session_protection_profile,
     inspect_venue_capability,
+    is_sip_dark_boats_overnight_window_et,
     run_nautilus_signal_backtest,
     select_pooled_trailing_schedule,
     validate_trailing_offset_type,
@@ -344,3 +347,12 @@ def test_dagster_definitions_load_cleanly() -> None:
         "risk_kernel_sha256_attestation",
         "paper_farm_performance_snapshot",
     } <= asset_keys
+
+
+def test_rsp_regime_benchmark_and_sip_23x5_dark_boats_window() -> None:
+    assert "RSP" in REGIME_BENCHMARK_SYMBOLS
+    assert date(2026, 12, 6) == SIP_23X5_CUTOVER_DATE
+    assert not is_sip_dark_boats_overnight_window_et(_et_ns(2026, 10, 15, 20, 30))
+    assert is_sip_dark_boats_overnight_window_et(_et_ns(2026, 12, 7, 20, 30))
+    assert not is_sip_dark_boats_overnight_window_et(_et_ns(2026, 12, 7, 21, 5))
+    assert not is_sip_dark_boats_overnight_window_et(_et_ns(2026, 12, 12, 20, 30))
