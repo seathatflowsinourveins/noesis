@@ -8,7 +8,7 @@ Display-only 4-script Pine v6 cockpit + Half-Automation order ticket staging & p
 
 - **Non-Repainting Pine v6:** All 4 scripts in `pine/` enforce `barstate.isconfirmed`, `gaps=barmerge.gaps_off`, and `lookahead=barmerge.lookahead_off`.
 - **Fail-Closed Alert Bridge:** Every inbound alert validates against Draft 2020-12 `src/tier0_sota/tv/schema_v1.json` in `src/tier0_sota/tv/bridge.py` (`TvAlertV1`, `extra="forbid"`) with `qty = 1`, `semi_auto_confirmed = false`, `60s` re-entry cooldown, exact `Decimal` Rule-612 inward stops (`<= 2.00%` cap, Z3-proven in `evals/formal_risk_z3.py`), `MAX_INPUT_AGE_MS = 900_000` (15m) on `--live-intake`, and fail-closed live endpoint refusal (`paper-api` / Paper `:4002` only).
-- **Zero Custom HTTP Server & Zero CDP Boundary:** `rules/zero_self_invention.yml` (`no-custom-dashboard-server`, `no-raw-http-socket-in-src`) prohibits custom Python HTTP webhook servers, and [ADR-0027](adr/ADR-0027.md) blocks TradingView Desktop CDP attachment (`:9223`), unofficial scrapers, and proprietary SaaS webhook relays. Live auto-refreshing analytics run via upstream `L10` portals (`FINOS Workspace :1420`, `OpenBB :6900`, `Caddy :8793/tv_sota_pack/`, `DuckDB SQL UI :4213`, `Grafana :3001`, `Dagster :3000`).
+- **Zero Custom HTTP Server & Zero CDP Boundary:** `rules/zero_self_invention.yml` (`no-custom-dashboard-server`, `no-raw-http-socket-in-src`) prohibits custom Python HTTP webhook servers, and [ADR-0027](adr/ADR-0027.md) blocks TradingView Desktop CDP attachment (`:9223`), unofficial scrapers, and proprietary SaaS webhook relays (including TradersPost's commercial SaaS relay). For official first-party watchlist CRUD, alert management, and Pine v6 compilation/backtesting without CDP, connect TradingView's hosted Streamable HTTP + OAuth 2.1 MCP (`https://mcp.tradingview.com/mcp`) at the user/IDE level (see Section 7). Live auto-refreshing analytics run via upstream `L10` portals (`FINOS Workspace :1420`, `OpenBB :6900`, `Caddy :8793/tv_sota_pack/`, `DuckDB SQL UI :4213`, `Grafana :3001`, `Dagster :3000`).
 - **Paper-Only Capacity vs Dormant Stage-5 Reference Spec (`src/tier0_sota/engine.py:EXECUTION_VENUE_PROFILES`, [ADR-0020](adr/ADR-0020.md)):**
 
 | Venue Profile | Environment | Rate Limit | Exit Reserve | Status |
@@ -141,3 +141,53 @@ tv-e2e                                         # Run ruff, ty, and pytest tests/
 ```
 
 > **Note:** On Windows, if `Z:\noesis\.venv\Scripts\python.exe` is out of sync, `scripts/tv_console.ps1` automatically falls back to `uv run --no-sync python` or prints actionable repair/WSL2 instructions.
+
+---
+
+## 7. TradingView MCP Connectors (Official OAuth 2.1 + Zero-CDP MIT Companions)
+
+### 7.1 Official TradingView First-Party MCP (`https://mcp.tradingview.com/mcp`)
+
+- **Transport, Auth & Plan:** Official TradingView hosted **Streamable HTTP + OAuth 2.1** MCP (`https://mcp.tradingview.com/mcp`, **Essential+ paid plans**, **zero CDP**, zero scraping).
+- **Supported Capabilities:**
+  - **Watchlists CRUD:** `list_watchlists`, `get_watchlist`, `get_active_watchlist`, `create_watchlist`, `delete_watchlist`, `add_to_watchlist`, `remove_from_watchlist`, `update_watchlist` (syncs exchange-qualified watchlists directly alongside `tier0_sota_tv_watchlists_live.txt` import).
+  - **Alerts CRUD + Logs:** Create, read, update, delete TradingView alerts and inspect trigger logs.
+  - **Official Pine v6 Compiler & Backtest Lifecycle:** `validate_pine_script`, `run_pine_indicator`, `run_pine_backtest` (including **Deep Backtesting**), `search_pine_scripts`, `get_pine_script_source`, `create_pine_script`, `update_pine_script`.
+- **Explicit Execution & Order-Preset Boundary:** TradingView's official MCP does **NOT** expose native Supercharts Order Panel Presets or direct broker order execution. Executable multi-situation 24/5 lossless trailing order presets therefore remain locked inside our local `nautilus-engine` + `src/tier0_sota/tv/tickets.py` + `src/tier0_sota/live/execution.py` (`paper_only = True`, `live_execution_enabled = False`, `qty = 1`, `semi_auto_confirmed = False`).
+
+### 7.2 Exact 1-Step OAuth Connector Setup (Preserving 4-Stdio-MCP Parity)
+
+> **Parity Guardrail (`5/5` Repo Configs + Preflight):** Never add `https://mcp.tradingview.com/mcp` to `.mcp.json`, `.claude/settings.json`, `.gemini/settings.json`, `opencode.json`, `.codex/config.toml`, or the WSL2 `~/.gemini/config/mcp_config.json` 4-stdio block. All 5 repository agent configs MUST preserve exact `4`-stdio-MCP parity (`codebase-memory`, `edgartools`, `nautilus-engine`, `xerj`), enforced mechanically by `tests/test_architecture_manifest.py` and `scripts/preflight_resume.sh`. Configure TradingView MCP strictly at the **user / IDE OAuth connector** layer:
+
+1. **Antigravity (AGY):** Open **MCP Store / Connectors -> Manage MCP Servers -> Add Remote Server (Streamable HTTP)** -> enter URL `https://mcp.tradingview.com/mcp` (user-level OAuth connector; do not edit repo `.mcp.json` or `~/.gemini/config/mcp_config.json`) -> click **Connect** and approve TradingView OAuth 2.1 in your browser.
+2. **Claude (Claude.ai / Claude Desktop / Claude Code user scope):**
+   - *Claude.ai / Claude Desktop:* **Settings -> Connectors -> Add custom connector** -> URL `https://mcp.tradingview.com/mcp` -> **Connect** -> sign in via TradingView OAuth 2.1.
+   - *Claude Code CLI (user-scoped only; leaves `.mcp.json` and `.claude/settings.json` untouched):*
+
+     ```bash
+     claude mcp add --transport http --scope user tradingview https://mcp.tradingview.com/mcp
+     ```
+
+     Then run `/mcp` in Claude Code and select **Authenticate** to finish TradingView OAuth 2.1.
+3. **Cursor (user-global `~/.cursor/mcp.json`):** Open **Cursor Settings -> Tools & MCP -> Add Custom MCP** (edits user-level `~/.cursor/mcp.json` only) and add:
+
+   ```json
+   {
+     "mcpServers": {
+       "tradingview": {
+         "url": "https://mcp.tradingview.com/mcp"
+       }
+     }
+   }
+   ```
+
+   Then click **Connect / Needs Login** in Cursor's MCP panel to complete TradingView OAuth 2.1.
+
+### 7.3 Zero-CDP MIT Pine v6 Local Companion MCPs (On-Demand)
+
+For offline/local Pine v6 syntax and reference lookup without adding packages to `pyproject.toml` or modifying the 5 repo MCP configs:
+
+| Companion MCP | License | On-Demand Invocation | Scope & SPDX Firewall Rule |
+|---|---|---|---|
+| `paulieb89/pinescript-mcp` | `MIT` | `uvx pinescript-mcp` (PyPI `pinescript-mcp==0.7.7`) | Zero-CDP MIT local Pine v6 docs/syntax lookup companion MCP. |
+| `TradersPost/pine-mcp` | `MIT` | `npx -y pinescript-mcp-server` | Zero-CDP MIT Node Pine v6 **docs MCP ONLY**. TradersPost's proprietary commercial SaaS webhook relay remains **explicitly excluded** under the SPDX OSI firewall ([ADR-0027](adr/ADR-0027.md)). |

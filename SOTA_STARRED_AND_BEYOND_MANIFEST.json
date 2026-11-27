@@ -53,7 +53,7 @@
       "slug": "tradingview-mcp",
       "layer": "L15",
       "decision": "pruned",
-      "reason": "No official upstream repo; community tradingview-mcp forks (atilaahmettaner/tradingview-mcp, tradesdontlie/tradingview-mcp, Moon Dev CDP forks) rely on banned CDP (:9223) or undocumented scraping. Pine v6 + Pydantic TvAlertV1 + tradingview/lightweight-charts + nautilus-engine MCP is the ToU-compliant SOTA winner."
+      "reason": "Unofficial community tradingview-mcp forks (atilaahmettaner/tradingview-mcp, tradesdontlie/tradingview-mcp, Moon Dev CDP forks) rely on banned CDP (:9223) or undocumented scraping and remain permanently pruned. Use TradingView's official first-party hosted OAuth 2.1 MCP (https://mcp.tradingview.com/mcp, Streamable HTTP, zero CDP) for watchlists/alerts/Pine v6 validation+backtesting, paired with local nautilus-engine MCP + Pine v6 + Pydantic TvAlertV1 + tradingview/lightweight-charts."
     },
     {
       "slug": "tradingview/charting_library",
@@ -67,14 +67,14 @@
       "spdx": "Modified-MIT-Non-OSI",
       "layer": "L15",
       "decision": "excluded_spdx_firewall",
-      "reason": "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; track strict MIT paulieb89/pinescript-mcp (PyPI 0.7.7) or reference-only trugurpala/pinescriptv6."
+      "reason": "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; use official https://mcp.tradingview.com/mcp or strict MIT local companion MCPs paulieb89/pinescript-mcp (PyPI pinescript-mcp==0.7.7) and TradersPost/pine-mcp (Pine docs MCP only) or reference-only trugurpala/pinescriptv6."
     },
     {
       "slug": "folknor/pine-tools",
       "spdx": "NOASSERTION",
       "layer": "L15",
       "decision": "excluded_spdx_firewall",
-      "reason": "GitHub repository reports license NOASSERTION (fails Tier-0 SPDX OSI firewall) and is unpublished on PyPI/npm; track strict MIT paulieb89/pinescript-mcp (PyPI) instead."
+      "reason": "GitHub repository reports license NOASSERTION (fails Tier-0 SPDX OSI firewall) and is unpublished on PyPI/npm; use official https://mcp.tradingview.com/mcp or strict MIT local companion MCPs paulieb89/pinescript-mcp (uvx) and TradersPost/pine-mcp (npx, Pine docs MCP only)."
     },
     {
       "slug": "tradingview-pine-seeds/docs",
@@ -130,7 +130,7 @@
       "spdx": "Proprietary-SaaS",
       "layer": "L4",
       "decision": "excluded_spdx_and_loopback",
-      "reason": "Commercial cloud webhook relays (TradersPost, 3Commas, CrossTrade, PickMyTrade, Autoview) violate SPDX OSI firewall, loopback isolation, and semi_auto_confirmed=false."
+      "reason": "Commercial cloud webhook relays (TradersPost proprietary commercial SaaS webhook relay — explicitly distinct from MIT TradersPost/pine-mcp Pine docs MCP — plus 3Commas, CrossTrade, PickMyTrade, Autoview) violate SPDX OSI firewall, loopback isolation, and semi_auto_confirmed=false."
     }
   ],
   "active_winners_by_layer": {
@@ -401,7 +401,29 @@
         {"slug": "vectorize-io/hindsight", "trigger": "long-horizon agent memory"},
         {"slug": "alpacahq/alpaca-mcp-server", "mode": "paper-only", "trigger": "paper-api.alpaca.markets MCP"},
         {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "status": "reference_only_defer", "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"},
-        {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "trigger": "only viable published zero-CDP MIT Pine Script v6 docs/syntax MCP (optional uvx outside pyproject.toml)"}
+        {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "invocation": "uvx pinescript-mcp", "role": "zero_cdp_local_pine_v6_companion_mcp", "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"},
+        {"slug": "TradersPost/pine-mcp", "spdx": "MIT", "zero_cdp": true, "npm": "pinescript-mcp-server", "invocation": "npx -y pinescript-mcp-server", "role": "zero_cdp_local_pine_v6_docs_companion_mcp", "scope_boundary": "MIT Pine Script docs MCP ONLY; TradersPost proprietary commercial SaaS webhook relay remains excluded under SPDX OSI firewall", "trigger": "on-demand zero-CDP MIT Node Pine Script v6 docs companion MCP via npx -y pinescript-mcp-server (Pine docs MCP only; commercial SaaS relay excluded)"},
+        {
+          "slug": "tradingview/mcp-official",
+          "endpoint": "https://mcp.tradingview.com/mcp",
+          "transport": "streamable-http",
+          "auth": "oauth-2.1",
+          "plan_requirement": "TradingView Essential+ paid plans",
+          "zero_cdp": true,
+          "status": "admitted_user_oauth_connector",
+          "repo_mcp_parity_impact": "none (user/IDE OAuth connector in Antigravity/Claude/Cursor; preserves exact 4-stdio-MCP parity across all 5 repo configs)",
+          "capabilities": [
+            "watchlists_crud: list_watchlists, get_watchlist, get_active_watchlist, create_watchlist, delete_watchlist, add_to_watchlist, remove_from_watchlist, update_watchlist",
+            "alerts_crud_and_logs",
+            "pine_v6_compiler_and_backtest: validate_pine_script, run_pine_indicator, run_pine_backtest (incl. Deep Backtesting), search_pine_scripts, get_pine_script_source, create_pine_script, update_pine_script"
+          ],
+          "explicit_exclusions": [
+            "no native Supercharts Order Panel Presets",
+            "no direct broker order execution"
+          ],
+          "local_execution_ssot": "nautilus-engine + src/tier0_sota/tv/tickets.py + src/tier0_sota/live/execution.py (paper_only=True, live_execution_enabled=False, qty=1, semi_auto_confirmed=False)",
+          "trigger": "Official TradingView first-party hosted Streamable HTTP + OAuth 2.1 MCP for watchlists CRUD, alerts CRUD/logs, and Pine v6 validation/backtest (zero CDP)"
+        }
       ]
     }
   }
