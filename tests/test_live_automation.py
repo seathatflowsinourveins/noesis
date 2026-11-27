@@ -7428,3 +7428,212 @@ def test_tca_order_level_notional_weighting_and_exit_context_trigger_timestamp(
     assert ctx[2] == Decimal("11.99")
     assert ctx[3] == Decimal("11.99")
     assert ctx[8] == fill_ts
+
+
+def test_prewall_ushape_tod_rvol_curve_early_close_and_flat_vs_shock_open(
+    tmp_path: Path,
+) -> None:
+    """Pre-wall U-shape ToD RVOL: monotonicity, checkpoints, early-close ec_scale, FPR vs shock."""
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+
+    from tier0_sota.live.scanner import (
+        TOD_RVOL_EARLY_CLOSE_SCALE,
+        TOD_RVOL_PM_SHARE_OF_FULLDAY,
+        TOD_RVOL_RTH_CDF_B,
+        TOD_RVOL_RTH_CDF_ONE_MINUS_B,
+        TOD_RVOL_RTH_CDF_P,
+        TOD_RVOL_RTH_SHARE_OF_FULLDAY,
+        ExtremeMoverScanner,
+        _compute_same_session_rvol,
+        _estimate_session_elapsed_fraction,
+        _xnys_rth_close_hm,
+        compute_rth_tod_cdf,
+        compute_tod_expected_volume_fraction,
+        compute_tod_rvol,
+    )
+
+    ny = ZoneInfo("America/New_York")
+
+    # 1. Strict monotonicity & bounds: 0 < F_RTH(u) <= 1.0 on regular (390m) & early-close (210m).
+    for sess_mins in (390.0, 210.0):
+        grid = [1.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0, 90.0, 120.0, 180.0, sess_mins]
+        vals = [compute_rth_tod_cdf(m, rth_session_mins=sess_mins) for m in grid]
+        assert all(0.0 < v <= 1.0 for v in vals)
+        assert all(vals[i] < vals[i + 1] for i in range(len(vals) - 1))
+        assert vals[-1] == pytest.approx(1.0, abs=1e-9)
+        assert compute_rth_tod_cdf(0.0, rth_session_mins=sess_mins) == pytest.approx(vals[0])
+        assert compute_rth_tod_cdf(sess_mins + 50.0, rth_session_mins=sess_mins) == pytest.approx(
+            1.0
+        )
+
+    # 2. Regular RTH checkpoints (09:35, 09:45, 10:00, 10:30 ET on regular session 2026-10-15 EDT).
+    assert _xnys_rth_close_hm(date(2026, 10, 15)) == 960
+    reg_checkpoints = [(9, 35, 5.0), (9, 45, 15.0), (10, 0, 30.0), (10, 30, 60.0)]
+    prev_frac = 0.0
+    for hh, mm, elapsed_m in reg_checkpoints:
+        ts_utc = datetime(2026, 10, 15, hh, mm, tzinfo=ny).astimezone(UTC)
+        u = elapsed_m / 390.0
+        expected_cdf = TOD_RVOL_RTH_CDF_ONE_MINUS_B * (
+            u**TOD_RVOL_RTH_CDF_P
+        ) + TOD_RVOL_RTH_CDF_B * (u**6)
+        expected_fullday = (
+            TOD_RVOL_PM_SHARE_OF_FULLDAY + TOD_RVOL_RTH_SHARE_OF_FULLDAY * expected_cdf
+        )
+        got_fullday = compute_tod_expected_volume_fraction(ts_utc, "RTH")
+        assert got_fullday == pytest.approx(expected_fullday, rel=1e-6)
+        assert _estimate_session_elapsed_fraction(ts_utc, "RTH") == pytest.approx(got_fullday)
+        assert compute_tod_expected_volume_fraction(
+            ts_utc, "RTH", include_premarket=False
+        ) == pytest.approx(TOD_RVOL_RTH_SHARE_OF_FULLDAY * expected_cdf, rel=1e-6)
+        # Strictly above legacy naive linear clock max(0.05, m / 390) across opening hour.
+        assert got_fullday > max(0.05, elapsed_m / 390.0)
+        assert got_fullday > prev_frac
+        prev_frac = got_fullday
+
+    # 3. XNYS 13:00 ET early-close sessions (pre-wall 2025-11-28 & Black Friday 2026-11-27).
+    for ec_day in (date(2025, 11, 28), date(2026, 11, 27)):
+        assert _xnys_rth_close_hm(ec_day) == 780
+        ts_ec_945 = datetime(ec_day.year, ec_day.month, ec_day.day, 9, 45, tzinfo=ny).astimezone(
+            UTC
+        )
+        expected_ec_945 = TOD_RVOL_EARLY_CLOSE_SCALE * (
+            TOD_RVOL_PM_SHARE_OF_FULLDAY
+            + TOD_RVOL_RTH_SHARE_OF_FULLDAY * compute_rth_tod_cdf(15.0, rth_session_mins=210.0)
+        )
+        assert compute_tod_expected_volume_fraction(ts_ec_945, "RTH") == pytest.approx(
+            expected_ec_945, rel=1e-6
+        )
+        ts_ec_ah = datetime(ec_day.year, ec_day.month, ec_day.day, 13, 30, tzinfo=ny).astimezone(
+            UTC
+        )
+        assert compute_tod_expected_volume_fraction(ts_ec_ah, "AFTER_HOURS") == pytest.approx(
+            TOD_RVOL_EARLY_CLOSE_SCALE
+        )
+
+    # 4. Flat-open FPR protection vs shock-open detection (direct formula + 09:30 auction guard).
+    reg_945_utc = datetime(2026, 10, 15, 9, 45, tzinfo=ny).astimezone(UTC)
+    flat_daily_vol = 1_067_000.0  # empirical median 15m cumulative volume (~10.67% of 10M full day)
+    shock_daily_vol = 2_800_000.0  # true shock open (~28% of 10M full day in first 15m)
+    flat_rvol = compute_tod_rvol(flat_daily_vol, 10_000_000.0, reg_945_utc, "RTH")
+    shock_rvol = compute_tod_rvol(shock_daily_vol, 10_000_000.0, reg_945_utc, "RTH")
+    assert flat_rvol < 1.5  # legacy linear clock falsely gave 0.1067 / 0.05 = 2.13x >= 1.5
+    assert shock_rvol >= 2.0  # shock open cleanly clears min_rvol >= 1.5 & ignition >= 2.0
+
+    # Early-close Black Friday shock: 16% of regular-day vol in 15m would fail without ec_scale.
+    bf_945_utc = datetime(2026, 11, 27, 9, 45, tzinfo=ny).astimezone(UTC)
+    bf_shock_rvol = compute_tod_rvol(1_600_000.0, 10_000_000.0, bf_945_utc, "RTH")
+    assert bf_shock_rvol >= 2.0
+
+    # _compute_same_session_rvol excludes the 09:30 ET opening-auction bar from RTH prior baseline.
+    open_930_utc = datetime(2026, 10, 15, 9, 30, tzinfo=ny).astimezone(UTC)
+    rth_15_bars = [
+        _make_ts_bar(
+            open_930_utc + timedelta(minutes=i),
+            100.0,
+            100.2,
+            500_000.0 if i == 0 else (160_000.0 if i >= 10 else 100_000.0),
+        )
+        for i in range(15)
+    ]
+    assert _compute_same_session_rvol(rth_15_bars, "RTH") == pytest.approx(1.6, rel=1e-6)
+
+    # 5. End-to-end ExtremeMoverScanner.scan() at 09:45 ET on regular day & Black Friday close.
+    def _run_open15_scan(
+        scan_utc: datetime, snaps: dict[str, Any], bars: dict[str, list[Any]]
+    ) -> dict[str, Any]:
+        class _EmptyScreener:
+            def get_most_actives(self, _req: Any) -> SimpleNamespace:
+                return SimpleNamespace(most_actives=[])
+
+            def get_market_movers(self, _req: Any) -> SimpleNamespace:
+                return SimpleNamespace(gainers=[], losers=[])
+
+        class _Trading:
+            def get_all_assets(self, _req: Any) -> list[SimpleNamespace]:
+                return [SimpleNamespace(symbol=s, tradable=True, exchange="NASDAQ") for s in snaps]
+
+            def get_asset(self, sym: str) -> SimpleNamespace:
+                return SimpleNamespace(
+                    symbol=sym, shortable=True, easy_to_borrow=True, exchange="NASDAQ"
+                )
+
+        class _Data:
+            def get_stock_snapshot(self, req: Any) -> dict[str, Any]:
+                syms = getattr(req, "symbol_or_symbols", ())
+                syms = [syms] if isinstance(syms, str) else list(syms)
+                return {s: snaps[s] for s in syms if s in snaps}
+
+            def get_stock_bars(self, req: Any) -> SimpleNamespace:
+                syms = getattr(req, "symbol_or_symbols", ())
+                return SimpleNamespace(data={s: bars[s] for s in syms if s in bars})
+
+        sc = ExtremeMoverScanner(
+            screener_client=_EmptyScreener(),
+            data_client=_Data(),
+            trading_client=_Trading(),
+            pin_symbols=tuple(snaps),
+            universe_cache_path=tmp_path / f"nms_{scan_utc.date().isoformat()}.json",
+        )
+        return sc.scan(top_k=10, now_utc=scan_utc)
+
+    def _mk_snap(px: float, prev_c: float, dvol: float, pvol: float) -> SimpleNamespace:
+        return SimpleNamespace(
+            latest_trade=SimpleNamespace(price=px),
+            daily_bar=SimpleNamespace(open=prev_c, close=px, volume=dvol, vwap=(prev_c + px) / 2.0),
+            previous_daily_bar=SimpleNamespace(close=prev_c, volume=pvol),
+        )
+
+    # Regular 09:45 ET: FLAT has normal 10.67% volume (with noisy last-5m bar uptick) -> blocked;
+    # SOXS has 28% crash volume (even with tapering post-open bars) -> extreme_mover_eligible True.
+    reg_bars = {
+        "FLAT": [
+            _make_ts_bar(
+                open_930_utc + timedelta(minutes=i),
+                50.0,
+                51.8,  # +3.6% move, but flat full-day volume pace
+                40_000.0 if i < 10 else 120_000.0,
+            )
+            for i in range(15)
+        ],
+        "SOXS": [
+            _make_ts_bar(
+                open_930_utc + timedelta(minutes=i),
+                30.0,
+                31.8,  # +6.0% surge on heavy opening shock volume that tapers slightly after 09:30
+                600_000.0 if i == 0 else (200_000.0 if i < 10 else 110_000.0),
+            )
+            for i in range(15)
+        ],
+    }
+    reg_snaps = {
+        "FLAT": _mk_snap(51.8, 50.0, flat_daily_vol, 10_000_000.0),
+        "SOXS": _mk_snap(31.8, 30.0, shock_daily_vol, 10_000_000.0),
+    }
+    reg_doc = _run_open15_scan(reg_945_utc, reg_snaps, reg_bars)
+    reg_by_sym = {e["symbol"]: e for e in reg_doc["entries"]}
+    assert reg_doc["full_market_sweep_summary"]["tod_rvol_early_close"] is False
+    assert reg_by_sym["FLAT"]["rvol_normalized"] < 1.5
+    assert reg_by_sym["FLAT"]["extreme_mover_eligible"] is False
+    assert reg_by_sym["SOXS"]["rvol_normalized"] >= 2.0
+    assert reg_by_sym["SOXS"]["extreme_mover_eligible"] is True
+
+    # Black Friday early-close 09:45 ET: SOXS 16% of regular-day volume passes via ec_scale=0.4026.
+    bf_open_930 = datetime(2026, 11, 27, 9, 30, tzinfo=ny).astimezone(UTC)
+    bf_bars = {
+        "SOXS": [
+            _make_ts_bar(
+                bf_open_930 + timedelta(minutes=i),
+                30.0,
+                31.6,
+                400_000.0 if i == 0 else (120_000.0 if i < 10 else 75_000.0),
+            )
+            for i in range(15)
+        ]
+    }
+    bf_snaps = {"SOXS": _mk_snap(31.6, 30.0, 1_600_000.0, 10_000_000.0)}
+    bf_doc = _run_open15_scan(bf_945_utc, bf_snaps, bf_bars)
+    bf_by_sym = {e["symbol"]: e for e in bf_doc["entries"]}
+    assert bf_doc["full_market_sweep_summary"]["tod_rvol_early_close"] is True
+    assert bf_by_sym["SOXS"]["rvol_normalized"] >= 2.0
+    assert bf_by_sym["SOXS"]["extreme_mover_eligible"] is True

@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -157,17 +158,89 @@ def _is_warrant_or_right_symbol(sym: str) -> bool:
     return len(s) == 5 and s[-1] in {"W", "R", "U"}
 
 
-def _estimate_session_elapsed_fraction(now_utc: datetime, sess: str) -> float:
-    """Causal elapsed fraction of the active US session for time-of-day pace RVOL."""
+# Strictly causal pre-wall (<= 2026-10-15) monotone U-shape RTH cumulative volume CDF
+# fitted on 40 train sessions (2026-07-23..2026-09-17, 4,116 liquid symbol-days) and
+# 4 pre-wall XNYS 13:00 ET early-close sessions (sim_tod_rvol_prewall_study.json, ADR-0028).
+TOD_RVOL_RTH_CDF_ONE_MINUS_B: float = 0.823262
+TOD_RVOL_RTH_CDF_B: float = 0.176738
+TOD_RVOL_RTH_CDF_P: float = 0.596474
+TOD_RVOL_RTH_SHARE_OF_FULLDAY: float = 0.83018
+TOD_RVOL_PM_SHARE_OF_FULLDAY: float = 0.01871
+TOD_RVOL_EARLY_CLOSE_SCALE: float = 0.4026
+
+
+@lru_cache(maxsize=2048)
+def _xnys_rth_close_hm(ny_day: date) -> int:
+    """Return XNYS RTH close in ET minutes (960 regular 16:00 ET, 780 early close 13:00 ET)."""
+    from exchange_calendars.errors import DateOutOfBounds
+
+    xnys = disc.get_xnys_calendar()
+    try:
+        if not (xnys.first_session.date() <= ny_day <= xnys.last_session.date()):
+            return 960
+        iso = ny_day.isoformat()
+        if not xnys.is_session(iso):
+            return 960
+        close_et = xnys.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
+        return close_et.hour * 60 + close_et.minute
+    except (DateOutOfBounds, ValueError, TypeError, KeyError):
+        return 960
+
+
+def compute_rth_tod_cdf(elapsed_rth_mins: float, *, rth_session_mins: float = 390.0) -> float:
+    """Pre-wall (<= 2026-10-15) monotone U-shape RTH cumulative volume CDF F_RTH(u) in (0, 1]."""
+    sess_mins = max(1.0, float(rth_session_mins))
+    u_min = 1.0 / sess_mins
+    u = max(u_min, min(1.0, float(elapsed_rth_mins) / sess_mins))
+    cdf = TOD_RVOL_RTH_CDF_ONE_MINUS_B * (u**TOD_RVOL_RTH_CDF_P) + TOD_RVOL_RTH_CDF_B * (u**6)
+    return max(1e-6, min(1.0, cdf))
+
+
+def compute_tod_expected_volume_fraction(
+    now_utc: datetime,
+    sess: str,
+    *,
+    include_premarket: bool = True,
+) -> float:
+    """Expected cumulative full-day volume fraction at `now_utc` using pre-wall U-shape ToD CDF."""
     ny = now_utc.astimezone(_NY_TZ)
     mins = ny.hour * 60 + ny.minute + ny.second / 60.0
     if sess == "RTH":
-        return max(0.05, min(1.0, (mins - 570.0) / 390.0))
+        rth_close_hm = _xnys_rth_close_hm(ny.date())
+        rth_session_mins = max(60.0, float(rth_close_hm - 570))
+        ec_scale = TOD_RVOL_EARLY_CLOSE_SCALE if rth_close_hm < 960 else 1.0
+        f_rth = compute_rth_tod_cdf(mins - 570.0, rth_session_mins=rth_session_mins)
+        pm_part = TOD_RVOL_PM_SHARE_OF_FULLDAY if include_premarket else 0.0
+        base_frac = pm_part + TOD_RVOL_RTH_SHARE_OF_FULLDAY * f_rth
+        return max(1e-4, min(1.0, ec_scale * base_frac))
     if sess == "PRE_MARKET":
         return max(0.10, min(1.0, (mins - 240.0) / 330.0))
     if sess == "AFTER_HOURS":
-        return 1.0
+        rth_close_hm = _xnys_rth_close_hm(ny.date())
+        return TOD_RVOL_EARLY_CLOSE_SCALE if rth_close_hm < 960 else 1.0
     return 0.25
+
+
+def compute_tod_rvol(
+    cumulative_vol: float,
+    baseline_daily_vol: float,
+    now_utc: datetime,
+    sess: str,
+    *,
+    include_premarket: bool = True,
+) -> float:
+    """Causal Time-of-Day normalized RVOL using the pre-wall U-shape volume CDF."""
+    if cumulative_vol <= 0.0 or baseline_daily_vol <= 0.0 or sess == "CLOSED":
+        return 0.0
+    expected_frac = compute_tod_expected_volume_fraction(
+        now_utc, sess, include_premarket=include_premarket
+    )
+    return (cumulative_vol / baseline_daily_vol) / expected_frac
+
+
+def _estimate_session_elapsed_fraction(now_utc: datetime, sess: str) -> float:
+    """Causal expected cumulative volume fraction of the active US session for ToD pace RVOL."""
+    return compute_tod_expected_volume_fraction(now_utc, sess, include_premarket=True)
 
 
 def _classify_mover_stage(daily_pct: float, tod_rvol: float) -> str:
@@ -243,6 +316,15 @@ def _bar_session(bar: Any) -> str:
     return eng.classify_us_equity_session_et(int(ts.timestamp() * 1_000_000_000))
 
 
+def _is_rth_open_auction_bar(bar: Any) -> bool:
+    """Return True when bar timestamp is the 09:30 ET RTH opening-auction minute."""
+    ts = _ga(bar, "timestamp")
+    if ts is None:
+        return False
+    ny = ts.astimezone(_NY_TZ)
+    return ny.hour == 9 and ny.minute == 30
+
+
 def _compute_same_session_rvol(
     bars: Sequence[Any], sess: str, *, early_fallback_rvol: float = 1.5
 ) -> float:
@@ -255,6 +337,10 @@ def _compute_same_session_rvol(
     if len(sess_bars) >= 6:
         prior = sess_bars[:-5]
         recent = sess_bars[-5:]
+        if sess == "RTH" and len(prior) >= 3:
+            non_open_prior = [b for b in prior if not _is_rth_open_auction_bar(b)]
+            if len(non_open_prior) >= 2:
+                prior = non_open_prior
         base_v = sum(_f(_ga(b, "volume")) for b in prior) / len(prior)
         rec_v = sum(_f(_ga(b, "volume")) for b in recent) / len(recent)
         return (rec_v / base_v) if base_v > 0 else 0.0
@@ -1736,6 +1822,8 @@ class ExtremeMoverScanner:
             "parabolic_climax_count": 0,
             "min_price_usd": float(self.early_mover_min_price),
             "min_dollar_vol_usd": float(self.early_mover_min_dollar_vol),
+            "tod_rvol_expected_frac": 0.0,
+            "tod_rvol_early_close": False,
             "elapsed_secs": 0.0,
         }
         dc = self.data_client
@@ -1752,6 +1840,7 @@ class ExtremeMoverScanner:
 
         syms = list(universe)
         elapsed_frac = _estimate_session_elapsed_fraction(now_utc, sess)
+        is_early_close_day = _xnys_rth_close_hm(now_utc.astimezone(_NY_TZ).date()) < 960
         chunks = [syms[i : i + 1000] for i in range(0, len(syms), 1000)]
 
         def _fetch_chunk(batch: list[str]) -> Mapping[str, Any]:
@@ -1902,6 +1991,8 @@ class ExtremeMoverScanner:
             ),
             "min_price_usd": float(self.early_mover_min_price),
             "min_dollar_vol_usd": float(self.early_mover_min_dollar_vol),
+            "tod_rvol_expected_frac": round(elapsed_frac, 5),
+            "tod_rvol_early_close": is_early_close_day,
             "elapsed_secs": round(time.monotonic() - t0, 2),
         }
         return top_full, top_early, summary, snap_meta
@@ -2195,6 +2286,8 @@ class ExtremeMoverScanner:
                 f"basis={regime_basis})."
             )
 
+        now_ny = now.astimezone(_NY_TZ)
+        elapsed_rth_mins = (now_ny.hour * 60 + now_ny.minute + now_ny.second / 60.0) - 570.0
         scored: list[dict[str, Any]] = []
         for sym, meta in cands.items():
             sb = bars_map.get(sym) or []
@@ -2222,10 +2315,11 @@ class ExtremeMoverScanner:
             vol = max(float(meta["volume"]), sum(_f(_ga(b, "volume")) for b in sb))
             dollar_vol = px * vol
             snap_rvol = _f((sweep_snap_meta.get(sym) or {}).get("tod_rvol"), 0.0)
-            rvol = max(
-                _compute_same_session_rvol(sb, sess, early_fallback_rvol=self.min_rvol),
-                snap_rvol,
-            )
+            same_sess_rvol = _compute_same_session_rvol(sb, sess, early_fallback_rvol=self.min_rvol)
+            if sess == "RTH" and snap_rvol > 0.0 and 0.0 <= elapsed_rth_mins < 60.0:
+                rvol = snap_rvol
+            else:
+                rvol = max(same_sess_rvol, snap_rvol)
             prior_close = (
                 snap_prev_close
                 if snap_prev_close is not None
