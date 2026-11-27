@@ -933,8 +933,9 @@ def submit_confirmed_tv_preset_paper(
         quote = data.get_stock_latest_quote(
             StockLatestQuoteRequest(symbol_or_symbols=sym, feed=feed)
         )[sym]
+        quote_now = now_utc or datetime.now(UTC)
         bid, ask = Decimal(str(quote.bid_price)), Decimal(str(quote.ask_price))
-        if not 0 <= (now - quote.timestamp).total_seconds() <= 5:
+        if not 0 <= (quote_now - quote.timestamp).total_seconds() <= 5:
             raise ValueError(f"Stale or future live quote for {sym}")
         if not quote_microstructure_allows_entry(bid, ask, session):
             raise ValueError(

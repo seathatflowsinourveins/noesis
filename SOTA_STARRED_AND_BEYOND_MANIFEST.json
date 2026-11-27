@@ -67,7 +67,14 @@
       "spdx": "Modified-MIT-Non-OSI",
       "layer": "L15",
       "decision": "excluded_spdx_firewall",
-      "reason": "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; track strict MIT folknor/pine-tools or trugurpala/pinescriptv6."
+      "reason": "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; track strict MIT paulieb89/pinescript-mcp (PyPI 0.7.7) or reference-only trugurpala/pinescriptv6."
+    },
+    {
+      "slug": "folknor/pine-tools",
+      "spdx": "NOASSERTION",
+      "layer": "L15",
+      "decision": "excluded_spdx_firewall",
+      "reason": "GitHub repository reports license NOASSERTION (fails Tier-0 SPDX OSI firewall) and is unpublished on PyPI/npm; track strict MIT paulieb89/pinescript-mcp (PyPI) instead."
     },
     {
       "slug": "tradingview-pine-seeds/docs",
@@ -393,9 +400,8 @@
         {"slug": "upstash/context7", "trigger": "live versioned library docs MCP"},
         {"slug": "vectorize-io/hindsight", "trigger": "long-horizon agent memory"},
         {"slug": "alpacahq/alpaca-mcp-server", "mode": "paper-only", "trigger": "paper-api.alpaca.markets MCP"},
-        {"slug": "folknor/pine-tools", "spdx": "MIT", "vendored_libs_spdx": "MPL-2.0", "zero_cdp": true, "trigger": "offline CI semantic Pine Script v6 AST linting (pine-lint), LSP, or zero-CDP MCP validation"},
-        {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "trigger": "pure-Python Pine Script v6 lexer/parser (--agent-json) CI parse gate"},
-        {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "zero_cdp": true, "trigger": "dedicated zero-CDP Pine Script v6 docs/syntax lookup and static validation MCP (uvx)"}
+        {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "status": "reference_only_defer", "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"},
+        {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "trigger": "only viable published zero-CDP MIT Pine Script v6 docs/syntax MCP (optional uvx outside pyproject.toml)"}
       ]
     }
   }

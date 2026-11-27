@@ -2975,6 +2975,69 @@ def test_confirmed_tv_preset_paper_multi_situation_24x5_and_fail_closed(
         monkeypatch.setenv(bad_key, paper_env[bad_key])
 
 
+def test_confirmed_tv_preset_quote_freshness_uses_post_fetch_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import timedelta
+
+    staged = _stage_sample_tv_preset(
+        tmp_path,
+        symbol="SQQQ",
+        side="BUY",
+        session="OVERNIGHT",
+        trigger_price=46.50,
+        stop_price=46.04,
+        natr_pct=0.002,
+        trailing_schedule="tight_near_lossless",
+        order_type="STOP_LIMIT",
+        limit_collar_bps=50.0,
+    )
+    brokers = {acct: _TvConfirmBroker() for acct in ALPACA_LANE_PROFILES}
+    farm = PaperFarmCoordinator(tmp_path, alpaca_clients=brokers)
+
+    t0 = datetime(2026, 11, 27, 2, 30, 0, tzinfo=UTC)  # 21:30 ET OVERNIGHT
+    clock_state = {"now": t0}
+
+    class _AdvancingDatetime:
+        @staticmethod
+        def now(tz: object = None) -> datetime:
+            return clock_state["now"]
+
+    quote_ts = {"ts": t0 + timedelta(seconds=1, milliseconds=500)}
+
+    class _TickingQuotes:
+        def get_stock_latest_quote(self, _req: object) -> dict[str, SimpleNamespace]:
+            # Advance wall clock +2s (simulating refresh_accounts + quote HTTP RTT).
+            clock_state["now"] = t0 + timedelta(seconds=2)
+            return {
+                "SQQQ": SimpleNamespace(bid_price=46.48, ask_price=46.52, timestamp=quote_ts["ts"])
+            }
+
+    monkeypatch.setattr(execution, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(execution, "PaperFarmCoordinator", lambda _dir: farm)
+    monkeypatch.setattr(execution, "datetime", _AdvancingDatetime)
+    monkeypatch.setattr(
+        execution.ExtremeMoverScanner,
+        "from_env",
+        lambda *_a, **_kw: SimpleNamespace(data_client=_TickingQuotes()),
+    )
+
+    # Quote ticked 1.5s AFTER initial entry clock (0.5s BEFORE post-fetch quote_now) -> PASS.
+    res = execution.submit_confirmed_tv_preset_paper(
+        tmp_path, alert_id=str(staged["alert_id"]), qty=1, dry_run=True
+    )
+    assert res["ok"] is True and res["dry_run"] is True and res["symbol"] == "SQQQ"
+
+    # Genuinely stale (7s old vs quote_now) and future (+3s vs quote_now) still fail closed.
+    for bad_ts in (t0 - timedelta(seconds=5), t0 + timedelta(seconds=5)):
+        clock_state["now"] = t0
+        quote_ts["ts"] = bad_ts
+        with pytest.raises(ValueError, match="Stale or future live quote"):
+            execution.submit_confirmed_tv_preset_paper(
+                tmp_path, alert_id=str(staged["alert_id"]), qty=1, dry_run=True
+            )
+
+
 def test_scanner_trf_block_separation_exchange_and_overnight_core3_regime() -> None:
     from datetime import timedelta
 
