@@ -152,6 +152,7 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
 
     tca_rows = 0
     is_bps_samples: list[float] = []
+    liquid_ge10_samples: list[float] = []
     lanes_queried: list[str] = []
     duckdb_errors: list[str] = []
 
@@ -168,12 +169,27 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
                     ).fetchall()
                 }
                 if "paper_tca_fills" in tables:
-                    rows = con.execute(
-                        "SELECT implementation_shortfall_bps FROM paper_tca_fills "
-                        "WHERE implementation_shortfall_bps IS NOT NULL"
-                    ).fetchall()
-                    for (val,) in rows:
-                        is_bps_samples.append(float(val))
+                    cols = {
+                        str(r[0]).lower()
+                        for r in con.execute("DESCRIBE paper_tca_fills").fetchall()
+                    }
+                    if "fill_price" in cols:
+                        rows = con.execute(
+                            "SELECT implementation_shortfall_bps, fill_price FROM paper_tca_fills "
+                            "WHERE implementation_shortfall_bps IS NOT NULL"
+                        ).fetchall()
+                        for val, fpx in rows:
+                            v_f = float(val)
+                            is_bps_samples.append(v_f)
+                            if fpx is not None and float(fpx) >= 10.0:
+                                liquid_ge10_samples.append(v_f)
+                    else:
+                        rows = con.execute(
+                            "SELECT implementation_shortfall_bps FROM paper_tca_fills "
+                            "WHERE implementation_shortfall_bps IS NOT NULL"
+                        ).fetchall()
+                        for (val,) in rows:
+                            is_bps_samples.append(float(val))
                     tca_rows += len(rows)
             finally:
                 con.close()
@@ -192,6 +208,19 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
         if is_bps_samples
         else (round(perf_tca_bps, 4) if perf_tca_bps is not None else None)
     )
+    liquid_ge10_mean_is_bps = (
+        round(sum(liquid_ge10_samples) / len(liquid_ge10_samples), 4)
+        if liquid_ge10_samples
+        else None
+    )
+    liquid_ge10_median_is_bps: float | None = None
+    if liquid_ge10_samples:
+        s_liq = sorted(liquid_ge10_samples)
+        mid_i = len(s_liq) // 2
+        liquid_ge10_median_is_bps = round(
+            s_liq[mid_i] if len(s_liq) % 2 == 1 else 0.5 * (s_liq[mid_i - 1] + s_liq[mid_i]),
+            4,
+        )
     recommended_1x = (
         round(max(_DEFAULT_SIM_COST_BPS_1X, abs(realized_mean_is_bps)), 2)
         if realized_mean_is_bps is not None
@@ -206,6 +235,15 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
         "duckdb_tca_rows": tca_rows,
         "duckdb_errors": duckdb_errors,
         "realized_mean_is_bps": realized_mean_is_bps,
+        "liquid_ge10_tca_rows": len(liquid_ge10_samples),
+        "liquid_ge10_mean_is_bps": liquid_ge10_mean_is_bps,
+        "liquid_ge10_median_is_bps": liquid_ge10_median_is_bps,
+        "liquid_ge10_within_2x_envelope": (
+            True if liquid_ge10_mean_is_bps is None else abs(liquid_ge10_mean_is_bps) <= 8.0
+        ),
+        "rth_entry_collar_bps": 5.0,
+        "min_liquid_entry_price_usd": 10.0,
+        "max_rth_quoted_spread_bps": 12.0,
         "sim_default_cost_bps_1x": _DEFAULT_SIM_COST_BPS_1X,
         "sim_default_cost_bps_2x": _DEFAULT_SIM_COST_BPS_2X,
         "recommended_sim_cost_bps_1x": recommended_1x,

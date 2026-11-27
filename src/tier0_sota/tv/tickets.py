@@ -19,6 +19,7 @@ from tier0_sota import risk as _risk
 from tier0_sota.tv.bridge import (
     DEFAULT_MANIFEST_DIR,
     TvAlertV1,
+    persist_tv_preset_duckdb,
     refuse_live_endpoints,
     validate_tv_alert_payload,
 )
@@ -436,6 +437,10 @@ def refresh_tickets_from_paths(
             )
             + "\n",
         )
+        for preset in presets:
+            persist_tv_preset_duckdb(
+                out_dir / "tv_half_auto_audit.duckdb", preset, source="scanner_tickets"
+            )
     _atomic_write_text(out_dir / "live_half_auto_tickets.json", json.dumps(doc, indent=2) + "\n")
     _atomic_write_text(out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md", render_tickets_markdown(doc))
     _atomic_write_text(

@@ -190,8 +190,16 @@ def test_compounding_reflection_cross_leg_empirical_pbo_and_no_hardcoded_pbo(
     assert skf["solver"] == "clarabel"
     assert abs(skf["weights_sum"] - 1.0) <= 1e-5
     assert skf["min_weight"] >= 0.0
+    assert skf["oos_strictly_out_of_sample"] is True
+    assert skf["in_sample_observations"] >= 3 and skf["oos_observations"] >= 2
+    assert isinstance(skf["oos_mean_bps"], float)
     assert rep["dspy"]["live_reflection"]["executed_live"] is False
     assert rep["dspy"]["live_reflection"]["metric_score"] is None
+
+    # Second run on the same optuna.db must carry cumulative n_trials_total >= 6 (no undercounting).
+    rep2 = run_compounding_reflection(offline=True, mode="offline", manifest_dir=tmp_path)
+    assert rep2["optuna"]["trials_total"] == 6
+    assert rep2["cross_leg_falsification"]["COMBINED"]["n_trials_total"] >= 6
 
 
 def test_dspy_gepa_quantitative_metric_and_live_offline_separation() -> None:
@@ -379,7 +387,7 @@ def test_skfolio_clarabel_portfolio_optimization_and_causal_ml_discovery(tmp_pat
     assert bad_proc.returncode != 0
     assert "PreWallViolationError" in bad_proc.stderr
 
-    # mode="lake" with missing lake root must raise instead of silent fixture fallback.
+    # mode="lake" with missing lake root OR bars without real L1 must fail closed (no synthetic L1).
     from scripts.run_compounding_reflection import run_compounding_reflection
 
     with pytest.raises(FileNotFoundError):
@@ -387,4 +395,25 @@ def test_skfolio_clarabel_portfolio_optimization_and_causal_ml_discovery(tmp_pat
             mode="lake",
             manifest_dir=tmp_path / "manifests",
             lake_root=tmp_path / "missing-lake",
+        )
+
+    no_l1_lake = tmp_path / "bars_without_l1"
+    bar_dir = no_l1_lake / "alpaca-sip" / "raw" / "bars-1min" / "2026-10-15"
+    bar_dir.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(
+        {
+            "symbol": ["SMCI"] * 220,
+            "t_ns": [DISCOVERY_WALL_UTC_NS - (230 - i) * BAR_DURATION_NS for i in range(220)],
+            "o": [40.0] * 220,
+            "h": [40.1] * 220,
+            "l": [39.9] * 220,
+            "c": [40.0] * 220,
+            "v": [1000.0] * 220,
+        }
+    ).write_parquet(bar_dir / "chunk-000.parquet")
+    with pytest.raises(FileNotFoundError):
+        run_compounding_reflection(
+            mode="lake",
+            manifest_dir=tmp_path / "manifests2",
+            lake_root=no_l1_lake,
         )

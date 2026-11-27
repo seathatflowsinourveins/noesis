@@ -1329,10 +1329,12 @@ def test_paper_farm_start_loop_uses_zero_window_pythonw() -> None:
 
 
 def test_hidden_launcher_detects_remote_forbidden_ports() -> None:
+    import importlib.machinery
     import importlib.util
 
     pyw_path = Path(__file__).resolve().parents[1] / "scripts" / "paper_farm_loop_hidden.pyw"
-    spec = importlib.util.spec_from_file_location("paper_farm_loop_hidden", pyw_path)
+    loader = importlib.machinery.SourceFileLoader("paper_farm_loop_hidden", str(pyw_path))
+    spec = importlib.util.spec_from_loader("paper_farm_loop_hidden", loader)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -1389,3 +1391,166 @@ def test_paper_lane_preserves_intraday_drawdown_latch_and_rejects_non_paper_clie
             AlpacaPaperLane("ALPACA_PA1", tmp_path, bad, CrossLaneSymbolLock())
         with pytest.raises(PermissionError):
             PaperFarmCoordinator(tmp_path, alpaca_clients={"ALPACA_PA1": bad})
+
+
+def test_tca_slippage_guards_rth_5bps_collar_and_quote_microstructure(tmp_path: Path) -> None:
+    client = _FakeTradingClient()
+    lane = AlpacaPaperLane("ALPACA_PA1", tmp_path, client, CrossLaneSymbolLock())
+    res = lane.submit_guarded_entry(
+        symbol="NVDA", side="LONG", ref_price=Decimal("100.00"), session="RTH", now_s=5000.0
+    )
+    assert res is not None
+    # Default RTH collar is tightened to 5 bps (100.05) rather than 30 bps (100.30).
+    assert Decimal(str(res["limit_price"])) == Decimal("100.05")
+    with pytest.raises(ValueError, match="rth_entry_collar_pct"):
+        lane.submit_guarded_entry(
+            symbol="AMD",
+            side="LONG",
+            ref_price=Decimal("100.00"),
+            session="RTH",
+            rth_entry_collar_pct=Decimal("0.0030"),
+        )
+
+    # Reject sub-$10 tick-floor traps ($3.66 STLA, $4.65 FLNC) and wide spreads.
+    assert (
+        execution.quote_microstructure_allows_entry(Decimal("3.66"), Decimal("3.67"), "RTH")
+        is False
+    )
+    assert (
+        execution.quote_microstructure_allows_entry(Decimal("4.65"), Decimal("4.66"), "RTH")
+        is False
+    )
+    assert (
+        execution.quote_microstructure_allows_entry(Decimal("100.00"), Decimal("100.20"), "RTH")
+        is False
+    )
+    assert (
+        execution.quote_microstructure_allows_entry(Decimal("100.00"), Decimal("100.01"), "RTH")
+        is True
+    )
+    assert (
+        execution.quote_microstructure_allows_entry(
+            Decimal("31.20"), Decimal("31.28"), "PRE_MARKET"
+        )
+        is True
+    )
+    assert (
+        execution.quote_microstructure_allows_entry(
+            Decimal("31.20"), Decimal("31.40"), "PRE_MARKET"
+        )
+        is False
+    )
+
+
+def test_high_throughput_order_handle_3600_rpm_burst_and_24x5_parity(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
+
+    # 24/5 session parity on IBKR :4002 adapter
+    for sess, exp_stop_type, exp_outside, exp_collar in (
+        ("RTH", "STOP_MARKET", False, 0.0),
+        ("PRE_MARKET", "STOP_LIMIT", True, 35.0),
+        ("AFTER_HOURS", "STOP_LIMIT", True, 35.0),
+        ("OVERNIGHT", "STOP_LIMIT", True, 50.0),
+    ):
+        plan = coord.ibkr.plan_guarded_order(
+            symbol=f"S{sess[:3]}",
+            side="LONG",
+            ref_price=Decimal("100.00"),
+            session=sess,
+            now_s=100.0,
+        )
+        assert plan is not None
+        assert plan["paper_only"] is True and plan["live_execution_enabled"] is False
+        assert plan["entry_order_type"] == "LIMIT"
+        assert plan["stop_order_type"] == exp_stop_type
+        assert plan["outside_rth"] is exp_outside
+        assert plan["limit_collar_bps"] == exp_collar
+        loss_pct = (Decimal(str(plan["limit_price"])) - Decimal(str(plan["stop_price"]))) / Decimal(
+            str(plan["limit_price"])
+        )
+        assert Decimal("0") < loss_pct <= MAX_STOP_LOSS_PCT
+
+    # Invalid symbol / non-positive price fail closed without leaking CrossLaneSymbolLock.
+    assert (
+        coord.ibkr.plan_guarded_order(
+            symbol="   ", side="LONG", ref_price=Decimal("50.00"), session="RTH", now_s=105.0
+        )
+        is None
+    )
+    assert (
+        coord.ibkr.plan_guarded_order(
+            symbol="BADPX", side="LONG", ref_price=Decimal("0"), session="RTH", now_s=105.0
+        )
+        is None
+    )
+    assert "" not in coord.symbol_lock.snapshot()
+    assert "BADPX" not in coord.symbol_lock.snapshot()
+
+    # Multi-threaded CrossLaneSymbolLock contention: strictly one winner per symbol.
+    lock_coord = PaperFarmCoordinator(
+        tmp_path / "mt", alpaca_clients={a: _FakeTradingClient() for a in ALPACA_LANE_PROFILES}
+    )
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futs = [
+            pool.submit(
+                lock_coord.ibkr.plan_guarded_order,
+                symbol="CONTEND",
+                side="LONG",
+                ref_price=Decimal("50.00"),
+                session="RTH",
+                now_s=200.0,
+            )
+            for _ in range(16)
+        ]
+        winners = [f.result() for f in futs if f.result() is not None]
+    assert len(winners) == 1
+
+    # 3,400-symbol burst across IBKR (3,000 rpm) + PA1..PA3 (3x200 rpm) = 3,600 rpm combined:
+    # must admit exactly 2,700 (IBKR) + 540 (PA1..PA3) = 3,240 entries (>= 1,000 rpm target)
+    # with zero symbol overlap while strictly preserving all 360 protective exit reserve slots!
+    burst_coord = PaperFarmCoordinator(
+        tmp_path / "burst", alpaca_clients={a: _FakeTradingClient() for a in ALPACA_LANE_PROFILES}
+    )
+    etb = {"shortable": True, "easy_to_borrow": True, "borrow_source": "alpaca_paper_asset"}
+    entries = [
+        {"symbol": f"SYM{i:04d}", "last_price": 50.0, "extreme_mover_eligible": True, **etb}
+        for i in range(3400)
+    ]
+    res = burst_coord.dispatch_high_throughput(entries, macro_regime=1, session="RTH", now_s=9000.0)
+    assert res["combined_max_rpm"] == 3600
+    assert res["combined_exit_reserve_rpm"] == 360
+    assert res["admitted_count"] == 3240
+    assert res["rejected_count"] == 160
+    assert res["by_account"]["IBKR_DU_4002"] == 2700
+    assert res["by_account"]["ALPACA_PA1"] == 180
+    assert res["by_account"]["ALPACA_PA2"] == 180
+    assert res["by_account"]["ALPACA_PA3"] == 180
+    admitted_syms = [r["symbol"] for r in res["admitted"]]
+    assert len(admitted_syms) == len(set(admitted_syms))
+
+    # Even after entry saturation, protective exits MUST still be admitted from the 10% reserve.
+    exit_plan = burst_coord.ibkr.plan_guarded_order(
+        symbol="SYM0001",
+        side="SHORT",
+        ref_price=Decimal("50.00"),
+        session="RTH",
+        now_s=9001.0,
+        is_exit=True,
+    )
+    assert exit_plan is not None and exit_plan["is_exit"] is True
+    assert exit_plan["entry_order_type"] == "MARKET"
+    for lane in burst_coord.lanes.values():
+        assert lane.rate_budget.try_consume(9001.0, is_exit=False) is False
+        assert lane.rate_budget.try_consume(9001.0, is_exit=True) is True
+
+    # Non-finite quote prices reject cleanly without crashing dispatch_high_throughput.
+    bad_res = burst_coord.dispatch_high_throughput(
+        [{"symbol": "NANPX", "last_price": "nan", "extreme_mover_eligible": True, **etb}],
+        macro_regime=1,
+        session="RTH",
+        now_s=9002.0,
+    )
+    assert bad_res["admitted_count"] == 0 and bad_res["rejected_count"] == 1

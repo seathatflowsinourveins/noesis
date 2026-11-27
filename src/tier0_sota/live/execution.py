@@ -41,6 +41,21 @@ from tier0_sota.live.scanner import (
 
 LOG = logging.getLogger(__name__)
 TERMINAL = {"filled", "expired", "canceled", "rejected"}
+MIN_LIQUID_ENTRY_PRICE = Decimal("10.00")
+MAX_RTH_QUOTED_SPREAD_BPS = Decimal("12")
+MAX_EXT_QUOTED_SPREAD_BPS = Decimal("35")
+
+
+def quote_microstructure_allows_entry(bid: Decimal, ask: Decimal, session: str) -> bool:
+    """Reject sub-$10 tick-floor traps and wide-spread quotes that breach the 2x TCA envelope."""
+    if not (bid.is_finite() and ask.is_finite() and Decimal("0") < bid <= ask):
+        return False
+    mid = (bid + ask) / Decimal("2")
+    if mid < MIN_LIQUID_ENTRY_PRICE:
+        return False
+    spread_bps = ((ask - bid) / mid) * Decimal("10000")
+    max_spread = MAX_RTH_QUOTED_SPREAD_BPS if session == "RTH" else MAX_EXT_QUOTED_SPREAD_BPS
+    return spread_bps <= max_spread
 
 
 def cost_calibration_allows_entry(manifest_dir: Path) -> bool:
@@ -463,6 +478,7 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
         if (
             not 0 < bid <= ask
             or not 0 <= (datetime.now(UTC) - quote.timestamp).total_seconds() <= 5
+            or not quote_microstructure_allows_entry(bid, ask, session)
         ):
             return
         cid = (

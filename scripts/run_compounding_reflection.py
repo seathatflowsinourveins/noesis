@@ -35,6 +35,7 @@ from evals.tier0_inspect_eval import tier0_safety_eval, verify_inspect_safety_su
 from tier0_sota.discovery import (  # noqa: E402
     BAR_DURATION_NS,
     DISCOVERY_WALL_ISO,
+    DISCOVERY_WALL_UTC_NS,
     assert_pre_wall_date,
     generate_upstream_reversal_signals,
     load_minute_bars_day,
@@ -177,10 +178,19 @@ def _build_offline_prewall_dataset(
 def _load_lake_prewall_dataset(
     lake_root: Path,
     *,
-    preferred_symbols: tuple[str, ...] = ("NVDA", "SOXL", "TSLA", "SPY", "QQQ"),
+    preferred_symbols: tuple[str, ...] = (
+        "SMCI",
+        "ASTS",
+        "ROKU",
+        "MU",
+        "PLTR",
+        "META",
+        "GTLB",
+        "MDB",
+    ),
     max_days: int = 3,
 ) -> tuple[pl.DataFrame, dict[int, int], pl.DataFrame, pl.DataFrame, dict[str, Any]] | None:
-    """Load real pre-wall Parquet 1-min bars and L1 quotes/trades strictly <= DISCOVERY_WALL."""
+    """Load real pre-wall Parquet 1-min bars and matched real L1 quotes/trades (zero synthetic)."""
     bars_root = lake_root / "alpaca-sip" / "raw" / "bars-1min"
     if not bars_root.is_dir():
         return None
@@ -199,7 +209,47 @@ def _load_lake_prewall_dataset(
     chosen_days = valid_days[-max_days:]
     chosen_sym: str | None = None
     sym_frames: list[pl.DataFrame] = []
+    quotes_df: pl.DataFrame | None = None
+    trades_df: pl.DataFrame | None = None
+    l1_file_name: str | None = None
+
     for cand in preferred_symbols:
+        q_dir = lake_root / "published-orb" / "quotes" / cand
+        t_dir = lake_root / "published-orb" / "trades" / cand
+        if not (q_dir.is_dir() and t_dir.is_dir()):
+            continue
+        common_l1 = sorted(
+            {p.name for p in q_dir.glob("*.parquet")} & {p.name for p in t_dir.glob("*.parquet")}
+        )
+        if not common_l1:
+            continue
+        cand_q: pl.DataFrame | None = None
+        cand_t: pl.DataFrame | None = None
+        cand_l1_name: str | None = None
+        for fname in reversed(common_l1):
+            day_prefix = fname[:10]
+            try:
+                assert_pre_wall_date(day_prefix)
+            except ValueError:
+                continue
+            q_cand = (
+                pl.read_parquet(q_dir / fname)
+                .select(["t_ns", "bp", "bs", "ap", "as"])
+                .filter(pl.col("t_ns") <= DISCOVERY_WALL_UTC_NS)
+                .head(5000)
+            )
+            t_cand = (
+                pl.read_parquet(t_dir / fname)
+                .select(["t_ns", "p", "s"])
+                .filter(pl.col("t_ns") <= DISCOVERY_WALL_UTC_NS)
+                .head(2000)
+            )
+            if q_cand.height >= 10 and t_cand.height >= 5:
+                cand_q, cand_t, cand_l1_name = q_cand, t_cand, fname
+                break
+        if cand_q is None or cand_t is None or cand_l1_name is None:
+            continue
+
         frames: list[pl.DataFrame] = []
         for day_iso in chosen_days:
             try:
@@ -213,9 +263,10 @@ def _load_lake_prewall_dataset(
             if combined.height >= 200:
                 chosen_sym = cand
                 sym_frames = [combined]
+                quotes_df, trades_df, l1_file_name = cand_q, cand_t, cand_l1_name
                 break
 
-    if chosen_sym is None or not sym_frames:
+    if chosen_sym is None or not sym_frames or quotes_df is None or trades_df is None:
         return None
 
     bars_df = sym_frames[0].sort("t_ns")
@@ -240,30 +291,13 @@ def _load_lake_prewall_dataset(
             elif ret5 <= -0.0025 and idx % 6 == 3:
                 signals_by_ts[ts_c] = -1
 
-    # Load matching pre-wall L1 quotes/trades if available in published-orb
-    quotes_df: pl.DataFrame | None = None
-    trades_df: pl.DataFrame | None = None
-    q_dir = lake_root / "published-orb" / "quotes" / chosen_sym
-    t_dir = lake_root / "published-orb" / "trades" / chosen_sym
-    if q_dir.is_dir() and t_dir.is_dir():
-        q_files = sorted(q_dir.glob("*.parquet"))
-        for qf in q_files:
-            tf = t_dir / qf.name
-            if tf.is_file():
-                q_cand = pl.read_parquet(qf).select(["t_ns", "bp", "bs", "ap", "as"]).head(500)
-                t_cand = pl.read_parquet(tf).select(["t_ns", "p", "s"]).head(250)
-                if q_cand.height >= 10 and t_cand.height >= 5:
-                    quotes_df, trades_df = q_cand, t_cand
-                    break
-
-    if quotes_df is None or trades_df is None:
-        _, _, quotes_df, trades_df, _ = _build_offline_prewall_dataset(n_bars=80)
-
     meta = {
         "data_source": "prewall_lake_parquet",
         "symbol": chosen_sym,
         "days_loaded": chosen_days,
         "bars_count": bars_df.height,
+        "l1_source": "published_orb_real_l1",
+        "l1_file": l1_file_name,
         "prewall_cutoff_iso": DISCOVERY_WALL_ISO,
         "lake_root": str(lake_root),
     }
@@ -510,7 +544,8 @@ def run_compounding_reflection(
     finally:
         storage.engine.dispose()
 
-    # Independent cross-leg 6-gate falsification (LONG, SHORT, COMBINED) for best profile
+    # Independent cross-leg 6-gate falsification (LONG, SHORT, COMBINED) with cumulative trial count
+    effective_trials = max(len(profile_names), trials_total)
     best_cfg = STRATEGY_PROFILES.get(best_profile, STRATEGY_PROFILES[profile_names[0]])
     cross_leg_falsification: dict[str, dict[str, Any]] = {}
     for leg in ("LONG", "SHORT", "COMBINED"):
@@ -518,7 +553,7 @@ def run_compounding_reflection(
         leg_rep = evaluate_six_gate_falsification(
             bars_df=bars_df,
             signals_by_ts=leg_signals[leg],
-            n_trials_total=len(profile_names),
+            n_trials_total=effective_trials,
             l1_quotes_df=quotes_df,
             l1_trades_df=trades_df,
             l1_side="SELL" if leg == "SHORT" else "BUY",
@@ -527,18 +562,29 @@ def run_compounding_reflection(
         )
         cross_leg_falsification[leg] = _summarize_six_gate_report(leg_rep)
 
-    # Upstream skfolio + Clarabel.rs portfolio sleeve weights across strategies
+    # Strictly out-of-sample upstream skfolio + Clarabel.rs portfolio sleeve weights
     eligible_sleeves = {
-        name: arr for name, arr in profile_combined_returns.items() if arr.size >= 4
+        name: arr for name, arr in profile_combined_returns.items() if arr.size >= 6
     }
     skfolio_portfolio: dict[str, Any]
     if len(eligible_sleeves) >= 2:
         min_len = min(arr.size for arr in eligible_sleeves.values())
         sleeve_names = sorted(eligible_sleeves.keys())
         ret_mat = np.column_stack([eligible_sleeves[n][:min_len] for n in sleeve_names])
-        skfolio_portfolio = compute_skfolio_portfolio_weights(
-            ret_mat, asset_names=sleeve_names, method="mean_risk_clarabel"
+        split_idx = max(3, min(min_len - 2, int(min_len * 0.60)))
+        fitted = compute_skfolio_portfolio_weights(
+            ret_mat[:split_idx], asset_names=sleeve_names, method="mean_risk_clarabel"
         )
+        w_vec = np.asarray([fitted["weights"][n] for n in sleeve_names], dtype=float)
+        oos_slice = ret_mat[split_idx:]
+        oos_rets = oos_slice @ w_vec
+        skfolio_portfolio = {
+            **fitted,
+            "oos_strictly_out_of_sample": True,
+            "in_sample_observations": int(split_idx),
+            "oos_observations": int(oos_slice.shape[0]),
+            "oos_mean_bps": round(float(np.mean(oos_rets)) * 1e4, 4),
+        }
     else:
         skfolio_portfolio = {"solver": "clarabel", "skipped": "insufficient_sleeve_returns"}
 
@@ -566,10 +612,18 @@ def run_compounding_reflection(
     )
 
     paper_manifest_path = target_manifest_dir / "paper_farm_live_performance_manifest.json"
+    tv_half_auto_summary: dict[str, Any] = {
+        "tickets_count": 0,
+        "staged_presets_total": 0,
+        "duckdb_audit_rows": 0,
+        "semi_auto_confirmed": False,
+    }
     if paper_manifest_path.is_file():
         paper_doc = json.loads(paper_manifest_path.read_text(encoding="utf-8"))
         summary = paper_doc.get("summary") or {}
         per_lane = paper_doc.get("per_lane") or {}
+        if isinstance(paper_doc.get("tv_half_auto"), dict):
+            tv_half_auto_summary = dict(paper_doc["tv_half_auto"])
         combined_equity_usd = (
             summary.get("combined_equity_usd", paper_doc.get("combined_equity_usd"))
             if isinstance(summary, dict)
@@ -639,6 +693,19 @@ def run_compounding_reflection(
                         metrics_to_log[f"leg_{leg.lower()}_empirical_pbo"] = float(f1_leg["pbo"])
                 for s_name, w_val in (skfolio_portfolio.get("weights") or {}).items():
                     metrics_to_log[f"sleeve_weight_{s_name}"] = float(w_val)
+                if isinstance(skfolio_portfolio.get("oos_mean_bps"), (int, float)):
+                    metrics_to_log["skfolio_oos_mean_bps"] = float(
+                        skfolio_portfolio["oos_mean_bps"]
+                    )
+                metrics_to_log["tv_half_auto_tickets_count"] = float(
+                    tv_half_auto_summary.get("tickets_count") or 0
+                )
+                metrics_to_log["tv_half_auto_staged_presets_total"] = float(
+                    tv_half_auto_summary.get("staged_presets_total") or 0
+                )
+                metrics_to_log["tv_half_auto_duckdb_audit_rows"] = float(
+                    tv_half_auto_summary.get("duckdb_audit_rows") or 0
+                )
                 mlflow.log_metrics(metrics_to_log)
                 mlflow_status = {
                     "uri": resolved_mlflow_uri,
@@ -716,6 +783,7 @@ def run_compounding_reflection(
         },
         "mlflow": mlflow_status,
         "paper_farm": paper_summary,
+        "tv_half_auto": tv_half_auto_summary,
         "xerj": xerj_status,
     }
 

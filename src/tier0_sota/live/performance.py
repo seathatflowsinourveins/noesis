@@ -185,6 +185,56 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
     return out
 
 
+def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
+    """Read TV Half-Auto pack & DuckDB audit feedback (semi_auto_confirmed=False)."""
+    pack_dir = manifest_dir / "tv_sota_pack"
+    tickets_doc = _read_json_safe(pack_dir / "live_half_auto_tickets.json")
+    scan_presets_doc = _read_json_safe(pack_dir / "staged_scan_presets.json")
+    manual_presets_doc = _read_json_safe(pack_dir / "staged_tv_presets.json") or _read_json_safe(
+        manifest_dir / "staged_tv_presets.json"
+    )
+    tickets_list = tickets_doc.get("tickets")
+    scan_list = scan_presets_doc.get("presets")
+    manual_list = manual_presets_doc.get("presets")
+
+    audit_ids: set[str] = set()
+    for audit_db in (
+        pack_dir / "tv_half_auto_audit.duckdb",
+        manifest_dir / "tv_half_auto_audit.duckdb",
+    ):
+        if audit_db.is_file():
+            try:
+                with duckdb.connect(str(audit_db), read_only=True) as conn:
+                    tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+                    if "tv_staged_presets" in tables:
+                        for (aid,) in conn.execute(
+                            "SELECT DISTINCT alert_id FROM tv_staged_presets"
+                        ).fetchall():
+                            if aid is not None:
+                                audit_ids.add(str(aid))
+            except (OSError, duckdb.Error):
+                continue
+    audit_rows = len(audit_ids)
+
+    tickets_n = len(tickets_list) if isinstance(tickets_list, list) else 0
+    scan_n = len(scan_list) if isinstance(scan_list, list) else 0
+    manual_n = len(manual_list) if isinstance(manual_list, list) else 0
+    return {
+        "schema_version": "tier0.tv-half-auto-telemetry.v1",
+        "semi_auto_confirmed": False,
+        "live_execution_enabled": False,
+        "qty": 1,
+        "active_session": str(tickets_doc.get("active_session") or "CLOSED"),
+        "tickets_count": tickets_n,
+        "schema_validated_count": int(tickets_doc.get("schema_validated_count") or 0),
+        "staged_scan_presets_count": scan_n,
+        "staged_manual_presets_count": manual_n,
+        "staged_presets_total": scan_n + manual_n,
+        "duckdb_audit_rows": audit_rows,
+        "generated_at_et": tickets_doc.get("generated_at_et"),
+    }
+
+
 class PaperPerformanceAggregator:
     """Aggregate isolated per-lane status, TCA & DuckDB telemetry into manifest + FINOS JSON."""
 
@@ -396,8 +446,13 @@ class PaperPerformanceAggregator:
             "submitted_vs_filled_ratio": tca_summary["submitted_vs_filled_ratio"],
         }
         now_iso = datetime.now(UTC).isoformat()
+        tv_half_auto = _collect_tv_half_auto_telemetry(self.manifest_dir)
         finos_doc = build_finos_openbb_export(
-            lanes, combined, generated_at_utc=now_iso, tca_summary=tca_summary
+            lanes,
+            combined,
+            generated_at_utc=now_iso,
+            tca_summary=tca_summary,
+            tv_half_auto=tv_half_auto,
         )
         worker = _read_json_safe(self.manifest_dir / "paper_farm_execution_status.json")
         heartbeat = worker.get("generated_at_utc", "")
@@ -428,6 +483,7 @@ class PaperPerformanceAggregator:
             "execution_status": worker.get("status"),
             "summary": combined,
             "tca_summary": tca_summary,
+            "tv_half_auto": tv_half_auto,
             "per_lane": lanes,
             "finos_openbb": finos_doc,
         }
@@ -452,6 +508,7 @@ def build_finos_openbb_export(
     *,
     generated_at_utc: str | None = None,
     tca_summary: dict[str, Any] | None = None,
+    tv_half_auto: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build declarative FINOS Workspace Plotly + OpenBB tabular JSON export."""
     accts = list(per_lane.keys())
@@ -483,6 +540,7 @@ def build_finos_openbb_export(
         "openbb_rows": [per_lane[a] for a in accts],
         "summary": summary,
         "tca_summary": tca_summary or {},
+        "tv_half_auto": tv_half_auto or {},
     }
 
 
@@ -595,6 +653,28 @@ def export_prometheus_metrics(
         registry=reg,
     ).set(float(summary.get("submitted_vs_filled_ratio") or 0.0))
 
+    tv_doc = manifest.get("tv_half_auto", {})
+    Gauge(
+        "tier0_tv_half_auto_tickets_count",
+        "TradingView Half-Auto extreme-mover tickets generated (qty=1, semi_auto_confirmed=false)",
+        registry=reg,
+    ).set(float(tv_doc.get("tickets_count") or 0))
+    Gauge(
+        "tier0_tv_half_auto_staged_presets_count",
+        "TradingView Half-Auto staged semi-auto presets total",
+        registry=reg,
+    ).set(float(tv_doc.get("staged_presets_total") or 0))
+    Gauge(
+        "tier0_tv_half_auto_schema_validated_count",
+        "TradingView Half-Auto schema-validated alert tickets count",
+        registry=reg,
+    ).set(float(tv_doc.get("schema_validated_count") or 0))
+    Gauge(
+        "tier0_tv_half_auto_duckdb_audit_rows",
+        "TradingView Half-Auto DuckDB persisted audit preset count",
+        registry=reg,
+    ).set(float(tv_doc.get("duckdb_audit_rows") or 0))
+
     prom_text = generate_latest(reg).decode("utf-8")
     if output_path is not None:
         _atomic_write_text(output_path, prom_text)
@@ -665,6 +745,21 @@ def record_otel_metrics(
         g_borrow.set(float(summary.get("total_borrow_fee_usd") or 0.0), sum_attrs)
         g_ext.set(float(summary.get("extended_hours_protected_ratio", 1.0)), sum_attrs)
         g_fill_ratio.set(float(summary.get("submitted_vs_filled_ratio") or 0.0), sum_attrs)
+
+        tv_doc = manifest.get("tv_half_auto", {})
+        tv_attrs = {"lane": "half-auto-tv", "semi_auto_confirmed": "false"}
+        meter.create_gauge("tier0.tv_half_auto.tickets_count", unit="1").set(
+            float(tv_doc.get("tickets_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.staged_presets_count", unit="1").set(
+            float(tv_doc.get("staged_presets_total") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.schema_validated_count", unit="1").set(
+            float(tv_doc.get("schema_validated_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.duckdb_audit_rows", unit="1").set(
+            float(tv_doc.get("duckdb_audit_rows") or 0), tv_attrs
+        )
 
         recorded_names: list[str] = []
         point_count = 0

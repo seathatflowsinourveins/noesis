@@ -395,3 +395,106 @@ def test_live_scan_stages_only_fresh_completed_mover_bars(tmp_path: Path) -> Non
     assert first["data_source"] == "alpaca_sip" and refresh(ts)[0]["alert_id"] == first["alert_id"]
     assert refresh(ts.replace(minute=1)) == []
     assert refresh(ts.replace(day=26)) == []
+
+
+def test_tv_half_auto_feedback_duckdb_finos_prometheus_and_otel(tmp_path: Path) -> None:
+    import duckdb
+
+    from tier0_sota.live.performance import (
+        aggregate_paper_farm_performance,
+        record_paper_farm_telemetry,
+    )
+
+    pack_dir = tmp_path / "tv_sota_pack"
+    movers_path = tmp_path / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-25T15:00:03Z",
+                "feed_sources": ["alpaca_sip"],
+                "macro_regime": {"regime": 1, "regime_label": "BULL"},
+                "entries": [
+                    {
+                        "symbol": "NVDA",
+                        "last_price": 146.85,
+                        "session_move_pct": 4.2,
+                        "rvol_normalized": 3.5,
+                        "natr_pct": 0.012,
+                        "extreme_mover_eligible": True,
+                        "bar_close_utc": "2026-11-25T15:00:00Z",
+                        "shortable": True,
+                        "easy_to_borrow": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ts = datetime(2026, 11, 25, 15, 0, 10, tzinfo=UTC)
+    doc = refresh_tickets_from_paths(
+        movers_path=movers_path, out_dir=pack_dir, venue="ALPACA", now_utc=ts
+    )
+    assert doc["staged_count"] == 1
+
+    stage_tv_alert_preset(
+        _valid_alert(symbol="AMD"),
+        staged_path=pack_dir / "staged_tv_presets.json",
+        watchlist_path=movers_path,
+    )
+    audit_db = pack_dir / "tv_half_auto_audit.duckdb"
+    assert audit_db.is_file()
+    with duckdb.connect(str(audit_db), read_only=True) as conn:
+        rows = conn.execute(
+            "SELECT symbol, qty, semi_auto_confirmed, source FROM tv_staged_presets ORDER BY symbol"
+        ).fetchall()
+    assert len(rows) == 2
+    assert all(r[1] == 1 and r[2] is False for r in rows)
+
+    manifest = aggregate_paper_farm_performance(tmp_path)
+    tv_meta = manifest["tv_half_auto"]
+    assert tv_meta["semi_auto_confirmed"] is False
+    assert tv_meta["live_execution_enabled"] is False
+    assert tv_meta["tickets_count"] == 1
+    assert tv_meta["staged_presets_total"] == 2
+    assert tv_meta["duckdb_audit_rows"] == 2
+
+    finos = json.loads((tmp_path / "finos_paper_farm_performance.json").read_text(encoding="utf-8"))
+    assert finos["tv_half_auto"]["duckdb_audit_rows"] == 2
+
+    from tier0_sota.tv.bridge import persist_tv_preset_duckdb
+
+    with pytest.raises(ValueError, match="qty=1"):
+        persist_tv_preset_duckdb(
+            audit_db,
+            {**_valid_alert(symbol="META"), "alert_id": "0" * 16, "qty": True},
+        )
+    with pytest.raises(ValueError, match="live broker endpoint"):
+        persist_tv_preset_duckdb(
+            audit_db,
+            {**_valid_alert(symbol="META"), "alert_id": "1" * 16, "endpoint": "127.0.0.1:4001"},
+        )
+
+    # Staging at manifest_dir/staged_tv_presets.json routes audit rows into tv_sota_pack DuckDB.
+    stage_tv_alert_preset(
+        _valid_alert(symbol="SOXL"),
+        staged_path=tmp_path / "staged_tv_presets.json",
+        watchlist_path=movers_path,
+    )
+    manifest2 = aggregate_paper_farm_performance(tmp_path)
+    assert manifest2["tv_half_auto"]["duckdb_audit_rows"] == 3
+
+    telemetry = record_paper_farm_telemetry(manifest)
+    for prom_m in (
+        "tier0_tv_half_auto_tickets_count",
+        "tier0_tv_half_auto_staged_presets_count",
+        "tier0_tv_half_auto_schema_validated_count",
+        "tier0_tv_half_auto_duckdb_audit_rows",
+    ):
+        assert prom_m in telemetry["prometheus_text"]
+    assert {
+        "tier0.tv_half_auto.tickets_count",
+        "tier0.tv_half_auto.staged_presets_count",
+        "tier0.tv_half_auto.schema_validated_count",
+        "tier0.tv_half_auto.duckdb_audit_rows",
+    } <= set(telemetry["otel_metric_names"])

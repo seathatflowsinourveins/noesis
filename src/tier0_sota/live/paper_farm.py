@@ -29,6 +29,8 @@ from tier0_sota import risk as rk
 PAPER_ALPACA_ENDPOINT = "https://paper-api.alpaca.markets"
 IBKR_PAPER_ACCOUNT = "IBKR_DU_4002"
 IBKR_PAPER_MAX_RPM = 3000
+RTH_ENTRY_COLLAR_PCT = Decimal("0.0005")
+MAX_RTH_ENTRY_COLLAR_PCT = Decimal("0.0010")
 _NY_TZ = ZoneInfo("America/New_York")
 
 
@@ -596,6 +598,7 @@ class AlpacaPaperLane:
         default_factory=lambda: rk.ProtectiveExitRateBudget(200, Decimal("0.10"))
     )
     breaker: rk.DailyDrawdownBreaker = field(init=False)
+    _budget_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _breaker_day_et: date | None = field(default=None, init=False)
     supervised_stops: dict[str, ExtendedHoursStopSupervision] = field(default_factory=dict)
     counters: dict[str, int] = field(
@@ -657,6 +660,7 @@ class AlpacaPaperLane:
         session: str = "RTH",
         origin: str = "AUTO_ENTRY",
         now_s: float | None = None,
+        rth_entry_collar_pct: Decimal = RTH_ENTRY_COLLAR_PCT,
     ) -> dict[str, Any] | None:
         """Submit a Rule-612 stop-protected Paper entry if lock, breaker, and RPM allow."""
         if not self.paper_only or self.live_execution_enabled:
@@ -677,18 +681,25 @@ class AlpacaPaperLane:
                 raise ValueError("Negative annual rate")
             if annual_borrow_rate and (prior_close is None or prior_close <= 0):
                 raise ValueError("Nonzero borrow accrual requires a verified prior close")
+        rth_collar = _to_finite_decimal(rth_entry_collar_pct, "rth_entry_collar_pct")
+        if rth_collar < _DEC_ZERO or rth_collar > MAX_RTH_ENTRY_COLLAR_PCT:
+            raise ValueError(
+                f"rth_entry_collar_pct out of [0, {MAX_RTH_ENTRY_COLLAR_PCT}]: {rth_collar}"
+            )
         sym = symbol.strip().upper()
         if not self.symbol_lock.try_claim(sym, self.account):
             return None
         ts_s = now_s if now_s is not None else datetime.now(UTC).timestamp()
-        if not self.rate_budget.try_consume(ts_s, is_exit=False):
+        with self._budget_lock:
+            allowed_rpm = self.rate_budget.try_consume(ts_s, is_exit=False)
+        if not allowed_rpm:
             self.symbol_lock.release(sym, self.account)
             return None
 
         _, sp_map = eng.select_pooled_trailing_schedule(natr_pct)
         prof = eng.get_session_protection_profile(session, sp_map)
         is_ext = session != "RTH"
-        entry_collar = prof.limit_collar_pct if is_ext else Decimal("0.0030")
+        entry_collar = prof.limit_collar_pct if is_ext else rth_collar
         lim_d = eng.compute_collared_entry_limit_price(ref_price, side, entry_collar)
         # Preserve the immutable 2% cap even at the worst permitted entry fill.
         stop_d = rk.compute_capped_stop_price(lim_d, side, max_loss_pct=prof.initial_max_loss_pct)
@@ -872,7 +883,9 @@ class AlpacaPaperLane:
                 self.counters["stop_replaces"] = self.counters.get("stop_replaces", 0) + 1
             return None
         ts_s = now_s if now_s is not None else datetime.now(UTC).timestamp()
-        if not self.rate_budget.try_consume(ts_s, is_exit=True):
+        with self._budget_lock:
+            exit_allowed = self.rate_budget.try_consume(ts_s, is_exit=True)
+        if not exit_allowed:
             return None
         state = str(getattr(parent.status, "value", parent.status))
         if state not in {"filled", "canceled", "expired"}:
@@ -1286,8 +1299,11 @@ class IbkrPaperAdapter:
     paper_only: bool = True
     live_execution_enabled: bool = False
     rate_budget_max_rpm: int = IBKR_PAPER_MAX_RPM
+    start_equity: Decimal = Decimal("100000")
     symbol_lock: CrossLaneSymbolLock = field(default_factory=CrossLaneSymbolLock)
     rate_budget: rk.ProtectiveExitRateBudget = field(init=False)
+    breaker: rk.DailyDrawdownBreaker = field(init=False)
+    _budget_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.paper_only or self.live_execution_enabled:
@@ -1298,9 +1314,108 @@ class IbkrPaperAdapter:
         self.rate_budget = rk.ProtectiveExitRateBudget(
             self.rate_budget_max_rpm, rk.MIN_EXIT_RATE_RESERVE_FRACTION
         )
+        self.breaker = rk.DailyDrawdownBreaker(start_equity=self.start_equity)
         self.node_config = eng.build_venue_live_node_config(
             "IBKR_PAPER_4002", rate_budget_max_rpm=self.rate_budget_max_rpm
         )
+
+    def plan_guarded_order(
+        self,
+        *,
+        symbol: str,
+        side: rk.Side,
+        ref_price: Decimal,
+        natr_pct: Decimal = Decimal("0.015"),
+        session: str = "RTH",
+        origin: str = "AUTO_ENTRY",
+        now_s: float | None = None,
+        is_exit: bool = False,
+        risk_per_trade_pct: Decimal = Decimal("0.0050"),
+        max_notional_pct: Decimal = Decimal("0.20"),
+    ) -> dict[str, Any] | None:
+        """Build a fail-closed, rate-budgeted 24/5 IBKR :4002 order plan (`paper_only=True`)."""
+        if not self.paper_only or self.live_execution_enabled:
+            raise PermissionError("IBKR live execution prohibited; paper_only=True required.")
+        if self.port in eng.FORBIDDEN_LIVE_IBKR_PORTS or self.port not in (4002, 7497):
+            raise PermissionError(f"Refused IBKR port {self.port}; Paper permits :4002 / :7497.")
+        if session not in ("RTH", "PRE_MARKET", "AFTER_HOURS", "OVERNIGHT"):
+            return None
+        if not is_exit and not self.breaker.allow_entry():
+            return None
+        sym = symbol.strip().upper()
+        if not sym:
+            return None
+        try:
+            ref_d = _to_finite_decimal(ref_price, "ref_price")
+        except ValueError:
+            return None
+        if ref_d <= _DEC_ZERO:
+            return None
+        natr_d = _to_finite_decimal(natr_pct, "natr_pct")
+        if natr_d < _DEC_ZERO:
+            raise ValueError(f"Negative natr_pct: {natr_d}")
+        risk_d = _to_finite_decimal(risk_per_trade_pct, "risk_per_trade_pct")
+        max_not_d = _to_finite_decimal(max_notional_pct, "max_notional_pct")
+        if risk_d <= _DEC_ZERO or max_not_d <= _DEC_ZERO:
+            raise ValueError("risk_per_trade_pct and max_notional_pct must be positive")
+        if not is_exit and not self.symbol_lock.try_claim(sym, IBKR_PAPER_ACCOUNT):
+            return None
+        ts_s = now_s if now_s is not None else datetime.now(UTC).timestamp()
+        with self._budget_lock:
+            allowed = self.rate_budget.try_consume(ts_s, is_exit=is_exit)
+        if not allowed:
+            if not is_exit:
+                self.symbol_lock.release(sym, IBKR_PAPER_ACCOUNT)
+            return None
+        sched, sp_map = eng.select_pooled_trailing_schedule(natr_d)
+        prof = eng.get_session_protection_profile(session, sp_map)
+        is_ext = session != "RTH"
+        entry_collar = prof.limit_collar_pct if is_ext else RTH_ENTRY_COLLAR_PCT
+        lim_d = eng.compute_collared_entry_limit_price(ref_d, side, entry_collar)
+        stop_d = rk.compute_capped_stop_price(lim_d, side, max_loss_pct=prof.initial_max_loss_pct)
+        stop_lim_d = (
+            eng.compute_collared_limit_price(stop_d, side, prof.limit_collar_pct)
+            if is_ext
+            else None
+        )
+        qty = rk.size_position_by_risk(
+            equity=self.start_equity,
+            entry_price=lim_d,
+            stop_price=stop_d,
+            risk_per_trade_pct=risk_d,
+            max_notional_pct=max_not_d * prof.max_notional_scale,
+        )
+        if qty < 1:
+            if not is_exit:
+                self.symbol_lock.release(sym, IBKR_PAPER_ACCOUNT)
+            return None
+        tags = [f"SESSION={session}"]
+        if is_ext:
+            tags.append(eng.IBKR_OUTSIDE_RTH_TAG)
+        if is_exit:
+            tags.append(eng.EXIT_TAG)
+        return {
+            "account": IBKR_PAPER_ACCOUNT,
+            "lane_id": "IBKR_SMART_24X5",
+            "endpoint": f"ibkr://127.0.0.1:{self.port}",
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "symbol": sym,
+            "side": side,
+            "qty": qty,
+            "session": session,
+            "origin": origin,
+            "is_exit": is_exit,
+            "trailing_schedule": sched,
+            "entry_order_type": "LIMIT" if (is_ext or not is_exit) else "MARKET",
+            "limit_price": float(lim_d),
+            "stop_order_type": prof.order_mode,
+            "stop_price": float(stop_d),
+            "stop_limit_price": float(stop_lim_d) if stop_lim_d is not None else None,
+            "limit_collar_bps": float(prof.limit_collar_bps),
+            "outside_rth": prof.outside_rth,
+            "tags": tags,
+        }
 
     @property
     def status_path(self) -> Path:
@@ -1493,3 +1608,114 @@ class PaperFarmCoordinator:
             if res is not None:
                 routed.append(res | {"account": lane.account, "lane_id": lane.profile["lane_id"]})
         return routed
+
+    def dispatch_high_throughput(
+        self,
+        entries: list[dict[str, Any]],
+        *,
+        macro_regime: int,
+        session: str,
+        include_ibkr: bool = True,
+        now_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Dispatch high-rate bursts across IBKR :4002 (3000 rpm) + PA1..PA3 (3x200 rpm)."""
+        admitted: list[dict[str, Any]] = []
+        rejected: int = 0
+        lane_names = list(self.lanes.keys())
+        base_ts = now_s if now_s is not None else datetime.now(UTC).timestamp()
+
+        for idx, item in enumerate(entries):
+            sym = str(item.get("symbol", "")).strip().upper()
+            try:
+                px = _to_finite_decimal(item.get("last_price") or "0", "last_price")
+            except (InvalidOperation, ValueError):
+                rejected += 1
+                continue
+            if not sym or px <= _DEC_ZERO or item.get("extreme_mover_eligible") is False:
+                rejected += 1
+                continue
+            choice = select_short_or_inverse_fallback(
+                sym, market_regime=macro_regime, borrow_meta=item, session=session
+            )
+            if choice is None:
+                rejected += 1
+                continue
+            target_sym, side, origin = choice
+            target = item
+            if target_sym != sym:
+                target = next((e for e in entries if e.get("symbol") == target_sym), {})
+                try:
+                    px = _to_finite_decimal(target.get("last_price") or "0", "last_price")
+                except (InvalidOperation, ValueError):
+                    rejected += 1
+                    continue
+                if px <= _DEC_ZERO:
+                    rejected += 1
+                    continue
+            try:
+                natr_d = (
+                    _to_finite_decimal(target["natr_pct"], "natr_pct")
+                    if target.get("natr_pct") is not None
+                    else Decimal("0.015")
+                )
+            except (InvalidOperation, ValueError):
+                natr_d = Decimal("0.015")
+            if natr_d < _DEC_ZERO:
+                natr_d = Decimal("0.015")
+            ts_i = base_ts + idx * 1e-4
+            res: dict[str, Any] | None = None
+            if include_ibkr:
+                res = self.ibkr.plan_guarded_order(
+                    symbol=target_sym,
+                    side=side,
+                    ref_price=px,
+                    natr_pct=natr_d,
+                    session=session,
+                    origin=origin,
+                    now_s=ts_i,
+                )
+            if res is None and lane_names:
+                for offset in range(len(lane_names)):
+                    lane = self.lanes[lane_names[(idx + offset) % len(lane_names)]]
+                    alp_res = lane.submit_guarded_entry(
+                        symbol=target_sym,
+                        side=side,
+                        ref_price=px,
+                        natr_pct=natr_d,
+                        session=session,
+                        origin=origin,
+                        now_s=ts_i,
+                        prior_close=Decimal(str(target["prior_close"]))
+                        if target.get("prior_close")
+                        else None,
+                        annual_borrow_rate=(
+                            Decimal(str(target["annual_borrow_rate"]))
+                            if target.get("annual_borrow_rate") is not None
+                            else None
+                        ),
+                    )
+                    if alp_res is not None:
+                        res = alp_res | {
+                            "account": lane.account,
+                            "lane_id": lane.profile["lane_id"],
+                        }
+                        break
+            if res is not None:
+                admitted.append(res)
+            else:
+                rejected += 1
+
+        by_account: dict[str, int] = {}
+        for rec in admitted:
+            acct = str(rec["account"])
+            by_account[acct] = by_account.get(acct, 0) + 1
+        return {
+            "admitted_count": len(admitted),
+            "rejected_count": rejected,
+            "by_account": by_account,
+            "combined_max_rpm": self.ibkr.rate_budget.max_rpm
+            + sum(lane.rate_budget.max_rpm for lane in self.lanes.values()),
+            "combined_exit_reserve_rpm": self.ibkr.rate_budget.exit_reserve_rpm
+            + sum(lane.rate_budget.exit_reserve_rpm for lane in self.lanes.values()),
+            "admitted": admitted,
+        }

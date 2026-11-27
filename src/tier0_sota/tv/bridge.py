@@ -15,6 +15,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal, cast
 
+import duckdb
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -190,6 +191,57 @@ def _atomic_write_json(path: Path, payload: Any) -> Path:
     return path
 
 
+def _resolve_tv_audit_duckdb_path(staged_path: Path) -> Path:
+    pack_dir = staged_path.parent / "tv_sota_pack"
+    if pack_dir.is_dir():
+        return pack_dir / "tv_half_auto_audit.duckdb"
+    return staged_path.parent / "tv_half_auto_audit.duckdb"
+
+
+def persist_tv_preset_duckdb(
+    duckdb_path: Path,
+    preset: Mapping[str, Any],
+    *,
+    source: str = "tv_bridge",
+) -> None:
+    """Persist a schema-validated semi-auto TV preset (qty=1, semi_auto_confirmed=False)."""
+    refuse_live_endpoints(preset)
+    qty_val = preset.get("qty")
+    if preset.get("semi_auto_confirmed") is not False or type(qty_val) is not int or qty_val != 1:
+        raise ValueError("Refused TV audit persistence unless qty=1 and semi_auto_confirmed=False")
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(duckdb_path)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS tv_staged_presets ("
+            "alert_id VARCHAR PRIMARY KEY, symbol VARCHAR, side VARCHAR, qty INTEGER, "
+            "venue VARCHAR, session VARCHAR, order_type VARCHAR, trigger_price DOUBLE, "
+            "stop_price DOUBLE, limit_collar_bps DOUBLE, trailing_schedule VARCHAR, "
+            "semi_auto_confirmed BOOLEAN, data_source VARCHAR, source VARCHAR, "
+            "staged_at_utc VARCHAR)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO tv_staged_presets VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(preset["alert_id"]),
+                str(preset["symbol"]),
+                str(preset["side"]),
+                int(preset["qty"]),
+                str(preset.get("venue") or "IBKR"),
+                str(preset["session"]),
+                str(preset["order_type"]),
+                float(preset["trigger_price"]),
+                float(preset["stop_price"]),
+                float(preset.get("limit_collar_bps") or 0.0),
+                str(preset["trailing_schedule"]),
+                False,
+                str(preset.get("data_source") or "tradingview_pine_v6"),
+                source,
+                str(preset.get("staged_at_utc") or datetime.now(UTC).isoformat()),
+            ),
+        )
+
+
 def validate_tv_alert_payload(
     payload: Mapping[str, Any],
     *,
@@ -318,6 +370,7 @@ def stage_tv_alert_preset(
             "presets": list(by_id.values()),
         },
     )
+    persist_tv_preset_duckdb(_resolve_tv_audit_duckdb_path(staged_path), preset, source="tv_bridge")
     return preset
 
 

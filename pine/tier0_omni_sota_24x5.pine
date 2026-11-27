@@ -104,7 +104,7 @@ ema_50     = ta.ema(close, 50)
 vwap_val   = ta.vwap(hlc3)
 
 auto_sched   = natr_out <= 0.015 ? "tight_near_lossless" : natr_out <= 0.030 ? "baseline" : "wide_natr_adaptive"
-preset_sched = i_omni_preset == "LOSSLESS_TIGHT_SCALP" or i_omni_preset == "OVERNIGHT_24X5_IBKR" ? "tight_near_lossless" : auto_sched
+preset_sched = auto_sched
 sched_id     = i_sched_ovr == "AUTO_NATR" ? preset_sched : i_sched_ovr
 
 var string leg_schedule = ""

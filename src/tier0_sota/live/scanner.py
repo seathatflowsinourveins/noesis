@@ -133,7 +133,7 @@ class ExtremeMoverScanner:
     pin_symbols: tuple[str, ...] = DEFAULT_PIN_SYMBOLS
     min_move_pct: float = 3.5
     min_rvol: float = 1.5
-    min_price: float = 1.50
+    min_price: float = 10.0
     min_dollar_vol: float = 5_000_000.0
 
     @classmethod

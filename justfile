@@ -72,6 +72,16 @@ manifest-check:
 test *args:
     {{uv_run}} pytest -q {{args}}
 
+# Refresh Half-Auto extreme-mover TV tickets, watchlists & DuckDB audit table (qty=1, semi_auto_confirmed=false)
+tv-tickets:
+    {{uv_run}} python -m tier0_sota.tv.tickets --venue ALPACA
+
+# Run TradingView Half-Auto E2E verification (ruff, ty, Pine v6 parity & pytest)
+tv-e2e:
+    {{uv_run}} ruff check src/tier0_sota/tv tests/test_tv_automation.py
+    {{uv_run}} ty check src/tier0_sota/tv tests/test_tv_automation.py
+    {{uv_run}} pytest -q tests/test_tv_automation.py
+
 # Build Zensical ADR & architecture documentation site (strict mode)
 docs-build:
     {{uv_run}} zensical build --clean --strict
