@@ -50,6 +50,7 @@ __all__ = [
     "build_ibkr_paper_connection_spec",
     "build_sandbox_live_node",
     "build_venue_live_node_config",
+    "build_venue_order_handle_spec",
     "build_venue_risk_engine_config",
     "classify_et_hm",
     "classify_us_equity_session_et",
@@ -81,6 +82,7 @@ SessionOrClosed = MarketSession24x5 | Literal["CLOSED"]
 VenueProfileId = Literal[
     "IBKR_PAPER_4002",
     "ALPACA_PAPER_200",
+    "ALPACA_PAPER_1000",
     "IBKR_LIVE_3000",
     "ALPACA_LIVE_PRO_LINE_1000",
     "ALPACA_LIVE_ELITE_SMART_ROUTER",
@@ -121,6 +123,15 @@ _AB = ExecutionVenueProfile(
     False,
     False,
 )
+_AP1000 = replace(
+    _AB,
+    venue_id="ALPACA_PAPER_1000",
+    environment="PAPER",
+    routing_tier="ALPACA_PAPER_PRO_LINE_1000",
+    max_rpm=1000,
+    max_rps=25,
+    max_concurrent_trailed_positions=10,
+)
 _AP = replace(
     _AB,
     venue_id="ALPACA_LIVE_PRO_LINE_1000",
@@ -142,7 +153,7 @@ _AE = replace(
 )
 _IL = replace(_IB, venue_id="IBKR_LIVE_3000", environment="LIVE")
 EXECUTION_VENUE_PROFILES: dict[str, ExecutionVenueProfile] = {
-    p.venue_id: p for p in (_IB, _AB, _IL, _AP, _AE)
+    p.venue_id: p for p in (_IB, _AB, _AP1000, _IL, _AP, _AE)
 }
 
 
@@ -359,6 +370,65 @@ def get_session_protection_profile(
     if key in amap:
         return amap[key]  # type: ignore[index]
     raise ValueError(f"Unknown 24/5 market session: {session!r}")
+
+
+def build_venue_order_handle_spec(
+    venue_id: str = "IBKR_PAPER_4002",
+    session: SessionOrClosed | str = "RTH",
+    trailing_schedule: str = "baseline",
+) -> dict[str, Any]:
+    """Build deterministic SOTA venue order-handle budget & 24/5 session execution spec."""
+    prof = _resolve_venue(venue_id)
+    sched_key = str(trailing_schedule).strip().lower()
+    if sched_key not in POOLED_TRAILING_SCHEDULES:
+        raise ValueError(f"Unknown trailing_schedule: {trailing_schedule!r}")
+    sess_prof = get_session_protection_profile(session, POOLED_TRAILING_SCHEDULES[sched_key])
+    re_cfg = build_venue_risk_engine_config(prof.venue_id)
+    exit_reserve_rpm = _rk.ProtectiveExitRateBudget(
+        prof.max_rpm, prof.min_exit_reserve_fraction
+    ).exit_reserve_rpm
+    entry_modify_rpm_budget = prof.max_rpm - exit_reserve_rpm
+    cadence_secs = round(
+        max(
+            1.0,
+            (60.0 * prof.max_concurrent_trailed_positions)
+            / max(1.0, entry_modify_rpm_budget * 0.5),
+        ),
+        2,
+    )
+    return {
+        "schema_version": "tier0.venue-order-handle.v1",
+        "venue_profile": prof.venue_id,
+        "broker": prof.broker,
+        "environment": prof.environment,
+        "routing_tier": prof.routing_tier,
+        "max_rpm": prof.max_rpm,
+        "max_rps": prof.max_rps,
+        "entry_modify_rpm_budget": entry_modify_rpm_budget,
+        "exit_reserve_rpm": exit_reserve_rpm,
+        "min_exit_reserve_fraction": float(prof.min_exit_reserve_fraction),
+        "max_concurrent_trailed_positions": prof.max_concurrent_trailed_positions,
+        "trailing_modify_cadence_secs": cadence_secs,
+        "session": sess_prof.session,
+        "trailing_schedule": sched_key,
+        "session_order_mode": sess_prof.order_mode,
+        "limit_collar_bps": float(sess_prof.limit_collar_bps),
+        "initial_max_loss_pct": float(sess_prof.initial_max_loss_pct),
+        "max_notional_scale": float(sess_prof.max_notional_scale),
+        "outside_rth": sess_prof.outside_rth,
+        "supports_native_trailing": prof.supports_native_trailing,
+        "supports_extended_overnight_24x5": prof.supports_extended_overnight_24x5,
+        "supports_dma": prof.supports_dma,
+        "supports_twap": prof.supports_twap,
+        "supports_vwap": prof.supports_vwap,
+        "order_flow_classification": prof.order_flow_classification,
+        "reg_nms_covered": prof.reg_nms_covered,
+        "nautilus_submit_rate": str(re_cfg.max_order_submit_rate),
+        "nautilus_modify_rate": str(re_cfg.max_order_modify_rate),
+        "paper_only": prof.environment == "PAPER",
+        "live_execution_enabled": prof.live_execution_enabled,
+        "executable_now": prof.environment == "PAPER" and not prof.live_execution_enabled,
+    }
 
 
 def _et_dt(ts_utc_ns: int) -> datetime:

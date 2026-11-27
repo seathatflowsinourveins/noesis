@@ -3470,3 +3470,736 @@ def test_dagster_reflection_and_mcp_tv_compounding_sync(
     assert staged["darkpool_trf_ratio"] == 0.44
     assert staged["script_kind"] == "strategy"
     assert staged["order_preset_id"] == "OVERNIGHT_24X5_IBKR"
+
+
+def test_phase3_1000rpm_3000rpm_venue_handles_tv_coordination_and_mcp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import nautilus_mcp_server as mcp_srv
+
+    from tier0_sota.live.paper_farm import resolve_alpaca_paper_venue_profile
+    from tier0_sota.live.runner import reconcile_staged_tv_presets_for_engine
+
+    # 1. TIER0_ALPACA_RPM resolution (default 200, 1000 Pro-Line, and fail-closed bounds).
+    assert resolve_alpaca_paper_venue_profile(env={}) == ("ALPACA_PAPER_200", 200)
+    assert resolve_alpaca_paper_venue_profile(env={"TIER0_ALPACA_RPM": "1000"}) == (
+        "ALPACA_PAPER_1000",
+        1000,
+    )
+    assert resolve_alpaca_paper_venue_profile(env={"TIER0_ALPACA_RPM": "ALPACA_PAPER_1000"}) == (
+        "ALPACA_PAPER_1000",
+        1000,
+    )
+    for bad in ("0", "1001", "-5", "bogus"):
+        with pytest.raises(ValueError):
+            resolve_alpaca_paper_venue_profile(env={"TIER0_ALPACA_RPM": bad})
+
+    # 2. PaperFarmCoordinator wired with 3x1000rpm Alpaca Pro-Line + 3000rpm IBKR = 6000rpm.
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "1000")
+    clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
+    for acct, lane in coord.lanes.items():
+        assert lane.venue_profile == "ALPACA_PAPER_1000"
+        assert lane.rate_budget.max_rpm == 1000
+        assert lane.rate_budget.exit_reserve_rpm == 100
+        st = lane.write_status(equity=100_000.0, session="RTH")
+        assert st["venue_profile"] == "ALPACA_PAPER_1000"
+        assert st["rate_budget_max_rpm"] == 1000 and st["exit_reserve_rpm"] == 100
+        assert acct in ALPACA_LANE_PROFILES
+
+    ib_st = coord.ibkr.write_status(gateway_ready=False, tcp_reachable=False, equity=None)
+    assert ib_st["venue_profile"] == "IBKR_PAPER_4002"
+    assert ib_st["rate_budget_max_rpm"] == 3000 and ib_st["exit_reserve_rpm"] == 300
+
+    with pytest.raises(PermissionError, match="live_execution_enabled=False"):
+        AlpacaPaperLane(
+            "ALPACA_PA1",
+            tmp_path,
+            _FakeTradingClient(),
+            CrossLaneSymbolLock(),
+            venue_profile="ALPACA_LIVE_PRO_LINE_1000",
+        )
+
+    handles = coord.venue_order_handles(session="OVERNIGHT")
+    assert handles["alpaca_venue_profile"] == "ALPACA_PAPER_1000"
+    assert handles["combined_max_rpm"] == 6000
+    assert handles["combined_exit_reserve_rpm"] == 600
+    assert handles["combined_entry_modify_rpm_budget"] == 5400
+    assert handles["live_execution_enabled"] is False
+    assert handles["venues"]["ALPACA_PAPER_1000"]["max_rpm"] == 1000
+    assert handles["venues"]["IBKR_PAPER_4002"]["max_rpm"] == 3000
+    assert handles["venues"]["ALPACA_LIVE_PRO_LINE_1000"]["executable_now"] is False
+
+    # 3. Guard lock_tier tracking & serialized active_positions snapshot for TV cockpit.
+    pa1 = coord.lanes["ALPACA_PA1"]
+    parent_order = SimpleNamespace(
+        id="ord-nvda-1",
+        status=SimpleNamespace(value="filled"),
+        filled_qty="10",
+        filled_avg_price="100.00",
+    )
+    guard = execution.Guard(
+        lane=pa1,
+        client_id="noesis-guard-1",
+        symbol="NVDA",
+        side="LONG",
+        initial=Decimal("98.00"),
+        stop=Decimal("98.00"),
+        natr=Decimal("0.020"),
+        entered_session="RTH",
+        triggered=False,
+        parent=parent_order,
+    )
+    monkeypatch.setattr(guard, "save", lambda: None)
+    guard.on_price(Decimal("104.50"), "RTH")
+    assert guard.lock_tier >= 3
+    assert guard.stop > Decimal("100.00")
+    pos_snap = guard.to_position_snapshot("RTH")
+    assert pos_snap["symbol"] == "NVDA" and pos_snap["account"] == "ALPACA_PA1"
+    assert pos_snap["venue_profile"] == "ALPACA_PAPER_1000"
+    assert pos_snap["lock_tier"] >= 3 and pos_snap["order_mode"] == "STOP_MARKET"
+
+    # 4. Fail-closed TV <-> Engine coordination manifest (never auto-submits!).
+    assert coord.symbol_lock.try_claim("SOXL", "ALPACA_PA1") is True
+    pack_dir = tmp_path / "tv_sota_pack"
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "paper_farm_execution_status.json").write_text(
+        json.dumps(
+            {
+                "status": "SUPERVISING",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "active_positions": [pos_snap],
+                "active_positions_count": 1,
+                "venue_order_handles": handles,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (pack_dir / "staged_tv_presets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.staged-tv-presets.v1",
+                "semi_auto_confirmed": False,
+                "presets": [
+                    {
+                        "alert_id": "a1b2c3d4",
+                        "symbol": "PLTR",
+                        "side": "BUY",
+                        "qty": 1,
+                        "session": "RTH",
+                        "venue": "ALPACA",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "trigger_price": 125.00,
+                        "natr_pct": 0.022,
+                        "rvol": 3.4,
+                        "semi_auto_confirmed": False,
+                    },
+                    {
+                        "alert_id": "deadbeef",
+                        "symbol": "AMD",
+                        "side": "BUY",
+                        "qty": 1,
+                        "session": "RTH",
+                        "venue": "ALPACA",
+                        "venue_profile": "ALPACA_LIVE_PRO_LINE_1000",
+                        "trigger_price": 150.00,
+                        "semi_auto_confirmed": False,
+                    },
+                    {
+                        "alert_id": "c0ffee01",
+                        "symbol": "SOXL",
+                        "side": "BUY",
+                        "qty": 1,
+                        "session": "RTH",
+                        "venue": "ALPACA",
+                        "trigger_price": 42.00,
+                        "semi_auto_confirmed": False,
+                    },
+                    {
+                        "alert_id": "1b2r4002",
+                        "symbol": "TSLA",
+                        "side": "SELL",
+                        "qty": 1,
+                        "session": "RTH",
+                        "venue": "IBKR",
+                        "venue_profile": "IBKR_PAPER_4002",
+                        "trigger_price": 260.00,
+                        "semi_auto_confirmed": False,
+                    },
+                    {
+                        "alert_id": "badqty05",
+                        "symbol": "META",
+                        "side": "BUY",
+                        "qty": 5,
+                        "session": "RTH",
+                        "venue": "ALPACA",
+                        "trigger_price": 500.00,
+                        "semi_auto_confirmed": False,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    coord_doc = reconcile_staged_tv_presets_for_engine(
+        tmp_path, coord, "RTH", tca_allows_entry=True
+    )
+    assert coord_doc["schema_version"] == "tier0.tv-engine-coordination.v1"
+    assert coord_doc["paper_only"] is True
+    assert coord_doc["semi_auto_confirmed"] is False
+    assert coord_doc["live_execution_enabled"] is False
+    assert coord_doc["auto_submit_enabled"] is False
+    assert coord_doc["staged_alerts_evaluated"] == 5
+    assert coord_doc["ready_for_operator_confirm_count"] == 1
+    assert coord_doc["blocked_count"] == 4
+    assert coord_doc["active_positions_count"] == 2  # NVDA guard + SOXL symbol_lock
+
+    by_id = {d["alert_id"]: d for d in coord_doc["coordination_decisions"]}
+    assert by_id["a1b2c3d4"]["discipline_gate"] == "READY_FOR_OPERATOR_CONFIRM"
+    assert by_id["a1b2c3d4"]["target_account"] == "ALPACA_PA1"
+    assert by_id["a1b2c3d4"]["auto_submitted"] is False
+    assert by_id["a1b2c3d4"]["nautilus_sandbox_parity"]["parity_ok"] is True
+    assert by_id["a1b2c3d4"]["nautilus_sandbox_parity"]["max_order_submit_rate"] == "25/00:00:01"
+    assert by_id["deadbeef"]["discipline_gate"] == "HOLD_LIVE_PROFILE_REFUSED"
+    assert by_id["c0ffee01"]["discipline_gate"] == "SYMBOL_LOCKED_BY_ALPACA_PA1"
+    assert by_id["1b2r4002"]["discipline_gate"] == "IBKR_PAPER_4002_SOCKET_UNAVAILABLE"
+    assert by_id["badqty05"]["discipline_gate"] == "QTY_MUST_BE_1"
+    assert all(len(c.orders) == 0 for c in clients.values())
+
+    # Alpaca OVERNIGHT SHORT fails closed; tripped breakers across all lanes fail closed.
+    (pack_dir / "staged_tv_presets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.staged-tv-presets.v1",
+                "semi_auto_confirmed": False,
+                "presets": [
+                    {
+                        "alert_id": "ovnshort1",
+                        "symbol": "NVDA",
+                        "side": "SELL",
+                        "qty": 1,
+                        "session": "OVERNIGHT",
+                        "venue": "ALPACA",
+                        "semi_auto_confirmed": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ovn_doc = reconcile_staged_tv_presets_for_engine(
+        tmp_path, coord, "OVERNIGHT", tca_allows_entry=True
+    )
+    assert (
+        ovn_doc["coordination_decisions"][0]["discipline_gate"]
+        == "ALPACA_OVERNIGHT_SHORT_UNSUPPORTED_ROUTE_IBKR_OR_INVERSE"
+    )
+    for lane in coord.lanes.values():
+        lane.breaker.tripped = True
+    (pack_dir / "staged_tv_presets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.staged-tv-presets.v1",
+                "semi_auto_confirmed": False,
+                "presets": [
+                    {
+                        "alert_id": "brk01",
+                        "symbol": "PLTR",
+                        "side": "BUY",
+                        "qty": 1,
+                        "session": "RTH",
+                        "venue": "ALPACA",
+                        "semi_auto_confirmed": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    brk_doc = reconcile_staged_tv_presets_for_engine(tmp_path, coord, "RTH", tca_allows_entry=True)
+    assert brk_doc["any_breaker_tripped"] is True
+    assert (
+        brk_doc["coordination_decisions"][0]["discipline_gate"]
+        == "ALL_ALPACA_LANES_BREAKER_TRIPPED_OR_UNAVAILABLE"
+    )
+
+    # Restore RTH manifest for performance + MCP verification.
+    for lane in coord.lanes.values():
+        lane.breaker.tripped = False
+    (pack_dir / "staged_tv_presets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.staged-tv-presets.v1",
+                "semi_auto_confirmed": False,
+                "presets": [
+                    {
+                        "alert_id": "a1b2c3d4",
+                        "symbol": "PLTR",
+                        "side": "BUY",
+                        "qty": 1,
+                        "session": "RTH",
+                        "venue": "ALPACA",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "trigger_price": 125.00,
+                        "semi_auto_confirmed": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    reconcile_staged_tv_presets_for_engine(tmp_path, coord, "RTH", tca_allows_entry=True)
+
+    # 5. Performance aggregator + FINOS + Prometheus + unitless OTel telemetry.
+    prom_path = tmp_path / "paper_farm_metrics.prom"
+    perf = aggregate_paper_farm_performance(tmp_path, prom_output_path=prom_path)
+    assert perf["tv_half_auto"]["coordination_present"] is True
+    assert perf["tv_half_auto"]["coordination_evaluated_count"] == 1
+    assert perf["tv_half_auto"]["coordination_ready_count"] == 1
+    assert perf["tv_half_auto"]["active_trailed_positions_count"] == 1
+    assert perf["finos_openbb"]["active_positions"][0]["symbol"] == "NVDA"
+    assert perf["finos_openbb"]["venue_order_handles"]["combined_max_rpm"] == 6000
+
+    tel = record_paper_farm_telemetry(perf, prom_output_path=prom_path)
+    for prom_name in (
+        "tier0_tv_engine_coordination_evaluated_count",
+        "tier0_tv_engine_coordination_ready_count",
+        "tier0_paper_farm_active_trailed_positions",
+        "tier0_venue_order_handle_max_rpm",
+        "tier0_venue_order_handle_exit_reserve_rpm",
+    ):
+        assert prom_name in tel["prometheus_text"]
+    assert {
+        "tier0.tv_engine_coordination.evaluated_count",
+        "tier0.tv_engine_coordination.ready_count",
+        "tier0.paper_farm.active_trailed_positions",
+        "tier0.venue_order_handle.max_rpm",
+        "tier0.venue_order_handle.exit_reserve_rpm",
+    } <= set(tel["otel_metric_names"])
+
+    # 6. FastMCP server: exact 10 tools + ALPACA_PAPER_1000 + coordination + fail-closed LIVE.
+    vp_info = mcp_srv.inspect_venue_profile("ALPACA_PAPER_1000", session="PRE_MARKET")
+    assert vp_info["allowed"] is True and vp_info["max_rpm"] == 1000
+    assert vp_info["order_handle_spec"]["limit_collar_bps"] == 35.0
+    assert vp_info["order_handle_spec"]["exit_reserve_rpm"] == 100
+
+    wl_coord = mcp_srv.get_live_watchlist_manifest(
+        str(pack_dir / "tv_engine_coordination_manifest.json")
+    )
+    assert wl_coord["ok"] is True
+    assert wl_coord["schema_version"] == "tier0.tv-engine-coordination.v1"
+
+    pf_mcp = mcp_srv.get_live_performance_manifest(
+        str(tmp_path / "paper_farm_live_performance_manifest.json")
+    )
+    assert pf_mcp["ok"] is True
+    assert pf_mcp["tv_engine_coordination"]["ready_for_operator_confirm_count"] == 1
+
+    st_ok = mcp_srv.stage_semi_auto_order_preset(
+        symbol="NVDA",
+        side="BUY",
+        session="RTH",
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        staged_path=str(tmp_path / "mcp_1000.json"),
+    )
+    assert st_ok["ok"] is True and st_ok["semi_auto_confirmed"] is False
+    assert st_ok["venue_profile"] == "ALPACA_PAPER_1000"
+    assert st_ok["order_handle_spec"]["max_rpm"] == 1000
+
+    st_live = mcp_srv.stage_semi_auto_order_preset(
+        symbol="NVDA",
+        side="BUY",
+        session="RTH",
+        venue="ALPACA",
+        venue_profile="ALPACA_LIVE_PRO_LINE_1000",
+        staged_path=str(tmp_path / "mcp_live_fail.json"),
+    )
+    assert st_live["ok"] is False and st_live["semi_auto_confirmed"] is False
+
+    smoke = mcp_srv.run_smoke_check()
+    assert smoke["ok"] is True and smoke["tools_count"] == 10
+
+
+def test_alpaca_paper_1000_full_matrix_runner_execution_and_tv_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import sys
+    from typing import Any
+
+    from tier0_sota.live import runner
+    from tier0_sota.live.paper_farm import IBKR_PAPER_ACCOUNT
+
+    # (1) PaperFarmCoordinator.venue_order_handles() across default 3600rpm vs 6000rpm
+    #     across ALL 4 sessions (RTH/PRE_MARKET/AFTER_HOURS/OVERNIGHT) & ALL 3 NATR schedules.
+    monkeypatch.delenv("TIER0_ALPACA_RPM", raising=False)
+    default_clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    default_farm = PaperFarmCoordinator(tmp_path / "default200", alpaca_clients=default_clients)
+    def_handles = default_farm.venue_order_handles(session="RTH", trailing_schedule="baseline")
+    assert def_handles["alpaca_venue_profile"] == "ALPACA_PAPER_200"
+    assert def_handles["combined_max_rpm"] == 3600
+    assert def_handles["combined_exit_reserve_rpm"] == 360
+    assert def_handles["combined_entry_modify_rpm_budget"] == 3240
+
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "1000")
+    pro_clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    pro_farm = PaperFarmCoordinator(tmp_path / "pro1000", alpaca_clients=pro_clients)
+    expected_sessions = {
+        "RTH": ("STOP_MARKET", 0.0, False),
+        "PRE_MARKET": ("STOP_LIMIT", 35.0, True),
+        "AFTER_HOURS": ("STOP_LIMIT", 35.0, True),
+        "OVERNIGHT": ("STOP_LIMIT", 50.0, True),
+    }
+    for sess, (exp_mode, exp_collar, exp_outside) in expected_sessions.items():
+        for sched in ("tight_near_lossless", "baseline", "wide_natr_adaptive"):
+            handles = pro_farm.venue_order_handles(session=sess, trailing_schedule=sched)
+            assert handles["paper_only"] is True
+            assert handles["live_execution_enabled"] is False
+            assert handles["session"] == sess
+            assert handles["trailing_schedule"] == sched
+            assert handles["alpaca_venue_profile"] == "ALPACA_PAPER_1000"
+            assert handles["alpaca_per_lane_max_rpm"] == 1000
+            assert handles["ibkr_venue_profile"] == "IBKR_PAPER_4002"
+            assert handles["combined_max_rpm"] == 6000
+            assert handles["combined_exit_reserve_rpm"] == 600
+            assert handles["combined_entry_modify_rpm_budget"] == 5400
+            assert set(handles["per_account"]) == set(ALPACA_LANE_PROFILES) | {IBKR_PAPER_ACCOUNT}
+            for acct, spec in handles["per_account"].items():
+                assert spec["session_order_mode"] == exp_mode
+                assert spec["limit_collar_bps"] == exp_collar
+                assert spec["outside_rth"] is exp_outside
+                assert spec["trailing_schedule"] == sched
+                assert 0.0 < spec["initial_max_loss_pct"] <= 0.02
+                assert spec["paper_only"] is True and spec["live_execution_enabled"] is False
+                if acct == IBKR_PAPER_ACCOUNT:
+                    assert spec["effective_max_rpm"] == 3000
+                    assert spec["effective_exit_reserve_rpm"] == 300
+                    assert spec["effective_entry_modify_rpm_budget"] == 2700
+                else:
+                    assert spec["venue_profile"] == "ALPACA_PAPER_1000"
+                    assert spec["effective_max_rpm"] == 1000
+                    assert spec["effective_exit_reserve_rpm"] == 100
+                    assert spec["effective_entry_modify_rpm_budget"] == 900
+                    assert spec["max_rps"] == 25
+                    assert spec["max_concurrent_trailed_positions"] == 10
+
+    # (2) runner.main() --alpaca-rpm fail-closed validation + --observe 6000rpm status manifest.
+    obs_dir = tmp_path / "runner_obs"
+    monkeypatch.delenv("TIER0_ALPACA_RPM", raising=False)
+    for bad_flag in ("ALPACA_LIVE_PRO_LINE_1000", "1001", "0", "bogus"):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["runner", "--observe", "--manifest-dir", str(obs_dir), "--alpaca-rpm", bad_flag],
+        )
+        with pytest.raises(ValueError):
+            runner.main()
+
+    obs_clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    monkeypatch.setattr(runner, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(
+        runner,
+        "PaperFarmCoordinator",
+        lambda mdir: PaperFarmCoordinator(mdir, alpaca_clients=obs_clients),
+    )
+    monkeypatch.setattr(runner, "ibkr_health", lambda _ibkr: False)
+    monkeypatch.setattr(runner, "refresh_accounts", lambda *_a, **_kw: None)
+    monkeypatch.setattr(runner.engine, "classify_us_equity_session_et", lambda _ns: "RTH")
+
+    class _StubScanner:
+        data_client = None
+
+        def scan(self, *, top_k: int, output_path: Path) -> dict[str, Any]:
+            doc = {
+                "generated_at_utc": datetime.now(UTC).isoformat(),
+                "session": "RTH",
+                "ranked_count": 0,
+                "macro_regime": {"regime": 1},
+                "entries": [],
+            }
+            output_path.write_text(json.dumps(doc), encoding="utf-8")
+            return doc
+
+    monkeypatch.setattr(runner.ExtremeMoverScanner, "from_env", lambda **_kw: _StubScanner())
+    monkeypatch.setattr(
+        runner,
+        "refresh_tickets_from_paths",
+        lambda **_kw: {"staged_count": 0, "standby_presets": []},
+    )
+    monkeypatch.setenv("TIER0_OTLP_METRICS_URL", "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["runner", "--observe", "--manifest-dir", str(obs_dir), "--alpaca-rpm", "1000"],
+    )
+    runner.main()
+    obs_out = json.loads(capsys.readouterr().out)
+    assert obs_out["combined_max_rpm"] == 6000
+    assert obs_out["paper_only"] is True and obs_out["live_execution_enabled"] is False
+    status_doc = json.loads(
+        (obs_dir / "paper_farm_live_auto_entry_status.json").read_text(encoding="utf-8")
+    )
+    assert status_doc["combined_max_rpm"] == 6000
+    assert status_doc["venue_order_handles"]["alpaca_venue_profile"] == "ALPACA_PAPER_1000"
+    assert status_doc["venue_order_handles"]["combined_exit_reserve_rpm"] == 600
+    for acct in ALPACA_LANE_PROFILES:
+        acct_row = status_doc["accounts"][acct]
+        assert acct_row["execution_venue_profile"] == "ALPACA_PAPER_1000"
+        assert acct_row["rate_limit_rpm"] == 1000
+        assert acct_row["exit_reserve_rpm"] == 100
+    assert (
+        status_doc["accounts"][IBKR_PAPER_ACCOUNT]["execution_venue_profile"] == "IBKR_PAPER_4002"
+    )
+    assert status_doc["accounts"][IBKR_PAPER_ACCOUNT]["rate_limit_rpm"] == 3000
+    assert status_doc["accounts"][IBKR_PAPER_ACCOUNT]["exit_reserve_rpm"] == 300
+
+    # (3) execution.run_execution() under TIER0_ALPACA_RPM=1000 emits 6000rpm handles + guard snap.
+    exec_dir = tmp_path / "exec_1000"
+    exec_dir.mkdir(parents=True, exist_ok=True)
+    stop_evt = threading.Event()
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "1000")
+
+    class _Exec1000Broker(_FakeTradingClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.identity = uuid4()
+
+        def get_account(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                id=self.identity,
+                status=SimpleNamespace(value="ACTIVE"),
+                account_blocked=False,
+                trading_blocked=False,
+                trade_suspended_by_user=False,
+                equity="100000",
+                last_equity="100000",
+            )
+
+        def get_clock(self) -> SimpleNamespace:
+            return SimpleNamespace(is_open=True)
+
+        def get_asset(self, symbol: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                symbol=symbol,
+                tradable=True,
+                shortable=True,
+                easy_to_borrow=True,
+                attributes=["overnight_tradable"],
+            )
+
+        def get_all_positions(self) -> list[Any]:
+            return []
+
+        def get_orders(self, request: Any = None) -> list[Any]:
+            return []
+
+        def submit_order(self, req: Any) -> SimpleNamespace:
+            self.orders.append(req)
+            child = SimpleNamespace(
+                id="child-1000",
+                status=SimpleNamespace(value="held"),
+                replaced_by=None,
+                symbol=req.symbol,
+                side=SimpleNamespace(value="sell"),
+                stop_price=str(req.stop_loss.stop_price),
+            )
+            return SimpleNamespace(
+                id="parent-1000",
+                legs=[child],
+                status=SimpleNamespace(value="new"),
+                filled_qty="0",
+                filled_avg_price=None,
+            )
+
+        def get_order_by_id(self, order_id: str, filter: Any = None) -> SimpleNamespace:
+            req = self.orders[0]
+            assert isinstance(req, LimitOrderRequest) and req.stop_loss is not None
+            child = SimpleNamespace(
+                id="child-1000",
+                status=SimpleNamespace(value="held"),
+                replaced_by=None,
+                symbol=req.symbol,
+                side=SimpleNamespace(value="sell"),
+                stop_price=str(req.stop_loss.stop_price),
+            )
+            return SimpleNamespace(
+                id=order_id,
+                legs=[child],
+                status=SimpleNamespace(value="new"),
+                filled_qty="0",
+                filled_avg_price=None,
+            )
+
+    exec_brokers = {acct: _Exec1000Broker() for acct in ALPACA_LANE_PROFILES}
+    exec_farm = PaperFarmCoordinator(exec_dir, alpaca_clients=exec_brokers)
+
+    class _ExecQuotes:
+        def get_stock_latest_quote(self, _req: Any) -> dict[str, SimpleNamespace]:
+            return {
+                "NVDA": SimpleNamespace(
+                    bid_price=100.00, ask_price=100.02, timestamp=datetime.now(UTC)
+                )
+            }
+
+    class _ExecStream:
+        def __init__(self, *_a: Any, feed: Any) -> None:
+            self.feed = feed
+            self.subscribed = threading.Event()
+
+        def subscribe_trades(self, callback: Any, *symbols: str) -> None:
+            self.callback = callback
+            if "NVDA" in symbols:
+                self.subscribed.set()
+
+        def run(self) -> None:
+            assert self.subscribed.wait(15)
+            if self.feed.value == "sip":
+                asyncio.run(
+                    self.callback(
+                        SimpleNamespace(symbol="NVDA", price=100.01, timestamp=datetime.now(UTC))
+                    )
+                )
+                stop_evt.set()
+            assert stop_evt.wait(15)
+
+        def stop(self) -> None:
+            stop_evt.set()
+
+    now_iso = datetime.now(UTC).isoformat()
+    (exec_dir / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now_iso,
+                "macro_regime": {"regime": 1},
+                "entries": [
+                    {
+                        "symbol": "NVDA",
+                        "extreme_mover_eligible": True,
+                        "side": "BUY",
+                        "session": "RTH",
+                        "bar_close_utc": now_iso,
+                        "natr_pct": 0.035,
+                        "rvol_normalized": 4.2,
+                        "last_price": 100.01,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(execution, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(execution, "resolve_alpaca_env_creds", lambda: ("", ""))
+    monkeypatch.setattr(execution, "PaperFarmCoordinator", lambda _dir: exec_farm)
+    monkeypatch.setattr(execution, "StockDataStream", _ExecStream)
+    monkeypatch.setattr(
+        execution.ExtremeMoverScanner,
+        "from_env",
+        lambda *_a, **_kw: SimpleNamespace(data_client=_ExecQuotes()),
+    )
+    monkeypatch.setattr(execution.engine, "classify_us_equity_session_et", lambda _ns: "RTH")
+    execution.run_execution(exec_dir, stop=stop_evt)
+    exec_status = json.loads(
+        (exec_dir / "paper_farm_execution_status.json").read_text(encoding="utf-8")
+    )
+    assert exec_status["paper_only"] is True and exec_status["live_execution_enabled"] is False
+    assert exec_status["venue_order_handles"]["alpaca_venue_profile"] == "ALPACA_PAPER_1000"
+    assert exec_status["venue_order_handles"]["combined_max_rpm"] == 6000
+    assert exec_status["venue_order_handles"]["combined_exit_reserve_rpm"] == 600
+
+    # (4) runner.main() --confirm-tv-alert --alpaca-rpm ALPACA_PAPER_1000 --dry-run
+    #     + fail-closed refusal of LIVE and non-ALPACA (IBKR) venue_profile in TV handoff.
+    tv_dir = tmp_path / "tv_1000"
+    rth_now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)  # 11:00 ET RTH
+    staged_ok = _stage_sample_tv_preset(
+        tv_dir,
+        symbol="NVDA",
+        side="BUY",
+        session="RTH",
+        trigger_price=125.00,
+        stop_price=122.50,
+        natr_pct=0.035,
+        trailing_schedule="wide_natr_adaptive",
+        order_type="STOP_MARKET",
+        limit_collar_bps=0.0,
+        rvol=4.2,
+    )
+    staged_path = tv_dir / "tv_sota_pack" / "staged_tv_presets.json"
+    staged_doc = json.loads(staged_path.read_text(encoding="utf-8"))
+    staged_doc["presets"][0]["venue_profile"] = "ALPACA_PAPER_1000"
+    staged_doc["presets"].append(
+        dict(
+            staged_doc["presets"][0],
+            alert_id="1111222233334444",
+            venue_profile="ALPACA_LIVE_PRO_LINE_1000",
+        )
+    )
+    staged_doc["presets"].append(
+        dict(
+            staged_doc["presets"][0],
+            alert_id="5555666677778888",
+            venue_profile="IBKR_PAPER_4002",
+        )
+    )
+    staged_path.write_text(json.dumps(staged_doc), encoding="utf-8")
+
+    tv_brokers = {acct: _TvConfirmBroker() for acct in ALPACA_LANE_PROFILES}
+    monkeypatch.delenv("TIER0_ALPACA_RPM", raising=False)
+    monkeypatch.setattr(
+        execution,
+        "PaperFarmCoordinator",
+        lambda mdir: PaperFarmCoordinator(mdir, alpaca_clients=tv_brokers),
+    )
+
+    class _Tv1000Quotes:
+        def get_stock_latest_quote(self, _req: Any) -> dict[str, SimpleNamespace]:
+            return {"NVDA": SimpleNamespace(bid_price=124.98, ask_price=125.02, timestamp=rth_now)}
+
+    monkeypatch.setattr(
+        execution.ExtremeMoverScanner,
+        "from_env",
+        lambda *_a, **_kw: SimpleNamespace(data_client=_Tv1000Quotes()),
+    )
+
+    class _FixedNow:
+        @staticmethod
+        def now(tz: object = None) -> datetime:
+            return rth_now
+
+    monkeypatch.setattr(execution, "datetime", _FixedNow)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--confirm-tv-alert",
+            str(staged_ok["alert_id"]),
+            "--manifest-dir",
+            str(tv_dir),
+            "--alpaca-rpm",
+            "ALPACA_PAPER_1000",
+            "--dry-run",
+        ],
+    )
+    runner.main()
+    tv_receipt = json.loads(capsys.readouterr().out)
+    assert tv_receipt["ok"] is True and tv_receipt["dry_run"] is True
+    assert tv_receipt["paper_only"] is True and tv_receipt["live_execution_enabled"] is False
+    assert tv_receipt["lane_account"] == "ALPACA_PA1"
+    assert tv_receipt["venue_profile"] == "ALPACA_PAPER_1000"
+    handle = tv_receipt["order_handle_spec"]
+    assert handle["max_rpm"] == 1000 and handle["max_rps"] == 25
+    assert handle["exit_reserve_rpm"] == 100 and handle["entry_modify_rpm_budget"] == 900
+    assert handle["max_concurrent_trailed_positions"] == 10
+    assert handle["executable_now"] is True
+
+    with pytest.raises(PermissionError, match="live_execution_enabled=False"):
+        execution.submit_confirmed_tv_preset_paper(
+            tv_dir, alert_id="1111222233334444", qty=1, dry_run=True, now_utc=rth_now
+        )
+    with pytest.raises(ValueError, match="ALPACA paper venue profile"):
+        execution.submit_confirmed_tv_preset_paper(
+            tv_dir, alert_id="5555666677778888", qty=1, dry_run=True, now_utc=rth_now
+        )
+    assert all(len(b.orders) == 0 for b in tv_brokers.values())

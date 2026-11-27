@@ -22,6 +22,7 @@ from alpaca.trading.requests import GetOrderByIdRequest, GetOrdersRequest
 from tier0_sota import engine, risk
 from tier0_sota.live.paper_farm import (
     ALPACA_LANE_PROFILES,
+    IBKR_PAPER_ACCOUNT,
     PAPER_ALPACA_ENDPOINT,
     AlpacaPaperLane,
     IbkrPaperAdapter,
@@ -31,7 +32,9 @@ from tier0_sota.live.paper_farm import (
     ensure_tca_table,
     ensure_wire_table,
     open_bounded_duckdb,
+    resolve_alpaca_paper_venue_profile,
     round_lot_up,
+    select_situation_lane,
 )
 from tier0_sota.live.performance import aggregate_paper_farm_performance
 from tier0_sota.live.scanner import (
@@ -391,6 +394,309 @@ def export_ui_snapshot(lane: AlpacaPaperLane) -> None:
                 tmp.replace(path)
 
 
+_INVERSE_HEDGE_SYMBOLS = frozenset({"SOXS", "SQQQ", "SPXS", "SDOW"})
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def reconcile_staged_tv_presets_for_engine(
+    manifest_dir: Path,
+    farm: PaperFarmCoordinator,
+    session: str,
+    *,
+    movers_doc: dict[str, Any] | None = None,
+    tca_allows_entry: bool | None = None,
+    active_positions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Fail-closed coordination of staged TV presets vs Paper Farm, breakers & Nautilus SANDBOX.
+
+    Never auto-submits any order: always emits `semi_auto_confirmed=False`, `paper_only=True`,
+    `live_execution_enabled=False`, and `auto_submit_enabled=False`.
+    """
+    from tier0_sota.tv.bridge import refuse_live_endpoints
+
+    pack_dir = manifest_dir / "tv_sota_pack"
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = pack_dir / "staged_tv_presets.json"
+    if not staged_path.is_file():
+        fallback = manifest_dir / "staged_tv_presets.json"
+        if fallback.is_file():
+            staged_path = fallback
+
+    exec_doc = _read_json_dict(manifest_dir / "paper_farm_execution_status.json")
+    ibkr_doc = _read_json_dict(manifest_dir / "ibkr_du_4002_live_automation_status.json")
+    owners = dict(farm.symbol_lock.snapshot())
+
+    if active_positions is not None:
+        positions_out = [dict(p) for p in active_positions if isinstance(p, dict)]
+    else:
+        raw_pos = exec_doc.get("active_positions")
+        positions_out = (
+            [dict(p) for p in raw_pos if isinstance(p, dict)] if isinstance(raw_pos, list) else []
+        )
+    known_pos_syms = {str(p.get("symbol") or "").strip().upper() for p in positions_out}
+    for sym, acct in sorted(owners.items()):
+        if sym and sym not in known_pos_syms:
+            positions_out.append(
+                {
+                    "symbol": sym,
+                    "account": acct,
+                    "lane_id": (
+                        ALPACA_LANE_PROFILES[acct]["lane_id"]
+                        if acct in ALPACA_LANE_PROFILES
+                        else "IBKR_SMART_24X5"
+                    ),
+                    "venue_profile": (
+                        farm.lanes[acct].venue_profile if acct in farm.lanes else "IBKR_PAPER_4002"
+                    ),
+                    "active_session": session,
+                    "source": "symbol_lock",
+                }
+            )
+
+    venue_handles = farm.venue_order_handles(session=session)
+    breakers_tripped = sorted(
+        [acct for acct, lane in farm.lanes.items() if not lane.breaker.allow_entry()]
+        + ([IBKR_PAPER_ACCOUNT] if not farm.ibkr.breaker.allow_entry() else [])
+    )
+    tca_ok = True if tca_allows_entry is None else bool(tca_allows_entry)
+    ibkr_tcp_ok = ibkr_doc.get("tcp_reachable") is True
+    ibkr_ready = ibkr_doc.get("ready") is True
+
+    movers_by_sym: dict[str, dict[str, Any]] = {}
+    if isinstance(movers_doc, dict) and isinstance(movers_doc.get("entries"), list):
+        for entry in movers_doc["entries"]:
+            if isinstance(entry, dict) and entry.get("symbol"):
+                movers_by_sym[str(entry["symbol"]).strip().upper()] = entry
+
+    staged_doc = _read_json_dict(staged_path)
+    manifest_confirmed_violation = staged_doc.get("semi_auto_confirmed") is True
+    raw_presets_val = staged_doc.get("presets")
+    raw_presets: list[Any] = raw_presets_val if isinstance(raw_presets_val, list) else []
+
+    decisions: list[dict[str, Any]] = []
+    for raw in raw_presets:
+        if not isinstance(raw, dict):
+            continue
+        reasons: list[str] = []
+        if manifest_confirmed_violation:
+            reasons.append("MANIFEST_SEMI_AUTO_CONFIRMED_TRUE_REFUSED")
+        try:
+            refuse_live_endpoints(raw)
+        except (ValueError, PermissionError):
+            reasons.append("LIVE_ENDPOINT_REFUSED")
+
+        qty_raw = raw.get("qty", 1)
+        if isinstance(qty_raw, bool) or not isinstance(qty_raw, int) or qty_raw != 1:
+            reasons.append("QTY_MUST_BE_1")
+        if raw.get("semi_auto_confirmed") is not False:
+            reasons.append("SEMI_AUTO_CONFIRMED_MUST_BE_FALSE")
+
+        sym = str(raw.get("symbol") or "").strip().upper()
+        if not sym:
+            reasons.append("MISSING_SYMBOL")
+        raw_side = str(raw.get("side") or "BUY").strip().upper()
+        route_side: risk.Side = "SHORT" if raw_side in ("SELL", "SHORT") else "LONG"
+        if raw_side not in ("BUY", "SELL", "LONG", "SHORT"):
+            reasons.append("INVALID_SIDE")
+        if session == "CLOSED":
+            reasons.append("SESSION_CLOSED")
+        if not tca_ok:
+            reasons.append("TCA_RECALIBRATION_REQUIRED")
+
+        mover = movers_by_sym.get(sym, {})
+        natr_raw = raw.get("natr_pct") or mover.get("natr_pct") or "0.015"
+        try:
+            natr_d = Decimal(str(natr_raw))
+            if not natr_d.is_finite() or natr_d <= 0:
+                natr_d = Decimal("0.015")
+        except Exception:  # noqa: BLE001
+            natr_d = Decimal("0.015")
+        sched_name, sp_map = engine.select_pooled_trailing_schedule(natr_d)
+        prof = engine.get_session_protection_profile(session, sp_map)
+        rvol_val = (
+            raw.get("rvol")
+            if raw.get("rvol") is not None
+            else (
+                mover.get("rvol_normalized")
+                if mover.get("rvol_normalized") is not None
+                else mover.get("rvol")
+            )
+        )
+
+        req_vp = str(raw.get("venue_profile") or "").strip().upper()
+        req_venue = str(raw.get("venue") or "").strip().upper()
+        resolved_vp: str | None = None
+        if req_vp:
+            if req_vp not in engine.EXECUTION_VENUE_PROFILES:
+                reasons.append("UNKNOWN_VENUE_PROFILE")
+            else:
+                resolved_vp = req_vp
+                try:
+                    engine.validate_venue_order_capability(req_vp)
+                except PermissionError:
+                    reasons.append("HOLD_LIVE_PROFILE_REFUSED")
+                except ValueError:
+                    reasons.append("VENUE_CAPABILITY_REFUSED")
+        elif req_venue == "IBKR":
+            resolved_vp = "IBKR_PAPER_4002"
+        else:
+            resolved_vp = str(venue_handles["alpaca_venue_profile"])
+
+        if (
+            resolved_vp
+            and resolved_vp.startswith("ALPACA")
+            and route_side == "SHORT"
+            and session == "OVERNIGHT"
+        ):
+            reasons.append("ALPACA_OVERNIGHT_SHORT_UNSUPPORTED_ROUTE_IBKR_OR_INVERSE")
+
+        if sym and sym in owners:
+            reasons.append(f"SYMBOL_LOCKED_BY_{owners[sym]}")
+
+        is_inverse = sym in _INVERSE_HEDGE_SYMBOLS
+        if is_inverse and route_side == "LONG":
+            origin = f"INVERSE_HEDGE_{sym}"
+        elif route_side == "SHORT":
+            origin = "DIRECT_SHORT_ETB"
+        else:
+            origin = "TV_HALF_AUTO_STAGED"
+
+        target_account: str | None = None
+        target_lane_id: str | None = None
+        if resolved_vp == "IBKR_PAPER_4002":
+            target_account = IBKR_PAPER_ACCOUNT
+            target_lane_id = "IBKR_SMART_24X5"
+            if not farm.ibkr.breaker.allow_entry():
+                reasons.append("IBKR_DAILY_DRAWDOWN_BREAKER_TRIPPED")
+            if not ibkr_ready and not ibkr_tcp_ok:
+                reasons.append("IBKR_PAPER_4002_SOCKET_UNAVAILABLE")
+        elif resolved_vp and resolved_vp.startswith("ALPACA_PAPER"):
+            lane = select_situation_lane(
+                farm.lanes,
+                origin=origin,
+                natr_pct=natr_d,
+                rvol_normalized=rvol_val,
+            )
+            if lane is None:
+                reasons.append("ALL_ALPACA_LANES_BREAKER_TRIPPED_OR_UNAVAILABLE")
+            else:
+                target_account = lane.account
+                target_lane_id = lane.profile["lane_id"]
+
+        handle_spec: dict[str, Any] | None = None
+        sandbox_parity: dict[str, Any] = {
+            "environment": "SANDBOX",
+            "parity_ok": False,
+            "session_order_mode": prof.order_mode,
+            "limit_collar_bps": float(prof.limit_collar_bps),
+            "outside_rth": bool(prof.outside_rth),
+            "trailing_schedule": sched_name,
+        }
+        if resolved_vp is not None:
+            handle_spec = engine.build_venue_order_handle_spec(
+                resolved_vp, session=session, trailing_schedule=sched_name
+            )
+            re_cfg = engine.build_venue_risk_engine_config(resolved_vp)
+            ref_raw = raw.get("trigger_price") or mover.get("last_price")
+            rule612_stop: float | None = None
+            stop_within_cap = True
+            if ref_raw is not None and not isinstance(ref_raw, bool):
+                try:
+                    ref_d = Decimal(str(ref_raw))
+                    if ref_d.is_finite() and ref_d > 0:
+                        stop_d = risk.compute_capped_stop_price(
+                            ref_d, route_side, max_loss_pct=prof.initial_max_loss_pct
+                        )
+                        loss_pct = abs(ref_d - stop_d) / ref_d
+                        stop_within_cap = Decimal("0") < loss_pct <= risk.MAX_STOP_LOSS_PCT
+                        rule612_stop = float(stop_d)
+                except Exception:  # noqa: BLE001
+                    stop_within_cap = False
+            if not stop_within_cap:
+                reasons.append("RULE_612_STOP_CAP_VIOLATION")
+            sandbox_parity = {
+                "environment": "SANDBOX",
+                "parity_ok": (
+                    not bool(re_cfg.bypass)
+                    and stop_within_cap
+                    and bool(handle_spec["executable_now"])
+                ),
+                "risk_engine_bypass": bool(re_cfg.bypass),
+                "max_order_submit_rate": str(re_cfg.max_order_submit_rate),
+                "max_order_modify_rate": str(re_cfg.max_order_modify_rate),
+                "session_order_mode": prof.order_mode,
+                "limit_collar_bps": float(prof.limit_collar_bps),
+                "outside_rth": bool(prof.outside_rth),
+                "trailing_schedule": sched_name,
+                "rule_612_stop_price": rule612_stop,
+                "stop_loss_pct_within_cap": stop_within_cap,
+            }
+
+        ready_confirm = len(reasons) == 0
+        alert_id = str(raw.get("alert_id") or "").strip()
+        decisions.append(
+            {
+                "alert_id": alert_id or None,
+                "symbol": sym,
+                "side": route_side,
+                "qty": 1,
+                "session": session,
+                "origin": origin,
+                "venue_profile": resolved_vp,
+                "target_account": target_account,
+                "target_lane_id": target_lane_id,
+                "semi_auto_confirmed": False,
+                "auto_submitted": False,
+                "ready_for_operator_confirm": ready_confirm,
+                "discipline_gate": ("READY_FOR_OPERATOR_CONFIRM" if ready_confirm else reasons[0]),
+                "blocking_reasons": reasons,
+                "order_handle_spec": handle_spec,
+                "nautilus_sandbox_parity": sandbox_parity,
+            }
+        )
+
+    ready_count = sum(1 for d in decisions if d["ready_for_operator_confirm"])
+    out_path = pack_dir / "tv_engine_coordination_manifest.json"
+    coord_doc: dict[str, Any] = {
+        "schema_version": "tier0.tv-engine-coordination.v1",
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "active_session": session,
+        "paper_only": True,
+        "semi_auto_confirmed": False,
+        "live_execution_enabled": False,
+        "auto_submit_enabled": False,
+        "staged_source_path": str(staged_path),
+        "tca_calibration_ok": tca_ok,
+        "ibkr_tcp_reachable": ibkr_tcp_ok,
+        "ibkr_gateway_ready": ibkr_ready,
+        "breakers_tripped_accounts": breakers_tripped,
+        "any_breaker_tripped": bool(breakers_tripped),
+        "symbol_lock_snapshot": owners,
+        "active_positions": positions_out,
+        "active_positions_count": len(positions_out),
+        "venue_order_handles": venue_handles,
+        "staged_alerts_evaluated": len(decisions),
+        "ready_for_operator_confirm_count": ready_count,
+        "blocked_count": len(decisions) - ready_count,
+        "coordination_decisions": decisions,
+        "confirm_command_template": (
+            "uv run --no-sync python -m tier0_sota.live.runner "
+            "--confirm-tv-alert <ALERT_ID> --qty 1 --dry-run"
+        ),
+    }
+    _atomic_write_json(out_path, coord_doc)
+    return coord_doc
+
+
 def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[str, Any]:
     verify_paper_environment()
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -409,12 +715,20 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
         )
         from tier0_sota.live.execution import cost_calibration_allows_entry
 
+        tca_ok = cost_calibration_allows_entry(manifest_dir)
         bundle_path = manifest_dir / "live_lane_order_preset_bundle.json"
         build_live_lane_preset_bundle(
             scan,
             lanes=farm.lanes,
             output_path=bundle_path,
-            tca_allows_entry=cost_calibration_allows_entry(manifest_dir),
+            tca_allows_entry=tca_ok,
+        )
+        coord = reconcile_staged_tv_presets_for_engine(
+            manifest_dir,
+            farm,
+            session,
+            movers_doc=scan,
+            tca_allows_entry=tca_ok,
         )
         tickets = refresh_tickets_from_paths(
             movers_path=movers_path,
@@ -433,6 +747,7 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
             otlp_endpoint=otlp_url,
         )
         tv_meta = perf.get("tv_half_auto") or {}
+        venue_handles = coord.get("venue_order_handles") or {}
         result = {
             "session": session,
             "paper_only": True,
@@ -444,6 +759,10 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
             "standby_presets": len(tickets.get("standby_presets") or ()),
             "unusual_vol_count": int(tv_meta.get("unusual_vol_count") or 0),
             "darkpool_hits_count": int(tv_meta.get("darkpool_hits_count") or 0),
+            "tv_coordination_evaluated": int(coord.get("staged_alerts_evaluated") or 0),
+            "tv_coordination_ready": int(coord.get("ready_for_operator_confirm_count") or 0),
+            "active_positions_count": int(coord.get("active_positions_count") or 0),
+            "combined_max_rpm": int(venue_handles.get("combined_max_rpm") or 0),
             "tca_fills": perf["summary"]["tca_fills_count"],
             "paper_live_deployed": perf["paper_live_deployed"],
             "prom_metrics_written": prom_path.is_file(),
@@ -455,14 +774,35 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
                 "generated_at_utc": perf["generated_at_utc"],
                 "macro_regime": scan.get("macro_regime") or {},
                 "tv_half_auto": tv_meta,
+                "tv_engine_coordination": {
+                    "schema_version": coord["schema_version"],
+                    "staged_alerts_evaluated": coord["staged_alerts_evaluated"],
+                    "ready_for_operator_confirm_count": coord["ready_for_operator_confirm_count"],
+                    "blocked_count": coord["blocked_count"],
+                    "active_positions_count": coord["active_positions_count"],
+                    "any_breaker_tripped": coord["any_breaker_tripped"],
+                    "semi_auto_confirmed": False,
+                    "auto_submit_enabled": False,
+                },
+                "venue_order_handles": venue_handles,
                 "accounts": {
                     acct: {
                         "venue": "ALPACA" if acct in farm.lanes else "IBKR",
                         "venue_profile": metrics["lane_id"],
+                        "execution_venue_profile": (
+                            farm.lanes[acct].venue_profile
+                            if acct in farm.lanes
+                            else "IBKR_PAPER_4002"
+                        ),
                         "rate_limit_rpm": (
                             farm.lanes[acct].rate_budget.max_rpm
                             if acct in farm.lanes
                             else farm.ibkr.rate_budget_max_rpm
+                        ),
+                        "exit_reserve_rpm": (
+                            farm.lanes[acct].rate_budget.exit_reserve_rpm
+                            if acct in farm.lanes
+                            else farm.ibkr.rate_budget.exit_reserve_rpm
                         ),
                         "ready": metrics["worker_verified"] and session != "CLOSED",
                         "status": (
@@ -487,12 +827,22 @@ def main() -> None:
     p.add_argument("--pin-symbols", default=",".join(DEFAULT_PIN_SYMBOLS))
     p.add_argument("--tv-qty", "--qty", dest="tv_qty", type=int, default=1)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--alpaca-rpm",
+        default=None,
+        help="Optional Alpaca Paper RPM cap (200|1000|ALPACA_PAPER_200|ALPACA_PAPER_1000)",
+    )
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--observe", action="store_true")
     mode.add_argument("--confirm-paper", action="store_true")
     mode.add_argument("--confirm-tv-alert", metavar="ALERT_ID")
     mode.add_argument("--ibkr-health", action="store_true")
     args = p.parse_args()
+    if args.alpaca_rpm is not None:
+        _, resolved_rpm = resolve_alpaca_paper_venue_profile(
+            env={"TIER0_ALPACA_RPM": str(args.alpaca_rpm)}
+        )
+        os.environ["TIER0_ALPACA_RPM"] = str(resolved_rpm)
     if args.confirm_paper:
         from tier0_sota.live.execution import run_execution
 

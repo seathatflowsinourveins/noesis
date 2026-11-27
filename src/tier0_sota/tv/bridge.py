@@ -53,6 +53,21 @@ _Archetype = Literal[
     "PEAK_REVERSAL",
 ]
 _ScriptKind = Literal["indicator", "strategy"]
+_VenueProfile = Literal[
+    "IBKR_PAPER_4002",
+    "ALPACA_PAPER_200",
+    "ALPACA_PAPER_1000",
+    "IBKR_LIVE_3000",
+    "ALPACA_LIVE_PRO_LINE_1000",
+    "ALPACA_LIVE_ELITE_SMART_ROUTER",
+]
+_LIVE_VENUE_PROFILES: frozenset[str] = frozenset(
+    {
+        "IBKR_LIVE_3000",
+        "ALPACA_LIVE_PRO_LINE_1000",
+        "ALPACA_LIVE_ELITE_SMART_ROUTER",
+    }
+)
 _Source = Literal[
     "tradingview_pine_v6",
     "prewall_lake",
@@ -88,6 +103,7 @@ _DUCKDB_ALTER_STMTS: tuple[str, ...] = (
     "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS reverse_short_mode VARCHAR",
     "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS script_kind VARCHAR",
     "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS order_preset_id VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS venue_profile VARCHAR",
 )
 _DUCKDB_INSERT_SQL = (
     "INSERT OR REPLACE INTO tv_staged_presets ("
@@ -96,8 +112,8 @@ _DUCKDB_INSERT_SQL = (
     "data_source, source, staged_at_utc, setup_archetype, macro_regime, rvol, "
     "darkpool_trf_ratio, hidden_volume_ratio, vol_buildup_ratio, "
     "unusual_volume_buildup, peak_confirmed, pair_symbol, action_gate, "
-    "reverse_short_mode, script_kind, order_preset_id) VALUES ("
-    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "reverse_short_mode, script_kind, order_preset_id, venue_profile) VALUES ("
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -114,6 +130,7 @@ class TvAlertV1(BaseModel):
     side: Literal["BUY", "SELL"]
     qty: Literal[1]
     venue: Literal["IBKR", "ALPACA"] | None = None
+    venue_profile: _VenueProfile | None = None
     session: Literal["PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT"]
     order_type: Literal["STOP_MARKET", "STOP_LIMIT"]
     trigger_price: Decimal = Field(gt=0, lt=Decimal("1e9"))
@@ -207,6 +224,15 @@ def _check_live_intake(
         raise ValueError("Live TV intake requires tradingview_pine_v6")
     if (m.venue or venue) != venue:
         raise ValueError("Alert venue disagrees with routed venue")
+    if m.venue_profile is not None:
+        if m.venue_profile in _LIVE_VENUE_PROFILES:
+            raise ValueError(
+                f"Refused Stage-5 LIVE venue_profile {m.venue_profile!r} on live intake"
+            )
+        if not m.venue_profile.startswith(f"{venue}_"):
+            raise ValueError(
+                f"Alert venue_profile {m.venue_profile!r} disagrees with routed venue {venue!r}"
+            )
     if (
         m.semi_auto_confirmed is not False
         or m.strategy_id != "SignalExecutionStrategy"
@@ -351,6 +377,7 @@ def persist_tv_presets_duckdb(
                 _opt_db_str(meta.get("reverse_short_mode")),
                 _opt_db_str(preset.get("script_kind") or meta.get("script_kind")),
                 _opt_db_str(preset.get("order_preset_id") or meta.get("order_preset_id")),
+                _opt_db_str(preset.get("venue_profile") or meta.get("venue_profile")),
             )
         )
 
@@ -382,7 +409,7 @@ def persist_tv_preset_duckdb(
 
 
 def sync_tv_audit_duckdb_snapshot(duckdb_path: Path) -> bool:
-    """Idempotently migrate an existing TV audit DuckDB to 28 cols and export Parquet snapshot."""
+    """Idempotently migrate an existing TV audit DuckDB to 29 cols and export Parquet snapshot."""
     if not duckdb_path.is_file():
         return False
     from tier0_sota.live.paper_farm import open_bounded_duckdb
@@ -547,6 +574,7 @@ def validate_tv_alert_payload(
         ("easy_to_borrow", m.easy_to_borrow),
         ("script_kind", m.script_kind),
         ("order_preset_id", m.order_preset_id),
+        ("venue_profile", m.venue_profile),
     )
     for key, val in optional_fields:
         if val is not None:

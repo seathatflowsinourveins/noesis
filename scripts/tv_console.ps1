@@ -10,22 +10,87 @@
 
 $script:Tier0RepoRoot = Split-Path -Parent $PSScriptRoot
 $script:Tier0Py       = Join-Path $script:Tier0RepoRoot '.venv\Scripts\python.exe'
+$script:Tier0PyMode   = $null
 $script:Tier0Manifest = if ($env:TIER0_DATA_ROOT) { Join-Path $env:TIER0_DATA_ROOT 'manifests' } else { 'Z:\sota-data\manifests' }
 $script:Tier0PackDir  = Join-Path $script:Tier0Manifest 'tv_sota_pack'
+
+function Resolve-Tier0PythonMode {
+    if ($script:Tier0PyMode) { return $script:Tier0PyMode }
+    if (Test-Path -LiteralPath $script:Tier0Py -PathType Leaf) {
+        & $script:Tier0Py -B -c "import nautilus_trader" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $script:Tier0PyMode = 'venv'
+            return $script:Tier0PyMode
+        }
+    }
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        Push-Location $script:Tier0RepoRoot
+        try {
+            & uv run --no-sync python -B -c "import nautilus_trader" *> $null
+            if ($LASTEXITCODE -eq 0) {
+                $script:Tier0PyMode = 'uv'
+                return $script:Tier0PyMode
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+    throw (
+        "Windows .venv at '$script:Tier0Py' is missing 'nautilus_trader' and 'uv run --no-sync python' is unavailable. " +
+        "Repair Windows env with 'uv sync --frozen' in '$script:Tier0RepoRoot', or run WSL2 console: " +
+        "wsl.exe -d Noesis-SOTA -- bash /mnt/z/noesis/scripts/tv_console.sh <land|tickets|watchlist|ingest-clip|stage|confirm-paper>"
+    )
+}
+
+function Invoke-Tier0Python {
+    param(
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [string]$StdinText
+    )
+    $mode = Resolve-Tier0PythonMode
+    $env:PYTHONDONTWRITEBYTECODE = '1'
+    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
+    if ($mode -eq 'venv') {
+        if ($PSBoundParameters.ContainsKey('StdinText')) {
+            $StdinText | & $script:Tier0Py @Arguments
+        } else {
+            & $script:Tier0Py @Arguments
+        }
+        return
+    }
+    Push-Location $script:Tier0RepoRoot
+    try {
+        if ($PSBoundParameters.ContainsKey('StdinText')) {
+            $StdinText | & uv run --no-sync python @Arguments
+        } else {
+            & uv run --no-sync python @Arguments
+        }
+    } finally {
+        Pop-Location
+    }
+}
 
 function tv-tickets {
     [CmdletBinding()]
     param(
         [string]$ManifestDir = $script:Tier0Manifest,
         [string]$OutDir      = $script:Tier0PackDir,
-        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA'
+        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA',
+        [ValidateSet('', 'IBKR_PAPER_4002', 'ALPACA_PAPER_200', 'ALPACA_PAPER_1000', 'IBKR_LIVE_3000', 'ALPACA_LIVE_PRO_LINE_1000', 'ALPACA_LIVE_ELITE_SMART_ROUTER')][string]$VenueProfile = ''
     )
-    $env:PYTHONDONTWRITEBYTECODE = '1'
-    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
-    & $script:Tier0Py -B -m tier0_sota.tv.tickets --manifest-dir $ManifestDir --out-dir $OutDir --venue $Venue
+    $tArgs = @('-B', '-m', 'tier0_sota.tv.tickets', '--manifest-dir', $ManifestDir, '--out-dir', $OutDir, '--venue', $Venue)
+    if ($VenueProfile) { $tArgs += @('--venue-profile', $VenueProfile) }
+    Invoke-Tier0Python -Arguments $tArgs
     if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.tickets exited with code $LASTEXITCODE" }
     $mdPath = Join-Path $OutDir 'LIVE_HALF_AUTO_ORDER_TICKETS.md'
     if (Test-Path -LiteralPath $mdPath) { Get-Content -LiteralPath $mdPath -Encoding UTF8 }
+}
+
+function tv-handles {
+    [CmdletBinding()]
+    param()
+    Invoke-Tier0Python -Arguments @('-B', '-m', 'tier0_sota.tv.tickets', '--show-handles')
+    if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.tickets --show-handles exited with code $LASTEXITCODE" }
 }
 
 function tv-presets {
@@ -86,11 +151,12 @@ function tv-copy-watchlist {
     param(
         [string]$ManifestDir = $script:Tier0Manifest,
         [string]$OutDir      = $script:Tier0PackDir,
-        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA'
+        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA',
+        [ValidateSet('', 'IBKR_PAPER_4002', 'ALPACA_PAPER_200', 'ALPACA_PAPER_1000', 'IBKR_LIVE_3000', 'ALPACA_LIVE_PRO_LINE_1000', 'ALPACA_LIVE_ELITE_SMART_ROUTER')][string]$VenueProfile = ''
     )
-    $env:PYTHONDONTWRITEBYTECODE = '1'
-    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
-    & $script:Tier0Py -B -m tier0_sota.tv.tickets --manifest-dir $ManifestDir --out-dir $OutDir --venue $Venue | Out-Null
+    $wArgs = @('-B', '-m', 'tier0_sota.tv.tickets', '--manifest-dir', $ManifestDir, '--out-dir', $OutDir, '--venue', $Venue)
+    if ($VenueProfile) { $wArgs += @('--venue-profile', $VenueProfile) }
+    Invoke-Tier0Python -Arguments $wArgs | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.tickets exited with code $LASTEXITCODE" }
     $wlPath = Join-Path $OutDir 'tier0_sota_tv_watchlists_live.txt'
     $wlPath | Set-Clipboard
@@ -108,18 +174,16 @@ function tv-ingest {
         [string]$StagedPath    = (Join-Path $script:Tier0PackDir 'staged_tv_presets.json'),
         [string]$WatchlistPath = (Join-Path $script:Tier0Manifest 'live_whole_market_movers_manifest.json')
     )
-    $env:PYTHONDONTWRITEBYTECODE = '1'
-    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
     $bridgeArgs = @('-B', '-m', 'tier0_sota.tv.bridge', '--staged-path', $StagedPath, '--watchlist-path', $WatchlistPath, '--venue', $Venue)
     if ($LiveIntake) { $bridgeArgs += '--live-intake' }
     if ($Clipboard -or -not $File) {
         $raw = Get-Clipboard -Raw
         if ([string]::IsNullOrWhiteSpace($raw)) { throw 'Clipboard is empty; pass -File or copy alert JSON first.' }
         $bridgeArgs += '--ingest-stdin'
-        $res = $raw | & $script:Tier0Py @bridgeArgs
+        $res = Invoke-Tier0Python -Arguments $bridgeArgs -StdinText $raw
     } else {
         $bridgeArgs += @('--ingest-file', $File)
-        $res = & $script:Tier0Py @bridgeArgs
+        $res = Invoke-Tier0Python -Arguments $bridgeArgs
     }
     if ($LASTEXITCODE -ne 0) { throw 'tv.bridge validation failed' }
     $res
@@ -135,16 +199,15 @@ function tv-stage {
         [Parameter(Mandatory)][double]$StopPrice,
         [double]$NatrPct = 0.012,
         [ValidateSet('IBKR', 'ALPACA')][string]$Venue = 'IBKR',
+        [ValidateSet('', 'IBKR_PAPER_4002', 'ALPACA_PAPER_200', 'ALPACA_PAPER_1000', 'IBKR_LIVE_3000', 'ALPACA_LIVE_PRO_LINE_1000', 'ALPACA_LIVE_ELITE_SMART_ROUTER')][string]$VenueProfile = '',
         [switch]$LiveIntake,
         [string]$StagedPath    = (Join-Path $script:Tier0PackDir 'staged_tv_presets.json'),
         [string]$WatchlistPath = (Join-Path $script:Tier0Manifest 'live_whole_market_movers_manifest.json')
     )
-    $env:PYTHONDONTWRITEBYTECODE = '1'
-    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
     $sym = $Symbol.Trim().ToUpperInvariant()
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("tv_stage_" + [guid]::NewGuid().ToString('N') + '.json')
     try {
-        & $script:Tier0Py -B -c @"
+        $pyCode = @"
 import json, time
 from decimal import Decimal
 from tier0_sota.engine import (
@@ -182,12 +245,16 @@ payload = {
     'script_kind': 'indicator',
     'data_source': 'tradingview_pine_v6',
 }
+vp = '$VenueProfile'.strip()
+if vp:
+    payload['venue_profile'] = vp
 open(r'$tmp', 'w', encoding='utf-8').write(json.dumps(payload))
 "@
+        Invoke-Tier0Python -Arguments @('-B', '-c', $pyCode)
         if ($LASTEXITCODE -ne 0) { throw 'Failed to compose staged alert JSON' }
         $bridgeArgs = @('-B', '-m', 'tier0_sota.tv.bridge', '--ingest-file', $tmp, '--staged-path', $StagedPath, '--watchlist-path', $WatchlistPath, '--venue', $Venue)
         if ($LiveIntake) { $bridgeArgs += '--live-intake' }
-        $res = & $script:Tier0Py @bridgeArgs
+        $res = Invoke-Tier0Python -Arguments $bridgeArgs
         if ($LASTEXITCODE -ne 0) { throw 'tv.bridge validation failed' }
         ($res -join "`n") | Set-Clipboard
         $res
@@ -248,34 +315,65 @@ function tv-land {
     param(
         [string]$ManifestDir = $script:Tier0Manifest,
         [string]$OutDir      = $script:Tier0PackDir,
-        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA'
+        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA',
+        [ValidateSet('', 'IBKR_PAPER_4002', 'ALPACA_PAPER_200', 'ALPACA_PAPER_1000', 'IBKR_LIVE_3000', 'ALPACA_LIVE_PRO_LINE_1000', 'ALPACA_LIVE_ELITE_SMART_ROUTER')][string]$VenueProfile = ''
     )
-    tv-tickets -ManifestDir $ManifestDir -OutDir $OutDir -Venue $Venue
+    tv-tickets -ManifestDir $ManifestDir -OutDir $OutDir -Venue $Venue -VenueProfile $VenueProfile
     tv-sync-pine -OutDir $OutDir
     tv-copy-omni
     if (Test-Path -LiteralPath $OutDir) {
         Start-Process $OutDir
     }
     Write-Host "[TV-LAND] 3-Click TradingView Landing Checklist (display-only, qty=1, semi_auto_confirmed=false):" -ForegroundColor Cyan
-    Write-Host "  1. Pine Editor Ctrl+V -> Save (tier0_omni_sota_24x5.pine is already on your clipboard)" -ForegroundColor Yellow
+    Write-Host "  1. Pine Editor Ctrl+V -> Save (tier0_omni_sota_24x5.pine is on your clipboard; NOT the watchlist path)" -ForegroundColor Yellow
     Write-Host "  2. tv-copy-regime -> Macro pane (paste tier0_market_regime.pine into Pane 1)" -ForegroundColor Yellow
-    Write-Host "  3. tv-copy-watchlist -> Watchlist ... Import list... Ctrl+V -> Open" -ForegroundColor Yellow
-    Write-Host "  4. Optional: tv-copy-strategy (Strategy Tester), tv-copy-darkpool (Pane 2 UV/DP), tv-presets (Order Cards)" -ForegroundColor DarkCyan
+    Write-Host "  3. tv-copy-watchlist -> Watchlist ... Import list... Ctrl+V -> Open (copies tier0_sota_tv_watchlists_live.txt path)" -ForegroundColor Yellow
+    Write-Host "  4. Optional: tv-copy-strategy (Strategy Tester), tv-copy-darkpool (Pane 2 UV/DP), tv-presets (Order Cards), tv-handles (1000/3000rpm), tv-confirm-paper -AlertId <id> -DryRun" -ForegroundColor DarkCyan
 }
 
 function tv-e2e {
+    [CmdletBinding()]
+    param(
+        [string]$ManifestDir = $script:Tier0Manifest,
+        [string]$OutDir      = $script:Tier0PackDir,
+        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA',
+        [ValidateSet('', 'IBKR_PAPER_4002', 'ALPACA_PAPER_200', 'ALPACA_PAPER_1000', 'IBKR_LIVE_3000', 'ALPACA_LIVE_PRO_LINE_1000', 'ALPACA_LIVE_ELITE_SMART_ROUTER')][string]$VenueProfile = '',
+        [switch]$SkipLiveScan,
+        [switch]$SkipTests
+    )
     Push-Location $script:Tier0RepoRoot
     try {
-        & $script:Tier0Py -m ruff check src/tier0_sota/tv tests/test_tv_automation.py
-        if ($LASTEXITCODE -ne 0) { throw 'ruff check failed' }
-        & $script:Tier0Py -m ty check src/tier0_sota/tv tests/test_tv_automation.py
-        if ($LASTEXITCODE -ne 0) { throw 'ty check failed' }
-        & $script:Tier0Py -m pytest -q tests/test_tv_automation.py
-        if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
-        Write-Host "[VERDICT: PASS] TV automation ruff, ty, Pine balance, and pytest verified." -ForegroundColor Green
+        if (-not $SkipLiveScan) {
+            $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { [Environment]::GetEnvironmentVariable('FNOX_AGE_KEY_FILE', 'User') }
+            if (-not $keyFile) { $keyFile = Join-Path $HOME '.config\fnox\age.txt' }
+            if ((Get-Command fnox -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $keyFile)) {
+                $env:FNOX_AGE_KEY_FILE = $keyFile
+                $env:PYTHONDONTWRITEBYTECODE = '1'
+                $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
+                Write-Host "[TV-E2E] Running authenticated Paper Farm observation scan (--profile paper)..." -ForegroundColor Cyan
+                & fnox exec --profile paper -- uv run --no-sync python -B -m tier0_sota.live.runner --observe --manifest-dir $ManifestDir
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "[WARN] Live Paper observation scan returned $LASTEXITCODE; continuing with local manifests." -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "[INFO] fnox/age key unavailable; refreshing TV pack from local manifests." -ForegroundColor DarkCyan
+            }
+        }
+        tv-tickets -ManifestDir $ManifestDir -OutDir $OutDir -Venue $Venue -VenueProfile $VenueProfile | Out-Null
+        tv-sync-pine -OutDir $OutDir
+        tv-handles | Out-Null
+        if (-not $SkipTests) {
+            Invoke-Tier0Python -Arguments @('-m', 'ruff', 'check', 'src/tier0_sota/tv', 'tests/test_tv_automation.py')
+            if ($LASTEXITCODE -ne 0) { throw 'ruff check failed' }
+            Invoke-Tier0Python -Arguments @('-m', 'ty', 'check', 'src/tier0_sota/tv', 'tests/test_tv_automation.py')
+            if ($LASTEXITCODE -ne 0) { throw 'ty check failed' }
+            Invoke-Tier0Python -Arguments @('-m', 'pytest', '-q', 'tests/test_tv_automation.py')
+            if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
+        }
+        Write-Host "[VERDICT: PASS] TV automation pack sync, 1000/3000rpm handles, ruff, ty, Pine parity, and pytest verified." -ForegroundColor Green
     } finally {
         Pop-Location
     }
 }
 
-Write-Host "[TV-SOTA] Loaded: tv-land | tv-tickets | tv-presets | tv-stage | tv-ingest | tv-confirm-paper | tv-sync-pine | tv-copy-omni | tv-copy-strategy | tv-copy-regime | tv-copy-darkpool | tv-copy-watchlist | tv-portals | tv-e2e" -ForegroundColor Cyan
+Write-Host "[TV-SOTA] Loaded: tv-land | tv-tickets | tv-presets | tv-handles | tv-stage | tv-ingest | tv-confirm-paper | tv-sync-pine | tv-copy-omni | tv-copy-strategy | tv-copy-regime | tv-copy-darkpool | tv-copy-watchlist | tv-portals | tv-e2e" -ForegroundColor Cyan

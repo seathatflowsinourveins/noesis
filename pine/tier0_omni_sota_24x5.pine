@@ -4,11 +4,24 @@ indicator("Tier-0 Omni SOTA 24x5 Lossless, Auto-Reverse & Regime", shorttitle="T
 // ============================================================================
 // Tier-0 SOTA — Omni 24/5 Display, Lossless Trailing, UV/Darkpool & Order HUD
 // Parity: src/tier0_sota/engine.py & src/tier0_sota/risk.py (Rule-612 <= 2.00% cap)
+//         1000rpm/3000rpm Venue Order Handles (IBKR_PAPER_4002 / ALPACA_PAPER_1000 / ALPACA_PAPER_200)
 // Compliance: Display-only Pine v6 + tier0.tv-alert.v1 JSON (semi_auto_confirmed=false, qty=1)
 // Non-Repainting: barstate.isconfirmed + gaps=barmerge.gaps_off + lookahead=barmerge.lookahead_off
 // ============================================================================
 
-// ── 0. Pine v6 UDTs (Clean State & Native TV Order Preset Card) ─────────────
+// ── 0. Pine v6 UDTs (Venue Order Handles & Native TV Order Preset Card) ─────
+type VenueOrderHandle
+    string profile_id
+    string broker
+    string env_tag
+    int    max_rpm
+    int    max_rps
+    int    exit_reserve_rpm
+    int    entry_modify_rpm
+    int    max_trailed_pos
+    float  cadence_secs
+    bool   is_stage5_parity
+
 type OrderPresetCard
     bool   is_live_leg
     string side
@@ -32,8 +45,8 @@ type OrderPresetCard
     int    sh_25k
     int    sh_100k
 
-// ── 1. Omni Use-Case Preset, Venue & Market Regime Tuning ───────────────────
-grp_omni = "01 · Omni Use-Case, Venue & Market Tuning"
+// ── 1. Omni Use-Case Preset, Venue Order-Handle & Market Regime Tuning ──────
+grp_omni = "01 · Omni Use-Case, Venue Handle & Market Tuning"
 i_omni_preset = input.string(
     "AUTO_REGIME_ADAPTIVE",
     "Omni SOTA Preset Mode",
@@ -49,7 +62,19 @@ i_omni_preset = input.string(
     ],
     group=grp_omni
 )
-i_venue            = input.string("IBKR", "Target Paper/Half-Auto Venue", options=["IBKR", "ALPACA"], group=grp_omni)
+i_venue_profile = input.string(
+    "IBKR_PAPER_4002",
+    "Venue Order-Handle Profile (1000rpm/3000rpm)",
+    options=[
+        "IBKR_PAPER_4002",
+        "ALPACA_PAPER_1000",
+        "ALPACA_PAPER_200",
+        "ALPACA_LIVE_PRO_LINE_1000",
+        "IBKR_LIVE_3000",
+        "ALPACA_LIVE_ELITE_SMART_ROUTER"
+    ],
+    group=grp_omni
+)
 i_etb_short        = input.bool(true, "Symbol Shortable & Easy-To-Borrow (ETB)", group=grp_omni)
 i_early_close_1300 = input.bool(false, "XNYS Half-Day Early Close (13:00 ET RTH End)", group=grp_omni)
 i_use_mkt_reg      = input.bool(true, "Enforce Causal Multi-Feed Market Regime", group=grp_omni)
@@ -86,6 +111,32 @@ i_show_diag     = input.bool(true, "Show Institutional SOTA Status HUD (Top-Righ
 i_show_ord_hud  = input.bool(true, "Show Copy-Ready Native TV Order Preset HUD (Bottom-Right)", group=grp_sig)
 i_show_mtf      = input.bool(true, "Show MTF (1m/5m/15m/D) Alignment Row", group=grp_sig)
 i_show_bg       = input.bool(true, "Show Subtle Regime / VCP Background Tint", group=grp_sig)
+
+// ── 3b. Venue Order-Handle Resolver (Exact Engine Parity: >=10% Exit Reserve) ─
+resolve_venue_handle(string vp) =>
+    bool is_ibkr = vp == "IBKR_PAPER_4002" or vp == "IBKR_LIVE_3000"
+    bool is_alp_200 = vp == "ALPACA_PAPER_200"
+    bool is_stage5 = vp == "ALPACA_LIVE_PRO_LINE_1000" or vp == "IBKR_LIVE_3000" or vp == "ALPACA_LIVE_ELITE_SMART_ROUTER"
+    int max_rpm = is_ibkr ? 3000 : is_alp_200 ? 200 : 1000
+    int max_rps = is_ibkr ? 50 : is_alp_200 ? 10 : 25
+    int exit_res = math.max(1, math.ceil(max_rpm * 0.10))
+    int entry_rpm = max_rpm - exit_res
+    int max_pos = is_ibkr ? 20 : is_alp_200 ? 3 : 10
+    float cadence = math.max(1.0, math.round((120.0 * max_pos) / math.max(1.0, entry_rpm), 2))
+    VenueOrderHandle.new(
+        vp,
+        is_ibkr ? "IBKR" : "ALPACA",
+        is_stage5 ? "STAGE5_PARITY" : "PAPER",
+        max_rpm,
+        max_rps,
+        exit_res,
+        entry_rpm,
+        max_pos,
+        cadence,
+        is_stage5
+    )
+
+VenueOrderHandle vh = resolve_venue_handle(i_venue_profile)
 
 // ── 4. Causal 24/5 America/New_York Session Classification ──────────────────
 ny_hour      = hour(time_close, "America/New_York")
@@ -241,7 +292,7 @@ eff_regime = not i_use_mkt_reg ? 0 : is_inverse_etf ? -raw_regime : raw_regime
 resolved_mode = i_omni_preset != "AUTO_REGIME_ADAPTIVE" ? i_omni_preset : (not is_rth and not is_ext ? "OVERNIGHT_24X5_IBKR" : raw_regime == -1 ? "CRASH_DEFENSIVE_INVERSE" : raw_regime == 1 ? "MINERVINI_VCP_BREAKOUT" : "LOSSLESS_TIGHT_SCALP")
 rvol_min = resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? math.max(i_rvol_base, 2.5) : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? math.max(i_rvol_base, 1.8) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? math.max(1.2, i_rvol_base * 0.9) : i_rvol_base
 
-// ── 8. Full SOTA Setup, Unusual Volume & Darkpool Absorption Library ────────
+// ── 8. Converged 8-Setup Multi-Situation, UV & Darkpool Library ─────────────
 bar_range = high - low
 clv       = bar_range > 0 ? (2.0 * close - high - low) / bar_range : 0.0
 lower_wk  = math.min(open, close) - low
@@ -255,13 +306,18 @@ lo_10     = ta.lowest(low, 10)[1]
 prev_lo5  = ta.lowest(low, 5)[1]
 bar_chg   = close[1] > 0 ? (close - close[1]) / close[1] : 0.0
 
-// Session Buying/Selling Pressure (CVD Proxy) & VWAP-Pin Darkpool Proxy
-var float sess_cvd = 0.0
+// Session Open / Gap Tracking for PEAD Drift & Session CVD Proxy
+var float sess_open_px   = na
+var float prev_day_close = na
+var float sess_cvd       = 0.0
 if timeframe.change("D")
-    sess_cvd := 0.0
+    prev_day_close := nz(close[1], open)
+    sess_open_px   := open
+    sess_cvd       := 0.0
 sess_cvd += vol_safe * clv
-cvd_ema   = ta.ema(sess_cvd, 9)
+cvd_ema      = ta.ema(sess_cvd, 9)
 cvd_bull_div = barstate.isconfirmed and not na(prev_lo5) and low <= prev_lo5 and sess_cvd > nz(sess_cvd[5], sess_cvd) and clv > 0.20
+gap_up_pct   = not na(sess_open_px) and not na(prev_day_close) and prev_day_close > 0 ? (sess_open_px - prev_day_close) / prev_day_close : 0.0
 
 is_extreme        = atr_val > 0 and bar_range >= atr_val * i_ext_mult and rvol >= rvol_min
 vol_buildup       = barstate.isconfirmed and ((rvol >= 1.8 and vol_safe > nz(volume[1], 0.0) and nz(volume[1], 0.0) >= vol_sma) or (vol_zscore >= i_uv_z_min and vol_buildup_ratio >= i_uv_vel_min))
@@ -273,15 +329,16 @@ stage2_ok         = close > ema_slow and ema_slow >= ema_50 * 0.99
 vcp_coil          = barstate.isconfirmed and not na(hi_20) and close >= hi_20 * 0.85 and coil_ok and vdu_ok
 vcp_breakout      = barstate.isconfirmed and not na(hi_20) and stage2_ok and close > hi_20 and rvol >= rvol_min and clv >= 0.25 and (coil_ok[1] or vdu_ok[1])
 ep_momentum_burst = barstate.isconfirmed and bar_chg >= 0.015 and bar_range >= atr_val * 1.6 and rvol >= 2.5 and clv >= 0.55 and close > ema_fast
+pead_drift        = barstate.isconfirmed and gap_up_pct >= 0.020 and not na(vwap_val) and close > vwap_val and close > ema_fast and ema_fast > ema_slow and low <= ema_fast * 1.003 and close > open and rvol >= math.max(1.3, i_rvol_base * 0.9) and clv >= 0.35
 exhaustion_hammer = barstate.isconfirmed and not na(prev_lo5) and low < prev_lo5 and close > prev_lo5 and bar_range > 0 and (lower_wk / bar_range) >= 0.55 and clv >= 0.45 and rvol >= 1.3
 parabolic_top     = barstate.isconfirmed and not na(vwap_val) and ((close >= vwap_val * (1.0 + 2.0 * natr_out)) or (not na(vwap_u2) and high >= vwap_u2)) and rvol >= 2.5
 
 long_extreme_rev  = is_extreme[1] and close[1] < open[1] and low[1] <= lo_10 and close > open and close > ema_fast
 long_tight_scalp  = barstate.isconfirmed and not na(vwap_val) and close > vwap_val and close > ema_fast and ema_fast > ema_slow and low <= ema_fast and clv >= 0.50 and (rvol >= rvol_min or vol_buildup)
-long_vcp_ep       = vcp_breakout or ep_momentum_burst or ((hidden_vol_bull or cvd_bull_div) and not na(vwap_val) and close > vwap_val and close > ema_fast)
+long_vcp_ep       = vcp_breakout or ep_momentum_burst or pead_drift or ((hidden_vol_bull or cvd_bull_div) and not na(vwap_val) and close > vwap_val and close > ema_fast)
 on_liq_ok         = vol_safe > 0 and atr_val > 0 and (rvol >= math.max(1.3, rvol_min) or vol_buildup)
 
-long_by_mode  = resolved_mode == "MINERVINI_VCP_BREAKOUT" ? vcp_breakout : resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? (ep_momentum_burst or hidden_vol_bull) : resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER" ? (exhaustion_hammer or long_extreme_rev) : resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? false : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? ((is_inverse_etf and (long_vcp_ep or long_extreme_rev)) or (ep_momentum_burst and rvol >= 4.0)) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? (long_tight_scalp or long_extreme_rev or long_vcp_ep) : resolved_mode == "OVERNIGHT_24X5_IBKR" ? (on_liq_ok and (long_extreme_rev or long_vcp_ep or exhaustion_hammer)) : (long_extreme_rev or long_vcp_ep or exhaustion_hammer)
+long_by_mode  = resolved_mode == "MINERVINI_VCP_BREAKOUT" ? (vcp_breakout or pead_drift) : resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? (ep_momentum_burst or pead_drift or hidden_vol_bull) : resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER" ? (exhaustion_hammer or long_extreme_rev) : resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? false : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? ((is_inverse_etf and (long_vcp_ep or long_extreme_rev)) or (ep_momentum_burst and rvol >= 4.0)) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? (long_tight_scalp or long_extreme_rev or long_vcp_ep) : resolved_mode == "OVERNIGHT_24X5_IBKR" ? (on_liq_ok and (long_extreme_rev or long_vcp_ep or exhaustion_hammer)) : (long_extreme_rev or long_vcp_ep or exhaustion_hammer)
 
 short_crash_align = eff_regime == -1 and not na(vwap_val) and close < vwap_val and close < ema_fast and close < open and rvol >= rvol_min
 short_peak_rev    = eff_regime != 1 and not na(vwap_val[1]) and (parabolic_top[1] or (is_extreme[1] and close[1] > open[1] and high[1] >= hi_10 and close[1] >= vwap_val[1] * (1.0 + natr_out))) and close < open and (close < low[1] or (not na(vwap_val) and close < vwap_val))
@@ -290,7 +347,20 @@ short_by_mode     = resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? short_peak_r
 long_rev_raw  = barstate.isconfirmed and is_24x5_open and (eff_regime != -1 or (ep_momentum_burst and rvol >= 4.0)) and long_by_mode
 short_rev_raw = barstate.isconfirmed and is_24x5_open and short_by_mode
 
-setup_archetype = ep_momentum_burst ? "EARLY_EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_BREAKOUT" : exhaustion_hammer ? "EXHAUSTION_HAMMER" : (hidden_vol_bull or (vol_buildup and hidden_vol_ratio >= 2.0)) ? "HIDDEN_VOL_ACCUM" : parabolic_top ? "PARABOLIC_TOP" : short_crash_align ? "CRASH_ALIGNMENT" : short_peak_rev ? "PEAK_REVERSAL" : vcp_coil ? "VCP_COIL" : "EXTREME_REVERSAL"
+// All 8 Converged Multi-Situation Setup Archetypes (+ EXTREME_REVERSAL fallback)
+setup_archetype = ep_momentum_burst ? "EARLY_EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_BREAKOUT" : pead_drift ? "PEAD_DRIFT" : exhaustion_hammer ? "EXHAUSTION_HAMMER" : (hidden_vol_bull or (vol_buildup and hidden_vol_ratio >= 2.0)) ? "HIDDEN_VOL_ACCUM" : parabolic_top ? "PARABOLIC_TOP" : short_crash_align ? "CRASH_ALIGNMENT" : short_peak_rev ? "PEAK_REVERSAL" : vcp_coil ? "VCP_COIL" : "EXTREME_REVERSAL"
+
+resolve_farm_lane(string arch, string sess, string broker) =>
+    if sess == "OVERNIGHT" and (broker == "IBKR" or arch == "CRASH_ALIGNMENT" or arch == "PEAK_REVERSAL" or arch == "PARABOLIC_TOP")
+        "IBKR_4002 (24/5 ON)"
+    else if arch == "CRASH_ALIGNMENT" or arch == "PEAK_REVERSAL" or arch == "PARABOLIC_TOP"
+        "PA3 (Crash/Rev)"
+    else if arch == "VCP_BREAKOUT" or arch == "VCP_COIL" or arch == "PEAD_DRIFT" or arch == "HIDDEN_VOL_ACCUM"
+        "PA2 (VCP/PEAD/Acc)"
+    else
+        "PA1 (Momentum)"
+
+target_farm_lane = resolve_farm_lane(setup_archetype, sess_label, vh.broker)
 
 // ── 9. Stateful Monotonic Lossless Trailing, Auto-Reverse & Re-Entry FSM ────
 var int   pos_dir         = 0
@@ -417,7 +487,7 @@ rung_2r  = pos_dir != 0 and not na(risk_r) ? entry_px + pos_dir * 2.0 * risk_r :
 rung_3r  = pos_dir != 0 and not na(risk_r) ? entry_px + pos_dir * 3.0 * risk_r : na
 
 // Build Copy-Ready OrderPresetCard UDT (Live Leg OR Standby Reference at Close)
-alpaca_on_short_blocked = i_venue == "ALPACA" and sess_label == "OVERNIGHT"
+alpaca_on_short_blocked = vh.broker == "ALPACA" and sess_label == "OVERNIGHT"
 rev_short_mode = i_etb_short and not alpaca_on_short_blocked ? "DIRECT_SHORT_ETB" : i_etb_short ? "ROUTE_IBKR_OR_INVERSE_HEDGE_SOXS_SQQQ" : "INVERSE_HEDGE_SOXS_SQQQ"
 
 build_order_card() =>
@@ -487,6 +557,7 @@ plotshape(entered_short, title="Short Entry / Crash",    style=shape.triangledow
 plotshape(exited_rev,    title="Auto-Reverse Flatten",   style=shape.flag,         location=location.abovebar, color=color.orange,  size=size.tiny)
 plotshape(ep_momentum_burst, title="EP / 4% Momentum Burst", style=shape.diamond,  location=location.belowbar, color=color.yellow,  size=size.small)
 plotshape(vcp_breakout and not entered_long, title="VCP Breakout", style=shape.diamond, location=location.belowbar, color=color.aqua, size=size.tiny)
+plotshape(pead_drift and not entered_long, title="PEAD Gap Drift", style=shape.square, location=location.belowbar, color=color.new(color.lime, 20), size=size.tiny)
 plotshape(exhaustion_hammer, title="Exhaustion Hammer",  style=shape.labelup,      location=location.belowbar, color=color.new(color.teal, 20), text="H", textcolor=color.white, size=size.tiny)
 plotshape(hidden_vol_bull, title="Hidden Vol Accum",     style=shape.circle,       location=location.belowbar, color=color.new(color.green, 15), size=size.tiny)
 plotshape(hidden_vol_bear, title="Hidden Vol Distrib",   style=shape.circle,       location=location.abovebar, color=color.new(color.maroon, 15), size=size.tiny)
@@ -496,7 +567,7 @@ bgcolor(i_show_bg ? (eff_regime == -1 ? color.new(color.red, 92) : vcp_coil ? co
 
 // ── 11. Institutional SOTA Status HUD (Top-Right) & Order Preset HUD (Bottom-Right) ─
 var table hud = table.new(position.top_right, 2, 13, border_width=1, border_color=color.new(color.gray, 55))
-var table ord_hud = table.new(position.bottom_right, 2, 10, border_width=1, border_color=color.new(color.gray, 55))
+var table ord_hud = table.new(position.bottom_right, 2, 12, border_width=1, border_color=color.new(color.gray, 55))
 
 if barstate.islast and i_show_diag
     pair_mode  = is_inverse_etf ? "INVERSE_HEDGE" : is_soxl ? "SOXL_BULL_3X" : is_semi_sym ? "SEMI_LEADER" : "EQUITY_BROAD"
@@ -529,8 +600,8 @@ if barstate.islast and i_show_diag
     table.cell(hud, 1, 6,  stop_txt,        bgcolor=be_armed ? color.new(color.green, 65) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 7,  "Pair / Short",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 7,  pair_mode + pair_badge + " | " + rev_short_mode, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
-    table.cell(hud, 0, 8,  "Setup / RVOL",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 8,  setup_archetype + " (" + str.tostring(rvol, "0.00") + "x · $" + str.tostring(dvol_m, "0.00") + "M)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 8,  "Setup / Lane",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 8,  setup_archetype + " -> " + target_farm_lane + " (" + str.tostring(rvol, "0.00") + "x · $" + str.tostring(dvol_m, "0.00") + "M)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 9,  "Vol / Absorb",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 9,  vol_txt,         bgcolor=vol_bg, text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 10, "Darkpool Proxy",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
@@ -550,27 +621,34 @@ if barstate.islast and i_show_ord_hud
     color side_bg  = card.side == "BUY" ? color.new(color.green, 55) : color.new(color.maroon, 50)
     string ent_str = is_rth ? str.tostring(card.entry_px, "0.####") + " (MKT)" : str.tostring(card.entry_px, "0.####") + " -> Lmt " + str.tostring(card.entry_limit, "0.####")
     string stp_str = is_rth ? str.tostring(card.stop_px, "0.####") + " (" + str.tostring(card.stop_pct, "0.00") + "%)" : str.tostring(card.stop_px, "0.####") + " / Lmt " + str.tostring(card.stop_limit, "0.####") + " (" + str.tostring(card.stop_pct, "0.00") + "%)"
+    string rpm_str = str.tostring(vh.max_rpm, "0") + "rpm/" + str.tostring(vh.max_rps, "0") + "rps · Ent " + str.tostring(vh.entry_modify_rpm, "0") + " · ExitRes " + str.tostring(vh.exit_reserve_rpm, "0") + " (10%)"
+    string lane_str = "Max " + str.tostring(vh.max_trailed_pos, "0") + " pos (" + str.tostring(vh.cadence_secs, "0.##") + "s) · " + target_farm_lane
+    string s5_tag   = vh.is_stage5_parity ? " [STAGE-5]" : ""
 
-    table.cell(ord_hud, 0, 0, "TV Order Preset [" + hdr_tag + "]", bgcolor=color.new(color.navy, 30), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 0, col_hdr + " · " + i_venue + " · qty=1", bgcolor=side_bg, text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 0, 1, "Route / Pair",     bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 1, card.route_mode + (pair_sym != "" ? " [" + pair_sym + "]" : ""), bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
-    table.cell(ord_hud, 0, 2, "Order / TIF",      bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 2, card.order_type + " (" + str.tostring(card.collar_bps, "0") + "bp) · " + card.tif, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 0, 3, "Entry / Collar",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 3, ent_str,            bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 0, 4, "Initial SL (R612)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 4, stp_str,            bgcolor=color.new(color.red, 70),  text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 0, 5, "T1 BE+10bp Floor", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 5, str.tostring(card.be_floor, "0.####") + " (Arm +" + str.tostring(be_trig * 100.0, "0.00") + "%)", bgcolor=color.new(color.olive, 65), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 0, 6, "T2 +1R -> +0.45R", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 6, "Tgt " + str.tostring(card.t1r, "0.####") + " -> Lock " + str.tostring(card.l1r, "0.####"), bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
-    table.cell(ord_hud, 0, 7, "T3 +2R -> +1.35R", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 7, "Tgt " + str.tostring(card.t2r, "0.####") + " -> Lock " + str.tostring(card.l2r, "0.####"), bgcolor=color.new(color.gray, 85), text_color=color.lime, text_size=size.small)
-    table.cell(ord_hud, 0, 8, "T4 +3R / Fast-Rev",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 8, "Tgt " + str.tostring(card.t3r, "0.####") + " -> Lock " + str.tostring(card.l3r, "0.####") + " | Rev " + str.tostring(card.fast_rev, "0.####"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 0, 9, "Size ($25k/$100k)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ord_hud, 1, 9, str.tostring(card.sh_25k, "0") + " / " + str.tostring(card.sh_100k, "0") + " sh · semi_auto=false", bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 0,  "TV Order Preset [" + hdr_tag + "]", bgcolor=color.new(color.navy, 30), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 0,  col_hdr + " · " + vh.profile_id + " · qty=1", bgcolor=side_bg, text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 1,  "Order Handle RPM", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 1,  rpm_str,            bgcolor=color.new(color.navy, 55), text_color=color.aqua,  text_size=size.small)
+    table.cell(ord_hud, 0, 2,  "Trail Cap / Lane", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 2,  lane_str,           bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 3,  "Route / Setup",    bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 3,  card.route_mode + (pair_sym != "" ? " [" + pair_sym + "]" : "") + " · " + setup_archetype, bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
+    table.cell(ord_hud, 0, 4,  "Order / TIF",      bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 4,  card.order_type + " (" + str.tostring(card.collar_bps, "0") + "bp) · " + card.tif, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 5,  "Entry / Collar",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 5,  ent_str,            bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 6,  "Initial SL (R612)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 6,  stp_str,            bgcolor=color.new(color.red, 70),  text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 7,  "T1 BE+10bp Floor", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 7,  str.tostring(card.be_floor, "0.####") + " (Arm +" + str.tostring(be_trig * 100.0, "0.00") + "%)", bgcolor=color.new(color.olive, 65), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 8,  "T2 +1R -> +0.45R", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 8,  "Tgt " + str.tostring(card.t1r, "0.####") + " -> Lock " + str.tostring(card.l1r, "0.####"), bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
+    table.cell(ord_hud, 0, 9,  "T3 +2R -> +1.35R", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 9,  "Tgt " + str.tostring(card.t2r, "0.####") + " -> Lock " + str.tostring(card.l2r, "0.####"), bgcolor=color.new(color.gray, 85), text_color=color.lime, text_size=size.small)
+    table.cell(ord_hud, 0, 10, "T4 +3R / Fast-Rev",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 10, "Tgt " + str.tostring(card.t3r, "0.####") + " -> Lock " + str.tostring(card.l3r, "0.####") + " | Rev " + str.tostring(card.fast_rev, "0.####"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 11, "Size ($25k/$100k)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 11, str.tostring(card.sh_25k, "0") + " / " + str.tostring(card.sh_100k, "0") + " sh · semi_auto=false" + s5_tag, bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
 
 // ── 12. Strict Schema-Compatible tier0.tv-alert.v1 Payload Emitter ──────────
 emit_alert_json(string sig_side, float trig_px, float stp_px) =>
@@ -578,7 +656,9 @@ emit_alert_json(string sig_side, float trig_px, float stp_px) =>
     float safe_trig = math.max(0.0001, nz(trig_px, close))
     float bridge_stp = nz(hard_stop(safe_trig, side_int, auto_init_cap), nz(stp_px, safe_trig))
     float stp_dist = math.min(0.02, math.max(0.0, math.round(math.abs(safe_trig - bridge_stp) / safe_trig, 6)))
-    string eff_venue = (i_venue == "ALPACA" and sig_side == "SELL" and sess_label == "OVERNIGHT") ? "IBKR" : i_venue
+    bool force_ibkr_on = vh.broker == "ALPACA" and sig_side == "SELL" and sess_label == "OVERNIGHT"
+    string eff_venue = force_ibkr_on ? "IBKR" : vh.broker
+    string eff_venue_profile = force_ibkr_on ? "IBKR_PAPER_4002" : i_venue_profile
     string pair_json = pair_sym != "" ? ",\"pair_symbol\":\"" + pair_sym + "\"" : ""
     (
         "{\"schema_version\":\"tier0.tv-alert.v1\"" +
@@ -588,6 +668,7 @@ emit_alert_json(string sig_side, float trig_px, float stp_px) =>
         ",\"side\":\"" + sig_side + "\"" +
         ",\"qty\":1" +
         ",\"venue\":\"" + eff_venue + "\"" +
+        ",\"venue_profile\":\"" + eff_venue_profile + "\"" +
         ",\"session\":\"" + sess_label + "\"" +
         ",\"order_type\":\"" + order_type + "\"" +
         ",\"trigger_price\":" + str.tostring(safe_trig, "0.####") +
@@ -629,6 +710,7 @@ alertcondition(hidden_vol_bull,   title="Tier-0 Darkpool Bull Absorption",   mes
 alertcondition(hidden_vol_bear,   title="Tier-0 Darkpool Bear Distribution", message="T0_OMNI_SOTA HIDDEN VOL BEAR DISTRIBUTION on {{ticker}} @ {{close}}")
 alertcondition(vwap_pin_absorb,   title="Tier-0 VWAP-Pin Darkpool Proxy",    message="T0_OMNI_SOTA VWAP-PIN DARKPOOL PROXY on {{ticker}} @ {{close}}")
 alertcondition(vcp_breakout,      title="Tier-0 Minervini VCP Breakout",     message="T0_OMNI_SOTA VCP BREAKOUT confirmed on {{ticker}} @ {{close}}")
+alertcondition(pead_drift,        title="Tier-0 PEAD Gap-Up Drift",          message="T0_OMNI_SOTA PEAD DRIFT confirmed on {{ticker}} @ {{close}}")
 alertcondition(ep_momentum_burst, title="Tier-0 Stockbee EP Momentum Burst", message="T0_OMNI_SOTA EP MOMENTUM BURST confirmed on {{ticker}} @ {{close}}")
 alertcondition(exhaustion_hammer, title="Tier-0 Stockbee Exhaustion Hammer", message="T0_OMNI_SOTA EXHAUSTION HAMMER confirmed on {{ticker}} @ {{close}}")
 alertcondition(parabolic_top,     title="Tier-0 Parabolic Exhaustion Top",   message="T0_OMNI_SOTA PARABOLIC TOP detected on {{ticker}} @ {{close}}")

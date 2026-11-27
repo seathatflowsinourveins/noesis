@@ -104,6 +104,9 @@ EXCHANGE_PREFIX_ALIASES: dict[str, str] = {
     "EDGX": "BATS",
     "EDGA": "BATS",
     "Z": "BATS",
+    "IEX": "IEX",
+    "IEXG": "IEX",
+    "OTC": "OTC",
 }
 DEFAULT_EXCHANGES: dict[str, str] = {
     "SPY": "AMEX",
@@ -189,8 +192,146 @@ CANONICAL_PINE_SCRIPTS: tuple[str, ...] = (
     "tier0_market_regime.pine",
     "tier0_darkpool_uv_buildup.pine",
 )
+PAPER_ALPACA_LANE_ACCOUNTS: tuple[str, ...] = ("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3")
+PAPER_IBKR_LANE_ACCOUNTS: tuple[str, ...] = ("IBKR_DU_4002",)
 _REPO_PINE_DIR = Path(__file__).resolve().parents[3] / "pine"
 _REPO_PINE_OMNI_PATH = _REPO_PINE_DIR / "tier0_omni_sota_24x5.pine"
+
+CANONICAL_TV_VENUE_PROFILES: tuple[str, ...] = (
+    "IBKR_PAPER_4002",
+    "ALPACA_PAPER_1000",
+    "ALPACA_PAPER_200",
+    "ALPACA_LIVE_PRO_LINE_1000",
+)
+ALL_TV_VENUE_PROFILES: frozenset[str] = frozenset(
+    {
+        "IBKR_PAPER_4002",
+        "ALPACA_PAPER_200",
+        "ALPACA_PAPER_1000",
+        "IBKR_LIVE_3000",
+        "ALPACA_LIVE_PRO_LINE_1000",
+        "ALPACA_LIVE_ELITE_SMART_ROUTER",
+    }
+)
+
+_R_LOCK_POLICY_STD = (
+    "4-tier monotonic (BE+10bp -> +1R:+0.45R -> +2R:+1.35R -> +3R:+2.35R / Fast-Sell Rev, 60s cd)"
+)
+
+MULTI_SITUATION_SETUP_PLAYBOOK: dict[str, dict[str, Any]] = {
+    "EARLY_EP_MOMENTUM_BURST": {
+        "archetype": "EARLY_EP_MOMENTUM_BURST",
+        "recommended_omni_preset": "STOCKBEE_EP_MOMENTUM_BURST",
+        "target_paper_lane": "ALPACA_PA1",
+        "target_lane_id": "L1_ORB_BURST",
+        "preferred_schedule": "wide_natr_adaptive",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "Early catalyst/4% burst with RVOL >= 3x; trail T1 BE+10bp then R-locks.",
+    },
+    "VCP_BREAKOUT": {
+        "archetype": "VCP_BREAKOUT",
+        "recommended_omni_preset": "MINERVINI_VCP_BREAKOUT",
+        "target_paper_lane": "ALPACA_PA2",
+        "target_lane_id": "L2_STRUCTURAL_TREND",
+        "preferred_schedule": "baseline",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "Stage-2 VCP pivot breakout post-VDU contraction; protect <= 2.00% Rule-612.",
+    },
+    "VCP_COIL": {
+        "archetype": "VCP_COIL",
+        "recommended_omni_preset": "MINERVINI_VCP_BREAKOUT",
+        "target_paper_lane": "ALPACA_PA2",
+        "target_lane_id": "L2_STRUCTURAL_TREND",
+        "preferred_schedule": "tight_near_lossless",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": (
+            "Tight volatility contraction coil; stage alert above pivot before expansion."
+        ),
+    },
+    "PEAD_DRIFT": {
+        "archetype": "PEAD_DRIFT",
+        "recommended_omni_preset": "STOCKBEE_EP_MOMENTUM_BURST",
+        "target_paper_lane": "ALPACA_PA2",
+        "target_lane_id": "L2_STRUCTURAL_TREND",
+        "preferred_schedule": "baseline",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "Post-earnings announcement drift continuation; scale trailing to NATR.",
+    },
+    "EXHAUSTION_HAMMER": {
+        "archetype": "EXHAUSTION_HAMMER",
+        "recommended_omni_preset": "STOCKBEE_EXHAUSTION_HAMMER",
+        "target_paper_lane": "ALPACA_PA3",
+        "target_lane_id": "L3_AVWAP_TIGHT_LOCK",
+        "preferred_schedule": "tight_near_lossless",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "Selling-exhaustion undercut/reclaim hammer; tight BE+10bp arm on reclaim.",
+    },
+    "HIDDEN_VOL_ACCUM": {
+        "archetype": "HIDDEN_VOL_ACCUM",
+        "recommended_omni_preset": "STOCKBEE_EP_MOMENTUM_BURST",
+        "target_paper_lane": "ALPACA_PA2",
+        "target_lane_id": "L2_STRUCTURAL_TREND",
+        "preferred_schedule": "baseline",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "High FINRA TRF (>= 40%) or UV/HVR institutional absorption buildup.",
+    },
+    "PARABOLIC_TOP": {
+        "archetype": "PARABOLIC_TOP",
+        "recommended_omni_preset": "PARABOLIC_EXHAUSTION_SHORT",
+        "target_paper_lane": "ALPACA_PA3",
+        "target_lane_id": "L3_AVWAP_TIGHT_LOCK",
+        "preferred_schedule": "tight_near_lossless",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": ">= 2*NATR VWAP climax extension; prepare flatten-first Fast-Sell Reverse.",
+    },
+    "PEAK_REVERSAL": {
+        "archetype": "PEAK_REVERSAL",
+        "recommended_omni_preset": "PARABOLIC_EXHAUSTION_SHORT",
+        "target_paper_lane": "ALPACA_PA3",
+        "target_lane_id": "L3_AVWAP_TIGHT_LOCK",
+        "preferred_schedule": "tight_near_lossless",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "Verified reversal peak breakdown; route DIRECT_SHORT_ETB or inverse ETF.",
+    },
+    "CRASH_ALIGNMENT": {
+        "archetype": "CRASH_ALIGNMENT",
+        "recommended_omni_preset": "CRASH_DEFENSIVE_INVERSE",
+        "target_paper_lane": "ALPACA_PA3",
+        "target_lane_id": "L3_AVWAP_TIGHT_LOCK",
+        "preferred_schedule": "tight_near_lossless",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "Macro regime == -1 crash alignment; 0.25% risk short ETB or long SOXS/SQQQ.",
+    },
+    "EXTREME_REVERSAL": {
+        "archetype": "EXTREME_REVERSAL",
+        "recommended_omni_preset": "AUTO_REGIME_ADAPTIVE",
+        "target_paper_lane": "ALPACA_PA3",
+        "target_lane_id": "L3_AVWAP_TIGHT_LOCK",
+        "preferred_schedule": "tight_near_lossless",
+        "r_lock_policy": _R_LOCK_POLICY_STD,
+        "climax_auto_reverse": True,
+        "reentry_cooldown_secs": 60,
+        "play_notes": "24/5 extreme-move reversal or overnight standby; enforce Rule-612 stop cap.",
+    },
+}
 
 OMNI_ORDER_PRESET_CATALOG: tuple[dict[str, Any], ...] = (
     {
@@ -317,6 +458,131 @@ def filter_extreme_movers(
     return out
 
 
+def resolve_venue_profile(
+    venue: str = "IBKR", *, venue_profile: str | None = None
+) -> tuple[str, str]:
+    """Resolve canonical venue_profile and derived broker ('IBKR'|'ALPACA')."""
+    if venue_profile is not None and str(venue_profile).strip():
+        vp = str(venue_profile).strip().upper()
+        if vp not in ALL_TV_VENUE_PROFILES:
+            raise ValueError(f"Unsupported TV venue_profile: {venue_profile!r}")
+        broker = "IBKR" if vp.startswith("IBKR") else "ALPACA"
+        return vp, broker
+    vu = str(venue).strip().upper()
+    if vu not in {"IBKR", "ALPACA"}:
+        raise ValueError(f"Unsupported TV venue: {venue!r}")
+    env_vp = os.environ.get("TIER0_VENUE_PROFILE", "").strip().upper()
+    if env_vp in ALL_TV_VENUE_PROFILES and env_vp.startswith(f"{vu}_PAPER_"):
+        return env_vp, vu
+    if vu == "IBKR":
+        return "IBKR_PAPER_4002", "IBKR"
+    raw_rpm = os.environ.get("TIER0_ALPACA_RPM", "").strip().upper()
+    if raw_rpm == "ALPACA_PAPER_1000":
+        return "ALPACA_PAPER_1000", "ALPACA"
+    if raw_rpm == "ALPACA_PAPER_200":
+        return "ALPACA_PAPER_200", "ALPACA"
+    if raw_rpm:
+        with contextlib.suppress(ValueError):
+            if 200 < int(raw_rpm) <= 1000:
+                return "ALPACA_PAPER_1000", "ALPACA"
+    return "ALPACA_PAPER_200", "ALPACA"
+
+
+def resolve_venue_order_handle(
+    venue_profile: str,
+    *,
+    session: str = "RTH",
+    trailing_schedule: str = "tight_near_lossless",
+) -> dict[str, Any]:
+    """Resolve NautilusTrader v2 1000rpm/3000rpm order-handle budget & exit reserve."""
+    vp = str(venue_profile).strip().upper()
+    if vp not in ALL_TV_VENUE_PROFILES:
+        raise ValueError(f"Unsupported venue_profile: {venue_profile!r}")
+    sched_key = (
+        trailing_schedule
+        if trailing_schedule in _eng.POOLED_TRAILING_SCHEDULES
+        else "tight_near_lossless"
+    )
+    return dict(
+        _eng.build_venue_order_handle_spec(vp, session=session, trailing_schedule=sched_key)
+    )
+
+
+def build_venue_order_handles_matrix(
+    *, session: str = "RTH", trailing_schedule: str = "tight_near_lossless"
+) -> dict[str, dict[str, Any]]:
+    """Build 4-profile venue order-handle matrix (IBKR 3000rpm, Alpaca 1000/200rpm, Stage-5)."""
+    return {
+        vp: resolve_venue_order_handle(vp, session=session, trailing_schedule=trailing_schedule)
+        for vp in CANONICAL_TV_VENUE_PROFILES
+    }
+
+
+def classify_multi_situation_setup(
+    entry: Mapping[str, Any],
+    *,
+    regime_int: int,
+    sess_chg: float,
+    rvol: float,
+    darkpool_trf_ratio: float | None = None,
+    unusual_volume_buildup: bool = False,
+    peak_confirmed: bool | None = None,
+    natr_pct: float = 0.015,
+) -> tuple[str, _risk.Side, str]:
+    """Resolve side & converged 8-setup multi-situation archetype from causal features."""
+    sym = str(entry.get("symbol") or "").strip().upper()
+    if sym in INVERSE_HEDGE_SYMBOLS and regime_int == -1:
+        return "BUY", "LONG", "CRASH_ALIGNMENT"
+    if regime_int == -1:
+        return "SELL", "SHORT", "CRASH_ALIGNMENT"
+
+    raw_side = str(entry.get("side") or "").strip().upper()
+    explicit_arch = (
+        str(entry.get("setup_archetype") or entry.get("archetype") or "").strip().upper()
+    )
+
+    if peak_confirmed is True and (raw_side == "SELL" or sess_chg < 2.0 or rvol < 3.0):
+        return "SELL", "SHORT", "PEAK_REVERSAL"
+    if raw_side == "SELL":
+        if explicit_arch == "PARABOLIC_TOP" or entry.get("parabolic_top") is True:
+            return "SELL", "SHORT", "PARABOLIC_TOP"
+        if explicit_arch == "PEAK_REVERSAL":
+            return "SELL", "SHORT", "PEAK_REVERSAL"
+        return "SELL", "SHORT", "EXTREME_REVERSAL"
+    if explicit_arch == "PEAD_DRIFT" or entry.get("earnings_catalyst") is True:
+        return "BUY", "LONG", "PEAD_DRIFT"
+    if sess_chg >= 2.0 and rvol >= 3.0:
+        return "BUY", "LONG", "EARLY_EP_MOMENTUM_BURST"
+    if explicit_arch == "VCP_BREAKOUT" or entry.get("vcp_breakout") is True:
+        return "BUY", "LONG", "VCP_BREAKOUT"
+    if (
+        explicit_arch == "VCP_COIL"
+        or entry.get("vcp_coil") is True
+        or (entry.get("coil_ok") is True and natr_pct <= 0.015 and abs(sess_chg) < 2.0)
+    ):
+        return "BUY", "LONG", "VCP_COIL"
+    lower_wk = _opt_float(entry.get("lower_wick_ratio"), min_val=0.0) or 0.0
+    if (
+        explicit_arch == "EXHAUSTION_HAMMER"
+        or entry.get("exhaustion_hammer") is True
+        or (lower_wk >= 0.55 and sess_chg >= 0.0 and rvol >= 1.3)
+    ):
+        return "BUY", "LONG", "EXHAUSTION_HAMMER"
+    if (
+        (darkpool_trf_ratio is not None and darkpool_trf_ratio >= 0.40) or unusual_volume_buildup
+    ) and rvol >= 1.5:
+        return "BUY", "LONG", "HIDDEN_VOL_ACCUM"
+    if explicit_arch == "PARABOLIC_TOP" or entry.get("parabolic_top") is True:
+        return (
+            ("SELL", "SHORT", "PARABOLIC_TOP")
+            if regime_int != 1
+            else ("BUY", "LONG", "PARABOLIC_TOP")
+        )
+    if explicit_arch == "PEAK_REVERSAL":
+        return "SELL", "SHORT", "PEAK_REVERSAL"
+    return "BUY", "LONG", "EXTREME_REVERSAL"
+
+
 def _resolve_direction(
     entry: Mapping[str, Any],
     *,
@@ -326,22 +592,18 @@ def _resolve_direction(
     darkpool_trf_ratio: float | None = None,
     unusual_volume_buildup: bool = False,
     peak_confirmed: bool | None = None,
+    natr_pct: float = 0.015,
 ) -> tuple[str, _risk.Side, str]:
-    sym = str(entry.get("symbol") or "").strip().upper()
-    if sym in INVERSE_HEDGE_SYMBOLS and regime_int == -1:
-        return "BUY", "LONG", "CRASH_ALIGNMENT"
-    if regime_int == -1:
-        return "SELL", "SHORT", "CRASH_ALIGNMENT"
-    raw_side = str(entry.get("side") or "").strip().upper()
-    if peak_confirmed is True and (raw_side == "SELL" or sess_chg < 2.0 or rvol < 3.0):
-        return "SELL", "SHORT", "PEAK_REVERSAL"
-    if sess_chg >= 2.0 and rvol >= 3.0:
-        return "BUY", "LONG", "EARLY_EP_MOMENTUM_BURST"
-    if (
-        (darkpool_trf_ratio is not None and darkpool_trf_ratio >= 0.40) or unusual_volume_buildup
-    ) and rvol >= 1.5:
-        return "BUY", "LONG", "HIDDEN_VOL_ACCUM"
-    return "BUY", "LONG", "EXTREME_REVERSAL"
+    return classify_multi_situation_setup(
+        entry,
+        regime_int=regime_int,
+        sess_chg=sess_chg,
+        rvol=rvol,
+        darkpool_trf_ratio=darkpool_trf_ratio,
+        unusual_volume_buildup=unusual_volume_buildup,
+        peak_confirmed=peak_confirmed,
+        natr_pct=natr_pct,
+    )
 
 
 def _opt_float(val: Any, *, min_val: float | None = None) -> float | None:
@@ -368,6 +630,21 @@ def _opt_int(val: Any, *, min_val: int | None = None) -> int | None:
     return out
 
 
+def _trf_age_hours(as_of_utc: str | None, ref_utc: datetime | None) -> float | None:
+    if not as_of_utc or ref_utc is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(as_of_utc)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    age_s = (ref_utc.astimezone(UTC) - dt.astimezone(UTC)).total_seconds()
+    if not math.isfinite(age_s) or age_s < 0.0:
+        return None
+    return round(age_s / 3600.0, 1)
+
+
 def _action_gate(
     sym: str,
     side: str,
@@ -378,11 +655,18 @@ def _action_gate(
     venue: str = "IBKR",
     active_sess: str = "RTH",
     live_eligible: bool = False,
+    peak_confirmed: bool | None = None,
+    sess_chg: float = 0.0,
 ) -> str:
     if sym in INVERSE_HEDGE_SYMBOLS and (
-        regime_int == -1 or (live_eligible and active_sess == "OVERNIGHT" and side == "BUY")
+        regime_int == -1
+        or (live_eligible and active_sess == "OVERNIGHT" and side == "BUY" and sess_chg > 0.0)
     ):
         return "READY_HALF_AUTO_HEDGE"
+    if side == "SELL" and regime_int != -1 and peak_confirmed is not True:
+        if b_row.get("entry_hold_reason"):
+            return f"HOLD ({b_row['entry_hold_reason']})"
+        return "HOLD (BEARISH_UNCONFIRMED_REGIME)"
     if side == "SELL" and not etb_ok:
         return "USE_INVERSE_ETF_OR_VERIFY_BORROW"
     if side == "SELL" and venue == "ALPACA" and active_sess == "OVERNIGHT":
@@ -404,12 +688,15 @@ def _build_order_level_row(
     active_sess: str,
     regime_int: int,
     vu: str,
+    venue_profile: str | None = None,
     b_row: Mapping[str, Any],
     live_eligible: bool,
     action_gate_override: str | None = None,
+    now_utc: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Compute Rule-612 stops, collared limits, 4-tier R-locks & metadata."""
+    """Compute Rule-612 stops, collared limits, 4-tier R-locks, playbook & handle metadata."""
     sym = str(e["symbol"]).strip().upper()
+    vp, _ = resolve_venue_profile(vu, venue_profile=venue_profile)
     raw_exch = e.get("exchange") or e.get("tv_exchange") or b_row.get("exchange")
     tv_symbol = resolve_tv_exchange_symbol(sym, exchange=raw_exch)
     norm_exch = tv_symbol.split(":", 1)[0] if ":" in tv_symbol else None
@@ -436,6 +723,21 @@ def _build_order_level_row(
     darkpool_trf_ratio = min(1.0, round(raw_trf, 4)) if raw_trf is not None else None
     darkpool_trf_source = (
         str(e.get("darkpool_trf_source") or b_row.get("darkpool_trf_source") or "").strip() or None
+    )
+    darkpool_trf_as_of_utc = (
+        str(e.get("darkpool_trf_as_of_utc") or b_row.get("darkpool_trf_as_of_utc") or "").strip()
+        or None
+    )
+    explicit_trf_age = _opt_float(
+        e.get("darkpool_trf_age_hours")
+        if e.get("darkpool_trf_age_hours") is not None
+        else b_row.get("darkpool_trf_age_hours"),
+        min_val=0.0,
+    )
+    darkpool_trf_age_hours = (
+        explicit_trf_age
+        if explicit_trf_age is not None
+        else _trf_age_hours(darkpool_trf_as_of_utc, now_utc)
     )
     darkpool_block_count = _opt_int(
         e.get("darkpool_block_count")
@@ -473,7 +775,15 @@ def _build_order_level_row(
         darkpool_trf_ratio=darkpool_trf_ratio,
         unusual_volume_buildup=unusual_volume_buildup,
         peak_confirmed=peak_confirmed,
+        natr_pct=float(natr),
     )
+    playbook = dict(
+        MULTI_SITUATION_SETUP_PLAYBOOK.get(arch, MULTI_SITUATION_SETUP_PLAYBOOK["EXTREME_REVERSAL"])
+    )
+    rec_omni = str(playbook["recommended_omni_preset"])
+    target_lane = str(b_row.get("lane_account") or playbook["target_paper_lane"])
+    target_lane_id = str(b_row.get("lane_id") or playbook["target_lane_id"])
+    venue_handle = resolve_venue_order_handle(vp, session=active_sess, trailing_schedule=sched_name)
 
     stop_now = _risk.compute_capped_stop_price(
         px, r_side, max_loss_pct=prof_now.initial_max_loss_pct
@@ -543,6 +853,8 @@ def _build_order_level_row(
         venue=vu,
         active_sess=active_sess,
         live_eligible=live_eligible,
+        peak_confirmed=peak_confirmed,
+        sess_chg=sess_chg,
     )
     collar_bps = float(prof_now.limit_collar_pct * Decimal("10000"))
     pair_sym = str(e.get("pair_symbol") or "").strip().upper() or BIDIRECTIONAL_PAIRS.get(sym)
@@ -561,6 +873,12 @@ def _build_order_level_row(
         "pair_symbol": pair_sym,
         "side": side,
         "archetype": arch,
+        "recommended_omni_preset": rec_omni,
+        "target_paper_lane": target_lane,
+        "target_lane_id": target_lane_id,
+        "setup_playbook": playbook,
+        "venue_profile": vp,
+        "venue_order_handle": venue_handle,
         "order_preset_id": order_preset_id,
         "watch_tier": watch_tier,
         "action_gate": gate,
@@ -574,11 +892,23 @@ def _build_order_level_row(
         "rvol": round(rvol, 2),
         "darkpool_trf_ratio": darkpool_trf_ratio,
         "darkpool_trf_source": darkpool_trf_source,
+        "darkpool_trf_as_of_utc": darkpool_trf_as_of_utc,
+        "darkpool_trf_age_hours": darkpool_trf_age_hours,
         "darkpool_block_count": darkpool_block_count,
         "trf_block_ratio": trf_block_ratio,
         "hidden_volume_ratio": hidden_volume_ratio,
         "vol_buildup_ratio": vol_buildup_ratio,
         "unusual_volume_buildup": unusual_volume_buildup,
+        "pinned": bool(e.get("pinned") is True or b_row.get("pinned") is True),
+        "borrow_source": (
+            str(e.get("borrow_source") or b_row.get("borrow_source") or "").strip() or None
+        ),
+        "short_fee_bps": _opt_float(
+            e.get("short_fee_bps")
+            if e.get("short_fee_bps") is not None
+            else b_row.get("short_fee_bps"),
+            min_val=0.0,
+        ),
         "peak_confirmed": peak_confirmed,
         "natr_pct": float(natr),
         "schedule": sched_name,
@@ -630,10 +960,11 @@ def build_half_auto_tickets(
     bundle: Mapping[str, Any] | None = None,
     now_utc: datetime | None = None,
     venue: str = "IBKR",
+    venue_profile: str | None = None,
     max_tickets: int = 15,
 ) -> dict[str, Any]:
     """Build schema-validated Half-Auto extreme-mover tickets with Rule-612 lock rungs."""
-    vu = venue.strip().upper()
+    vp, vu = resolve_venue_profile(venue, venue_profile=venue_profile)
     ts_utc = now_utc or datetime.now(UTC)
     now_et = ts_utc.astimezone(NY_TZ)
     active_sess, ts_ms = current_et_session(now_et), int(ts_utc.timestamp() * 1000)
@@ -681,8 +1012,10 @@ def build_half_auto_tickets(
             active_sess=active_sess,
             regime_int=regime_int,
             vu=vu,
+            venue_profile=vp,
             b_row=b_row,
             live_eligible=live_eligible,
+            now_utc=ts_utc,
         )
 
         alert_in: dict[str, Any] = {
@@ -693,6 +1026,7 @@ def build_half_auto_tickets(
             "side": row["side"],
             "qty": 1,
             "venue": vu,
+            "venue_profile": vp,
             "session": active_sess,
             "order_type": row["order_type_now"],
             "trigger_price": row["live_price"],
@@ -774,9 +1108,11 @@ def build_half_auto_tickets(
                 active_sess=active_sess,
                 regime_int=regime_int,
                 vu=vu,
+                venue_profile=vp,
                 b_row=b_map.get(sym, {}),
                 live_eligible=False,
                 action_gate_override="MONITOR_ONLY (<EXTREME GATE)",
+                now_utc=ts_utc,
             )
             s_row["staged"] = False
             s_row["semi_auto_confirmed"] = False
@@ -786,11 +1122,17 @@ def build_half_auto_tickets(
     raw_feeds = [str(x) for x in (movers.get("feed_sources") or []) if x]
     admitted = [f for f in raw_feeds if f in ADMITTED_FEED_SOURCES]
     pins = [str(s).strip().upper() for s in (movers.get("pin_symbols") or ()) if str(s).strip()]
+    venue_handles = build_venue_order_handles_matrix(session=active_sess)
     return {
         "schema_version": "tier0.live-half-auto-tickets.v1",
         "generated_at_et": now_et.isoformat(),
         "active_session": active_sess,
         "venue": vu,
+        "venue_profile": vp,
+        "venue_order_handle": venue_handles.get(
+            vp, resolve_venue_order_handle(vp, session=active_sess)
+        ),
+        "venue_order_handles": venue_handles,
         "movers_generated_at_utc": movers.get("generated_at_utc"),
         "macro_regime": macro,
         "pin_symbols": pins,
@@ -808,6 +1150,38 @@ def build_half_auto_tickets(
     }
 
 
+def _format_trf_carryover_notice(rows: Sequence[Mapping[str, Any]]) -> str:
+    carry = [
+        r
+        for r in rows
+        if isinstance(r, Mapping)
+        and str(r.get("darkpool_trf_source") or "").strip() == "prior_sip_trf_carryover"
+    ]
+    if not carry:
+        return ""
+    as_ofs = sorted(
+        {str(r["darkpool_trf_as_of_utc"]).strip() for r in carry if r.get("darkpool_trf_as_of_utc")}
+    )
+    ages = [
+        age
+        for r in carry
+        if (age := _opt_float(r.get("darkpool_trf_age_hours"), min_val=0.0)) is not None
+    ]
+    detail_bits: list[str] = []
+    if as_ofs:
+        detail_bits.append(f"as of `{', '.join(as_ofs)}`")
+    if ages:
+        lo, hi = min(ages), max(ages)
+        age_txt = f"{lo:.1f}h" if abs(hi - lo) < 0.05 else f"{lo:.1f}h–{hi:.1f}h"
+        detail_bits.append(f"age `{age_txt}`")
+    detail = f" ({', '.join(detail_bits)})" if detail_bits else ""
+    return (
+        f"- **Darkpool TRF Carryover:** `{len(carry)}` symbol(s) carry "
+        f"`prior_sip_trf_carryover`{detail} — prior SIP session FINRA TRF snapshot, "
+        "not live overnight BOATS darkpool prints.\n"
+    )
+
+
 def _render_ticket_row(t: Mapping[str, Any]) -> str:
     pair_tag = f" (`↔{t['pair_symbol']}`)" if t.get("pair_symbol") else ""
     prior_tag = f" prev `{t['prior_close']:.2f}`" if t.get("prior_close") is not None else ""
@@ -817,7 +1191,17 @@ def _render_ticket_row(t: Mapping[str, Any]) -> str:
     lane_tag = f" · `{t['paper_lane_account']}`" if t.get("paper_lane_account") else ""
     trf_val = _opt_float(t.get("darkpool_trf_ratio"), min_val=0.0)
     trf_src = str(t.get("darkpool_trf_source") or "").strip()
-    trf_suffix = " (carry)" if trf_src == "prior_sip_trf_carryover" else ""
+    trf_as_of = str(t.get("darkpool_trf_as_of_utc") or "").strip()
+    trf_age_h = _opt_float(t.get("darkpool_trf_age_hours"), min_val=0.0)
+    if trf_src == "prior_sip_trf_carryover":
+        if trf_age_h is not None:
+            trf_suffix = f" (carry {trf_age_h:.1f}h)"
+        elif trf_as_of:
+            trf_suffix = f" (carry {trf_as_of[:16]})"
+        else:
+            trf_suffix = " (carry)"
+    else:
+        trf_suffix = ""
     trf_txt = f"{trf_val * 100.0:.0f}%{trf_suffix}" if trf_val is not None else "—"
     uv_bits: list[str] = []
     vbr = _opt_float(t.get("vol_buildup_ratio"), min_val=0.0)
@@ -848,8 +1232,15 @@ def _render_ticket_row(t: Mapping[str, Any]) -> str:
 
 
 def render_tickets_markdown(doc: Mapping[str, Any]) -> str:
-    """Render concise operator Markdown order ticket table + Pine alerts + standby + template."""
+    """Render concise operator Markdown order ticket table + Pine alerts + standby + engine sync."""
     macro, sess = doc.get("macro_regime") or {}, doc.get("active_session", "RTH")
+    vp = str(doc.get("venue_profile") or resolve_venue_profile(str(doc.get("venue") or "IBKR"))[0])
+    raw_vh = doc.get("venue_order_handle")
+    vh = (
+        dict(raw_vh)
+        if isinstance(raw_vh, Mapping)
+        else resolve_venue_order_handle(vp, session=str(sess))
+    )
     rows = [_render_ticket_row(t) for t in doc.get("tickets", [])]
     body = (
         "\n".join(rows) or "| — | — | — | No extreme movers | — | — | — | — | — | — | — | — | — |"
@@ -879,9 +1270,10 @@ def render_tickets_markdown(doc: Mapping[str, Any]) -> str:
             kind_lbl = p.get("script_kind") or "indicator"
             preset_lbl = p.get("order_preset_id") or p.get("setup_archetype") or "—"
             collar_f = float(p.get("limit_collar_bps", 0.0))
+            v_lbl = p.get("venue_profile") or p.get("venue", "IBKR")
             m_rows.append(
                 f"| `{p.get('alert_id', '—')}` | `{p['symbol']}` | `{p.get('side', '—')}` "
-                f"| `{p.get('venue', 'IBKR')}` | `{p.get('session', '—')}` "
+                f"| `{v_lbl}` | `{p.get('session', '—')}` "
                 f"| `{p.get('order_type', '—')}` | `{float(p.get('trigger_price', 0.0)):.2f}` "
                 f"| `{float(p.get('stop_price', 0.0)):.2f}` | `{collar_f:.0f}bp` "
                 f"| `{p.get('trailing_schedule', '—')}` | `{kind_lbl}` / `{preset_lbl}` "
@@ -902,6 +1294,100 @@ def render_tickets_markdown(doc: Mapping[str, Any]) -> str:
             "(MONITOR_ONLY — Exact Rule-612 Order Panel Levels)\n\n"
             f"{table_hdr}{s_body}\n"
         )
+
+    raw_coord = doc.get("paper_farm_coordination")
+    coord: Mapping[str, Any] = raw_coord if isinstance(raw_coord, Mapping) else {}
+    active_pos = [p for p in (coord.get("active_positions") or ()) if isinstance(p, Mapping)]
+    coord_presets = [c for c in (coord.get("coordinated_presets") or ()) if isinstance(c, Mapping)]
+    raw_handles_map = doc.get("venue_order_handles")
+    handles_map: Mapping[str, Any] = (
+        raw_handles_map
+        if isinstance(raw_handles_map, Mapping)
+        else build_venue_order_handles_matrix(session=str(sess))
+    )
+    exec_st = coord.get("execution_status") or "OFFLINE_OR_IDLE"
+    streams_txt = ", ".join(str(x) for x in (coord.get("streams") or ())) or "—"
+    coord_ok_lbl = str(bool(coord.get("coordination_manifest_present"))).lower()
+    coord_lines = [
+        "",
+        "## Active Hosted Engine 24/5 Trailing Positions & Order-Handle Coordination",
+        "",
+        (
+            f"- **Engine Status:** `{exec_st}` | **Active Trailed Positions:** `{len(active_pos)}` "
+            f"| **Coordinated TV Presets:** `{len(coord_presets)}` "
+            f"| **Streams:** `{streams_txt}` "
+            f"| **Coord Manifest:** `{coord_ok_lbl}`"
+        ),
+        "",
+        (
+            "| Sym | Side | Lane | Venue Profile | Entry | Active Stop "
+            "| Lock Tier | Session | Schedule |"
+        ),
+        "|---|---|---|---|---:|---:|---|---|---|",
+    ]
+    if active_pos:
+        for pos in active_pos:
+            e_p = _opt_float(pos.get("entry_price"))
+            s_p = _opt_float(pos.get("active_stop"))
+            e_cell = f"`{e_p:.2f}`" if e_p is not None else "—"
+            s_cell = f"`{s_p:.2f}`" if s_p is not None else "—"
+            coord_lines.append(
+                f"| `{pos.get('symbol', '—')}` | `{pos.get('side', '—')}` "
+                f"| `{pos.get('lane_account', '—')}` | `{pos.get('venue_profile', '—')}` "
+                f"| {e_cell} | {s_cell} | `{pos.get('lock_tier') or '—'}` "
+                f"| `{pos.get('session') or sess}` | `{pos.get('trailing_schedule') or '—'}` |"
+            )
+    else:
+        coord_lines.append(
+            "| — | — | — | No active hosted positions (supervising) | — | — | — | — | — |"
+        )
+
+    if coord_presets:
+        coord_lines.extend(
+            [
+                "",
+                "| Alert ID | Sym | Side | Target Lane | Venue Profile | State |",
+                "|---|---|---|---|---|---|",
+            ]
+        )
+        for cp in coord_presets:
+            cp_lane = (
+                cp.get("target_account")
+                or cp.get("lane_account")
+                or cp.get("target_paper_lane")
+                or "—"
+            )
+            cp_state = cp.get("discipline_gate") or cp.get("status") or cp.get("state") or "STAGED"
+            coord_lines.append(
+                f"| `{cp.get('alert_id', '—')}` | `{cp.get('symbol', '—')}` "
+                f"| `{cp.get('side', '—')}` | `{cp_lane}` "
+                f"| `{cp.get('venue_profile', vp)}` | `{cp_state}` |"
+            )
+
+    coord_lines.extend(
+        [
+            "",
+            (
+                "| Venue Profile | Env | Max RPM | Entry/Mod RPM | Exit Reserve (>=10%) "
+                "| Max Pos | Cadence | Nautilus Rate | Exec Now |"
+            ),
+            "|---|---|---:|---:|---:|---:|---:|---|---|",
+        ]
+    )
+    for prof_key in CANONICAL_TV_VENUE_PROFILES:
+        spec = handles_map.get(prof_key)
+        if not isinstance(spec, Mapping):
+            continue
+        coord_lines.append(
+            f"| `{spec['venue_profile']}` | `{spec['environment']}` | `{spec['max_rpm']}` "
+            f"| `{spec['entry_modify_rpm_budget']}` | `{spec['exit_reserve_rpm']}` "
+            f"| `{spec['max_concurrent_trailed_positions']}` "
+            f"| `{spec['trailing_modify_cadence_secs']}s` "
+            f"| `{spec['nautilus_submit_rate']}` "
+            f"| `{str(bool(spec.get('executable_now'))).lower()}` |"
+        )
+    coord_sec = "\n".join(coord_lines) + "\n"
+
     template_footer = (
         "\n## Native TradingView Order Preset Template\n"
         "- **OVERNIGHT (20:00–04:00 ET):** `STOP_LIMIT` (`50 bps` collar) · SL `<= 1.00%` · "
@@ -915,15 +1401,24 @@ def render_tickets_markdown(doc: Mapping[str, Any]) -> str:
         "- **4-Tier Progressive R-Lock Brackets:** Arm `BE+10bp` (T1) → `+1R` lock `+0.45R` (T2) → "
         "`+2R` lock `+1.35R` (T3) → `+3R` lock `+2.35R` / Fast-Sell Reverse (T4) · `60s` cooldown\n"
     )
+    carry_notice = _format_trf_carryover_notice(
+        [*doc.get("tickets", []), *doc.get("standby_presets", [])]
+    )
     return (
         "# Tier-0 LIVE Half-Automation Order Ticket Console\n\n"
         f"- **Generated (ET):** `{doc.get('generated_at_et')}` | **Session:** `{sess}` "
         f"| **Regime:** `{regime_label} ({regime_val})`\n"
+        f"- **Venue Profile:** `{vp}` (`{vh['max_rpm']} rpm` · "
+        f"`{vh['entry_modify_rpm_budget']}` entry/mod + `{vh['exit_reserve_rpm']}` exit reserve · "
+        f"`{vh['max_concurrent_trailed_positions']}` max trailed pos · "
+        f"`{vh['trailing_modify_cadence_secs']}s` cadence)\n"
         f"- **Schema Validated:** `{doc.get('schema_validated_count')}/{n_tickets}` "
-        "| `semi_auto_confirmed=false` | `live_execution_enabled=false`\n\n"
+        "| `semi_auto_confirmed=false` | `live_execution_enabled=false`\n"
+        f"{carry_notice}\n"
         f"{table_hdr}{body}\n"
         f"{manual_sec}"
         f"{standby_sec}"
+        f"{coord_sec}"
         f"{template_footer}"
     )
 
@@ -935,7 +1430,7 @@ def render_tv_watchlist(
     ranked_entries: Sequence[Mapping[str, Any]] | None = None,
     staged_presets: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
-    """Render 6-section grouped TradingView watchlist with EXCHANGE:SYMBOL qualification."""
+    """Render grouped TV watchlist (`###01..###06` + `###07` manual staged) with EXCHANGE:SYMBOL."""
 
     def _fmt_row(row: Mapping[str, Any]) -> str:
         sym = str(row.get("symbol") or "").strip().upper()
@@ -970,6 +1465,7 @@ def render_tv_watchlist(
     combined_rows = (*tickets, *live_ranked, *staged_rows)
 
     movers = list(dict.fromkeys(tvs for row in combined_rows if (tvs := _fmt_row(row))))[:15]
+    manual_staged_syms = list(dict.fromkeys(tvs for row in staged_rows if (tvs := _fmt_row(row))))
     darkpool_uv = list(
         dict.fromkeys(
             tvs
@@ -993,39 +1489,37 @@ def render_tv_watchlist(
             )
         )
     )
-    return (
-        "\n".join(
-            [
-                "###01_MACRO_REGIME_BREADTH",
-                "AMEX:SPY",
-                "NASDAQ:QQQ",
-                "AMEX:IWM",
-                "AMEX:RSP",
-                "NASDAQ:SOXX",
-                "CBOE:VIX",
-                "NASDAQ:TLT",
-                "###02_CRASH_DEFENSIVE_HEDGES",
-                "AMEX:SOXS",
-                "NASDAQ:SQQQ",
-                "AMEX:SPXS",
-                "AMEX:SDOW",
-                "###03_LIVE_MOVERS_TOP15",
-                *movers,
-                "###04_DARKPOOL_UNUSUAL_VOL",
-                *darkpool_uv,
-                "###05_BIDIRECTIONAL_PAIRS",
-                "AMEX:SOXL",
-                "AMEX:SOXS",
-                "NASDAQ:TQQQ",
-                "NASDAQ:SQQQ",
-                "AMEX:UPRO",
-                "AMEX:SPXS",
-                "###06_OVERNIGHT_24X5_LEADERS",
-                *(_fmt_sym(s) for s in OVERNIGHT_24X5_LEADERS),
-            ]
-        )
-        + "\n"
-    )
+    sections = [
+        "###01_MACRO_REGIME_BREADTH",
+        "AMEX:SPY",
+        "NASDAQ:QQQ",
+        "AMEX:IWM",
+        "AMEX:RSP",
+        "NASDAQ:SOXX",
+        "CBOE:VIX",
+        "NASDAQ:TLT",
+        "###02_CRASH_DEFENSIVE_HEDGES",
+        "AMEX:SOXS",
+        "NASDAQ:SQQQ",
+        "AMEX:SPXS",
+        "AMEX:SDOW",
+        "###03_LIVE_MOVERS_TOP15",
+        *movers,
+        "###04_DARKPOOL_UNUSUAL_VOL",
+        *darkpool_uv,
+        "###05_BIDIRECTIONAL_PAIRS",
+        "AMEX:SOXL",
+        "AMEX:SOXS",
+        "NASDAQ:TQQQ",
+        "NASDAQ:SQQQ",
+        "AMEX:UPRO",
+        "AMEX:SPXS",
+        "###06_OVERNIGHT_24X5_LEADERS",
+        *(_fmt_sym(s) for s in OVERNIGHT_24X5_LEADERS),
+    ]
+    if manual_staged_syms:
+        sections.extend(["###07_MANUAL_STAGED_PRESETS", *manual_staged_syms])
+    return "\n".join(sections) + "\n"
 
 
 def _atomic_write_text(path: Path, text: str) -> Path:
@@ -1069,10 +1563,36 @@ def sync_pine_scripts_to_pack(
 
 
 def _build_symbol_order_card(
-    row: Mapping[str, Any], *, card_kind: str, venue: str
+    row: Mapping[str, Any],
+    *,
+    card_kind: str,
+    venue: str,
+    venue_profile: str | None = None,
 ) -> dict[str, Any]:
     sess = str(row.get("active_session") or row.get("session") or "RTH")
     sym = str(row["symbol"]).strip().upper()
+    sched = str(row.get("schedule") or row.get("trailing_schedule") or "tight_near_lossless")
+    arch = str(row.get("archetype") or row.get("setup_archetype") or "EXTREME_REVERSAL")
+    raw_pb = row.get("setup_playbook")
+    playbook = (
+        dict(raw_pb)
+        if isinstance(raw_pb, Mapping)
+        else dict(
+            MULTI_SITUATION_SETUP_PLAYBOOK.get(
+                arch, MULTI_SITUATION_SETUP_PLAYBOOK["EXTREME_REVERSAL"]
+            )
+        )
+    )
+    vp, vu = resolve_venue_profile(
+        str(row.get("venue") or venue),
+        venue_profile=str(row.get("venue_profile") or venue_profile or "") or None,
+    )
+    raw_vh = row.get("venue_order_handle")
+    vh = (
+        dict(raw_vh)
+        if isinstance(raw_vh, Mapping)
+        else resolve_venue_order_handle(vp, session=sess, trailing_schedule=sched)
+    )
     return {
         "card_kind": card_kind,
         "symbol": sym,
@@ -1081,7 +1601,9 @@ def _build_symbol_order_card(
         "qty": 1,
         "semi_auto_confirmed": False,
         "live_execution_enabled": False,
-        "venue": str(row.get("venue") or venue),
+        "venue": vu,
+        "venue_profile": vp,
+        "venue_order_handle": vh,
         "session": sess,
         "extended_hours": sess != "RTH",
         "order_type": str(row.get("order_type_now") or row.get("order_type") or "STOP_LIMIT"),
@@ -1092,11 +1614,21 @@ def _build_symbol_order_card(
             min_val=0.0,
         )
         or 0.0,
-        "trailing_schedule": str(
-            row.get("schedule") or row.get("trailing_schedule") or "tight_near_lossless"
-        ),
+        "trailing_schedule": sched,
         "order_preset_id": row.get("order_preset_id"),
-        "archetype": row.get("archetype") or row.get("setup_archetype"),
+        "archetype": arch,
+        "recommended_omni_preset": str(
+            row.get("recommended_omni_preset") or playbook["recommended_omni_preset"]
+        ),
+        "target_paper_lane": str(
+            row.get("target_paper_lane")
+            or row.get("paper_lane_account")
+            or playbook["target_paper_lane"]
+        ),
+        "target_lane_id": str(
+            row.get("target_lane_id") or row.get("paper_lane_id") or playbook["target_lane_id"]
+        ),
+        "setup_playbook": playbook,
         "action_gate": row.get("action_gate") or "STAGED_PINE_ALERT",
         "entry_ref_price": _opt_float(row.get("live_price") or row.get("trigger_price")),
         "entry_limit_price": _opt_float(
@@ -1121,11 +1653,16 @@ def _build_symbol_order_card(
         "rvol": _opt_float(row.get("rvol")),
         "darkpool_trf_ratio": _opt_float(row.get("darkpool_trf_ratio")),
         "darkpool_trf_source": row.get("darkpool_trf_source"),
+        "darkpool_trf_as_of_utc": row.get("darkpool_trf_as_of_utc"),
+        "darkpool_trf_age_hours": _opt_float(row.get("darkpool_trf_age_hours"), min_val=0.0),
         "darkpool_block_count": _opt_int(row.get("darkpool_block_count")),
         "trf_block_ratio": _opt_float(row.get("trf_block_ratio")),
         "hidden_volume_ratio": _opt_float(row.get("hidden_volume_ratio")),
         "vol_buildup_ratio": _opt_float(row.get("vol_buildup_ratio")),
         "unusual_volume_buildup": bool(row.get("unusual_volume_buildup") is True),
+        "pinned": bool(row.get("pinned") is True),
+        "borrow_source": row.get("borrow_source"),
+        "short_fee_bps": _opt_float(row.get("short_fee_bps"), min_val=0.0),
         "watch_tier": row.get("watch_tier"),
         "paper_lane_account": row.get("paper_lane_account"),
         "paper_lane_id": row.get("paper_lane_id"),
@@ -1133,13 +1670,123 @@ def _build_symbol_order_card(
     }
 
 
+def build_venue_order_handles(
+    *,
+    alpaca_venue_profile: str | None = None,
+    session: str = "RTH",
+    trailing_schedule: str = "tight_near_lossless",
+) -> dict[str, Any]:
+    """Build Paper-only + fail-closed SANDBOX venue order-handle parity spec from engine SSOT."""
+    active_alp_vp, _ = resolve_venue_profile("ALPACA", venue_profile=alpaca_venue_profile)
+    if active_alp_vp not in {"ALPACA_PAPER_200", "ALPACA_PAPER_1000"}:
+        active_alp_vp = "ALPACA_PAPER_200"
+    profiles = build_venue_order_handles_matrix(
+        session=session, trailing_schedule=trailing_schedule
+    )
+    alp200 = _eng.inspect_venue_capability("ALPACA_PAPER_200")
+    alp1000 = _eng.inspect_venue_capability("ALPACA_PAPER_1000")
+    alp = alp1000 if active_alp_vp == "ALPACA_PAPER_1000" else alp200
+    ibkr = _eng.inspect_venue_capability("IBKR_PAPER_4002")
+    pro_spec = _eng.inspect_venue_capability("ALPACA_LIVE_PRO_LINE_1000")
+    alp_lanes = len(PAPER_ALPACA_LANE_ACCOUNTS)
+    ibkr_lanes = len(PAPER_IBKR_LANE_ACCOUNTS)
+    alp_combined_rpm = int(alp["max_rpm"]) * alp_lanes
+    alp_combined_exit_rpm = int(alp["exit_reserve_rpm"]) * alp_lanes
+    alp_combined_entry_rpm = int(alp["active_entry_rpm"]) * alp_lanes
+    alp200_combined_rpm = int(alp200["max_rpm"]) * alp_lanes
+    alp200_combined_exit_rpm = int(alp200["exit_reserve_rpm"]) * alp_lanes
+    alp200_combined_entry_rpm = int(alp200["active_entry_rpm"]) * alp_lanes
+    alp1000_combined_rpm = int(alp1000["max_rpm"]) * alp_lanes
+    alp1000_combined_exit_rpm = int(alp1000["exit_reserve_rpm"]) * alp_lanes
+    alp1000_combined_entry_rpm = int(alp1000["active_entry_rpm"]) * alp_lanes
+    ibkr_combined_rpm = int(ibkr["max_rpm"]) * ibkr_lanes
+    ibkr_combined_exit_rpm = int(ibkr["exit_reserve_rpm"]) * ibkr_lanes
+    ibkr_combined_entry_rpm = int(ibkr["active_entry_rpm"]) * ibkr_lanes
+    return {
+        "source": "tier0_sota.engine.inspect_venue_capability",
+        "spec_source": "tier0_sota.engine.build_venue_order_handle_spec",
+        "session": session,
+        "trailing_schedule": trailing_schedule,
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "active_alpaca_profile": active_alp_vp,
+        "combined_paper_farm_max_rpm": alp_combined_rpm + ibkr_combined_rpm,
+        "combined_paper_farm_exit_reserve_rpm": alp_combined_exit_rpm + ibkr_combined_exit_rpm,
+        "combined_paper_farm_active_entry_rpm": alp_combined_entry_rpm + ibkr_combined_entry_rpm,
+        "combined_paper_farm_max_rpm_at_1000": alp1000_combined_rpm + ibkr_combined_rpm,
+        "combined_paper_farm_exit_reserve_rpm_at_1000": (
+            alp1000_combined_exit_rpm + ibkr_combined_exit_rpm
+        ),
+        "profiles": profiles,
+        "active_paper_handles": {
+            "ALPACA_PAPER_1000": {
+                **profiles["ALPACA_PAPER_1000"],
+                **alp1000,
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "lane_count": alp_lanes,
+                "lane_accounts": list(PAPER_ALPACA_LANE_ACCOUNTS),
+                "combined_max_rpm": alp1000_combined_rpm,
+                "combined_exit_reserve_rpm": alp1000_combined_exit_rpm,
+                "combined_active_entry_rpm": alp1000_combined_entry_rpm,
+                "execution_status": (
+                    "PAPER_ACTIVE"
+                    if active_alp_vp == "ALPACA_PAPER_1000"
+                    else "PAPER_OPT_IN_1000RPM"
+                ),
+            },
+            "ALPACA_PAPER_200": {
+                **profiles["ALPACA_PAPER_200"],
+                **alp200,
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "lane_count": alp_lanes,
+                "lane_accounts": list(PAPER_ALPACA_LANE_ACCOUNTS),
+                "combined_max_rpm": alp200_combined_rpm,
+                "combined_exit_reserve_rpm": alp200_combined_exit_rpm,
+                "combined_active_entry_rpm": alp200_combined_entry_rpm,
+                "execution_status": (
+                    "PAPER_ACTIVE"
+                    if active_alp_vp == "ALPACA_PAPER_200"
+                    else "PAPER_FALLBACK_200RPM"
+                ),
+            },
+            "IBKR_PAPER_4002": {
+                **profiles["IBKR_PAPER_4002"],
+                **ibkr,
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "lane_count": ibkr_lanes,
+                "lane_accounts": list(PAPER_IBKR_LANE_ACCOUNTS),
+                "combined_max_rpm": ibkr_combined_rpm,
+                "combined_exit_reserve_rpm": ibkr_combined_exit_rpm,
+                "combined_active_entry_rpm": ibkr_combined_entry_rpm,
+                "execution_status": "PAPER_ACTIVE",
+            },
+        },
+        "stage5_sandbox_reference_specs": {
+            "ALPACA_LIVE_PRO_LINE_1000": {
+                **profiles["ALPACA_LIVE_PRO_LINE_1000"],
+                **pro_spec,
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "execution_status": "LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC",
+                "stage5_readiness_spec_only": True,
+            },
+        },
+    }
+
+
 def build_tv_order_presets(
     doc: Mapping[str, Any],
     *,
     manual_staged_presets: Sequence[Mapping[str, Any]] = (),
+    paper_coordination: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build declarative `tv_order_presets.json` (3x4 NATR matrix, 8 Omni modes, symbol cards)."""
-    venue = str(doc.get("venue") or "IBKR")
+    active_sess = str(doc.get("active_session") or "CLOSED")
+    raw_vp = str(doc.get("venue_profile") or "").strip().upper() or None
+    vp, venue = resolve_venue_profile(str(doc.get("venue") or "IBKR"), venue_profile=raw_vp)
     session_matrix: dict[str, dict[str, dict[str, Any]]] = {}
     for sched_name, sess_map in _eng.POOLED_TRAILING_SCHEDULES.items():
         session_matrix[sched_name] = {
@@ -1159,24 +1806,46 @@ def build_tv_order_presets(
     cards: list[dict[str, Any]] = []
     for t in doc.get("tickets", []):
         if isinstance(t, Mapping) and t.get("symbol"):
-            cards.append(_build_symbol_order_card(t, card_kind="ACTIVE_TICKET", venue=venue))
+            cards.append(
+                _build_symbol_order_card(
+                    t, card_kind="ACTIVE_TICKET", venue=venue, venue_profile=vp
+                )
+            )
     for p in manual_staged_presets:
         if isinstance(p, Mapping) and p.get("symbol"):
-            cards.append(_build_symbol_order_card(p, card_kind="PINE_STAGED", venue=venue))
+            cards.append(
+                _build_symbol_order_card(p, card_kind="PINE_STAGED", venue=venue, venue_profile=vp)
+            )
     for s in doc.get("standby_presets", []):
         if isinstance(s, Mapping) and s.get("symbol"):
-            cards.append(_build_symbol_order_card(s, card_kind="STANDBY_REFERENCE", venue=venue))
+            cards.append(
+                _build_symbol_order_card(
+                    s, card_kind="STANDBY_REFERENCE", venue=venue, venue_profile=vp
+                )
+            )
 
+    alp_vp = vp if vp in {"ALPACA_PAPER_200", "ALPACA_PAPER_1000"} else None
+    raw_coord = (
+        paper_coordination if paper_coordination is not None else doc.get("paper_farm_coordination")
+    )
+    coord: dict[str, Any] = dict(raw_coord) if isinstance(raw_coord, Mapping) else {}
+    active_positions = [
+        dict(p) for p in (coord.get("active_positions") or ()) if isinstance(p, Mapping)
+    ]
     return {
         "schema_version": "tier0.tv-order-presets.v1",
         "generated_at_et": doc.get("generated_at_et"),
-        "active_session": doc.get("active_session", "CLOSED"),
+        "active_session": active_sess,
         "venue": venue,
+        "venue_profile": vp,
         "paper_only": True,
         "semi_auto_confirmed": False,
         "live_execution_enabled": False,
         "qty": 1,
         "macro_regime": dict(doc.get("macro_regime") or {}),
+        "venue_order_handles": build_venue_order_handles(
+            alpaca_venue_profile=alp_vp, session=active_sess
+        ),
         "progressive_r_locks": [
             {"tier": "T1_BE_PLUS_FEE", "trigger": "fav >= be_trig", "floor": "entry +/- 10 bps"},
             {"tier": "T2_1R_LOCK", "trigger": "+1.0R", "floor": "+0.45R", "trail_scale": 0.65},
@@ -1190,7 +1859,10 @@ def build_tv_order_presets(
             },
         ],
         "session_matrix": session_matrix,
+        "multi_situation_playbook": {k: dict(v) for k, v in MULTI_SITUATION_SETUP_PLAYBOOK.items()},
         "omni_presets": [dict(p) for p in OMNI_ORDER_PRESET_CATALOG],
+        "active_engine_positions": active_positions,
+        "engine_coordination": coord,
         "symbol_order_cards": cards,
     }
 
@@ -1200,6 +1872,7 @@ def render_order_preset_cards_markdown(presets_doc: Mapping[str, Any]) -> str:
     sess = presets_doc.get("active_session", "CLOSED")
     macro = presets_doc.get("macro_regime") or {}
     cards = [c for c in presets_doc.get("symbol_order_cards", []) if isinstance(c, Mapping)]
+    carry_notice = _format_trf_carryover_notice(cards).rstrip("\n")
     lines = [
         "# Tier-0 TradingView SOTA Order Preset Cards",
         "",
@@ -1209,17 +1882,24 @@ def render_order_preset_cards_markdown(presets_doc: Mapping[str, Any]) -> str:
             "- **Guards:** `qty=1` | `semi_auto_confirmed=false` "
             "| `live_execution_enabled=false` | `paper_only=true`"
         ),
-        "",
-        "## Per-Symbol TradingView Order Panel Cards",
-        "",
-        (
-            "| Kind | TV Symbol | Side | Gate | Entry / Limit | Stop / Stop-Limit "
-            "| BE+10bp | +1R / +2R / +3R Lock | Fast-Sell Rev | Order | Paper Lane |"
-        ),
-        "|---|---|---|---|---:|---:|---:|---:|---:|---|---|",
     ]
+    if carry_notice:
+        lines.append(carry_notice)
+    lines.extend(
+        [
+            "",
+            "## Per-Symbol TradingView Order Panel Cards",
+            "",
+            (
+                "| Kind | TV Symbol | Side | Gate | Entry / Limit | Stop / Stop-Limit "
+                "| BE+10bp | +1R / +2R / +3R Lock | Fast-Sell Rev | TRF / Source "
+                "| Order | Paper Lane |"
+            ),
+            "|---|---|---|---|---:|---:|---:|---:|---:|---|---|---|",
+        ]
+    )
     if not cards:
-        lines.append("| — | — | — | No active/standby symbols | — | — | — | — | — | — | — |")
+        lines.append("| — | — | — | No active/standby symbols | — | — | — | — | — | — | — | — |")
     else:
         for c in cards:
             e_px = c.get("entry_ref_price")
@@ -1242,6 +1922,21 @@ def render_order_preset_cards_markdown(presets_doc: Mapping[str, Any]) -> str:
             )
             be_cell = f"`{be:.2f}`" if be is not None else "—"
             fsr_cell = f"`{fsr:.2f}`" if fsr is not None else "—"
+            trf_val = _opt_float(c.get("darkpool_trf_ratio"), min_val=0.0)
+            trf_src = str(c.get("darkpool_trf_source") or "").strip()
+            trf_age_h = _opt_float(c.get("darkpool_trf_age_hours"), min_val=0.0)
+            trf_as_of = str(c.get("darkpool_trf_as_of_utc") or "").strip()
+            if trf_val is None:
+                trf_cell = "—"
+            elif trf_src == "prior_sip_trf_carryover":
+                age_part = (
+                    f" · {trf_age_h:.1f}h"
+                    if trf_age_h is not None
+                    else (f" · {trf_as_of[:16]}" if trf_as_of else "")
+                )
+                trf_cell = f"`{trf_val * 100.0:.0f}%` (`prior_sip_trf_carryover`{age_part})"
+            else:
+                trf_cell = f"`{trf_val * 100.0:.0f}%`" + (f" (`{trf_src}`)" if trf_src else "")
             ext_lbl = "Ext ON" if c.get("extended_hours") else "RTH"
             collar_f = float(c.get("limit_collar_bps") or 0.0)
             ord_cell = f"`{c.get('order_type')}` ({collar_f:.0f}bp · {ext_lbl})"
@@ -1249,8 +1944,114 @@ def render_order_preset_cards_markdown(presets_doc: Mapping[str, Any]) -> str:
             lines.append(
                 f"| `{c['card_kind']}` | `{c['tv_symbol']}` | `{c['side']}` "
                 f"| **{c['action_gate']}** | {entry_cell} | {stop_cell} | {be_cell} "
-                f"| {lock_cell} | {fsr_cell} | {ord_cell} | {lane_cell} |"
+                f"| {lock_cell} | {fsr_cell} | {trf_cell} | {ord_cell} | {lane_cell} |"
             )
+
+    raw_handles = presets_doc.get("venue_order_handles")
+    if isinstance(raw_handles, Mapping):
+        active_h = raw_handles.get("active_paper_handles")
+        spec_h = raw_handles.get("stage5_sandbox_reference_specs")
+        comb_rpm = raw_handles.get("combined_paper_farm_max_rpm", 0)
+        comb_entry = raw_handles.get("combined_paper_farm_active_entry_rpm", 0)
+        comb_exit = raw_handles.get("combined_paper_farm_exit_reserve_rpm", 0)
+        pro_comb = raw_handles.get("combined_paper_farm_max_rpm_at_1000", 0)
+        pro_exit = raw_handles.get("combined_paper_farm_exit_reserve_rpm_at_1000", 0)
+        active_vp_lbl = presets_doc.get("venue_profile") or "IBKR_PAPER_4002"
+        lines.extend(
+            [
+                "",
+                "## Venue Order-Handle Parity (Paper Farm + Fail-Closed SANDBOX Spec)",
+                "",
+                (
+                    f"- **Active Venue Profile:** `{active_vp_lbl}` "
+                    f"| **Combined Paper Farm Budget:** `{comb_rpm} rpm` "
+                    f"(`{comb_entry} rpm` entry + `{comb_exit} rpm` exit reserve) "
+                    f"| **Pro-1000 Tier:** `{pro_comb} rpm` (`{pro_exit} rpm` exit reserve) "
+                    "| `paper_only=true` | `live_execution_enabled=false`"
+                ),
+                "",
+                (
+                    "| Venue Profile | Env | Lanes | Max RPM (Combined) | Max RPS "
+                    "| Exit Reserve | Max Pos / Cadence | 24/5 Overnight | Status |"
+                ),
+                "|---|---|---|---:|---:|---:|---|---|---|",
+            ]
+        )
+        if isinstance(active_h, Mapping):
+            for h in active_h.values():
+                if not isinstance(h, Mapping):
+                    continue
+                accts = ", ".join(str(x) for x in (h.get("lane_accounts") or ()))
+                lanes_lbl = f"`{h.get('lane_count', 1)}` (`{accts}`)" if accts else "`1`"
+                comb_ex = h.get("combined_exit_reserve_rpm", h["exit_reserve_rpm"])
+                pos_cad = (
+                    f"`{h.get('max_concurrent_trailed_positions', '—')}` / "
+                    f"`{h.get('trailing_modify_cadence_secs', '—')}s`"
+                )
+                lines.append(
+                    f"| `{h['venue_id']}` | `{h['environment']}` | {lanes_lbl} "
+                    f"| `{h['max_rpm']}` (`{h.get('combined_max_rpm', h['max_rpm'])}`) "
+                    f"| `{h['max_rps']}` "
+                    f"| `{h['exit_reserve_rpm']}` (`{comb_ex}`) "
+                    f"| {pos_cad} "
+                    f"| `{str(bool(h.get('supports_extended_overnight_24x5'))).lower()}` "
+                    f"| `{h.get('execution_status', 'PAPER_ACTIVE')}` |"
+                )
+        if isinstance(spec_h, Mapping):
+            for s in spec_h.values():
+                if not isinstance(s, Mapping):
+                    continue
+                pos_cad = (
+                    f"`{s.get('max_concurrent_trailed_positions', '—')}` / "
+                    f"`{s.get('trailing_modify_cadence_secs', '—')}s`"
+                )
+                lines.append(
+                    f"| `{s['venue_id']}` | `{s['environment']}` | `0` (`SANDBOX_SPEC`) "
+                    f"| `{s['max_rpm']}` (`0 live`) | `{s['max_rps']}` "
+                    f"| `{s['exit_reserve_rpm']}` | {pos_cad} "
+                    f"| `{str(bool(s.get('supports_extended_overnight_24x5'))).lower()}` "
+                    f"| `{s.get('execution_status', 'LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC')}` |"
+                )
+
+    raw_coord = presets_doc.get("engine_coordination")
+    coord: Mapping[str, Any] = raw_coord if isinstance(raw_coord, Mapping) else {}
+    active_pos = [
+        p for p in (presets_doc.get("active_engine_positions") or ()) if isinstance(p, Mapping)
+    ]
+    lines.extend(
+        [
+            "",
+            "## Active Hosted Engine 24/5 Trailing & Coordination Status",
+            "",
+            (
+                f"- **Execution Status:** `{coord.get('execution_status') or 'OFFLINE_OR_IDLE'}` "
+                f"| **Active Trailed Positions:** `{len(active_pos)}` "
+                f"| **Coordinated TV Presets:** `{coord.get('coordinated_presets_count', 0)}` "
+                f"| **Ready for Confirm:** `{coord.get('ready_for_operator_confirm_count', 0)}` "
+                f"| **Coord Manifest Present:** "
+                f"`{str(bool(coord.get('coordination_manifest_present'))).lower()}`"
+            ),
+        ]
+    )
+
+    playbook_map = presets_doc.get("multi_situation_playbook")
+    if isinstance(playbook_map, Mapping) and playbook_map:
+        lines.extend(
+            [
+                "",
+                "## Multi-Situation Setup Playbook",
+                "",
+                "| Archetype | Recommended Omni Preset | Target Paper Lane | Schedule | Notes |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for pb in playbook_map.values():
+            if isinstance(pb, Mapping):
+                lines.append(
+                    f"| `{pb['archetype']}` | `{pb['recommended_omni_preset']}` "
+                    f"| `{pb['target_paper_lane']}` (`{pb['target_lane_id']}`) "
+                    f"| `{pb['preferred_schedule']}` | {pb['play_notes']} |"
+                )
 
     lines.extend(
         [
@@ -1283,6 +2084,8 @@ def build_finos_tv_cockpit(
     openbb_rows: list[dict[str, Any]] = []
     for tier_label, bucket in (("ACTIVE_TICKET", tickets), ("STANDBY_REFERENCE", standby)):
         for r in bucket:
+            raw_vh = r.get("venue_order_handle")
+            vh_row: Mapping[str, Any] = raw_vh if isinstance(raw_vh, Mapping) else {}
             openbb_rows.append(
                 {
                     "tier": tier_label,
@@ -1292,6 +2095,12 @@ def build_finos_tv_cockpit(
                     "tv_symbol": r.get("tv_symbol") or resolve_tv_exchange_symbol(r["symbol"]),
                     "side": r["side"],
                     "archetype": r.get("archetype"),
+                    "recommended_omni_preset": r.get("recommended_omni_preset"),
+                    "target_paper_lane": r.get("target_paper_lane") or r.get("paper_lane_account"),
+                    "target_lane_id": r.get("target_lane_id") or r.get("paper_lane_id"),
+                    "venue_profile": r.get("venue_profile") or doc.get("venue_profile"),
+                    "max_rpm": vh_row.get("max_rpm"),
+                    "exit_reserve_rpm": vh_row.get("exit_reserve_rpm"),
                     "order_preset_id": r.get("order_preset_id"),
                     "watch_tier": r.get("watch_tier"),
                     "action_gate": r.get("action_gate"),
@@ -1427,10 +2236,17 @@ def build_finos_tv_cockpit(
             }
         )
 
+    active_sess = str(doc.get("active_session") or "CLOSED")
+    vp = str(doc.get("venue_profile") or resolve_venue_profile(str(doc.get("venue") or "IBKR"))[0])
+    coord_dict = dict(paper_coordination or {})
+    active_positions = [
+        dict(p) for p in (coord_dict.get("active_positions") or ()) if isinstance(p, Mapping)
+    ]
     return {
         "schema_version": "tier0.finos-openbb-tv-cockpit.v1",
         "generated_at_et": doc.get("generated_at_et"),
         "plugin": "@finos-workspace/plotly-charts@2.5.0",
+        "venue_profile": vp,
         "paper_only": True,
         "semi_auto_confirmed": False,
         "live_execution_enabled": False,
@@ -1461,12 +2277,15 @@ def build_finos_tv_cockpit(
             },
         ],
         "layout": {
-            "title": f"Tier-0 TV Half-Auto Cockpit ({doc.get('active_session', 'CLOSED')})",
+            "title": f"Tier-0 TV Half-Auto Cockpit ({active_sess} · {vp})",
             "barmode": "group",
             "xaxis": {"title": "Symbol"},
             "yaxis": {"title": "Move % / RVOL / TRF %"},
         },
         "openbb_rows": openbb_rows,
+        "venue_order_handles": build_venue_order_handles_matrix(session=active_sess),
+        "active_engine_positions": active_positions,
+        "engine_coordination": coord_dict,
         "lightweight_charts_v5": {
             "library": "tradingview/lightweight-charts",
             "api_version": "5",
@@ -1477,7 +2296,8 @@ def build_finos_tv_cockpit(
             "symbols": lwc_symbols,
         },
         "summary": {
-            "active_session": doc.get("active_session", "CLOSED"),
+            "active_session": active_sess,
+            "venue_profile": vp,
             "macro_regime": dict(doc.get("macro_regime") or {}),
             "tickets_count": compounding.get("tickets_count", 0),
             "ready_tickets_count": compounding.get("ready_tickets_count", 0),
@@ -1488,8 +2308,10 @@ def build_finos_tv_cockpit(
             "unusual_vol_count": compounding.get("unusual_vol_count", 0),
             "darkpool_hits_count": compounding.get("darkpool_hits_count", 0),
             "darkpool_trf_covered_count": compounding.get("darkpool_trf_covered_count", 0),
+            "active_engine_positions_count": len(active_positions),
+            "coordinated_presets_count": int(coord_dict.get("coordinated_presets_count") or 0),
         },
-        "paper_farm_coordination": dict(paper_coordination or {}),
+        "paper_farm_coordination": coord_dict,
     }
 
 
@@ -1514,28 +2336,156 @@ def _load_manual_staged_presets(out_dir: Path, manifest_dir: Path) -> list[dict[
     return list(by_id.values())
 
 
+def _normalize_active_position(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    sym = str(raw.get("symbol") or "").strip().upper()
+    if not sym:
+        return None
+    raw_tier = (
+        raw.get("lock_tier") if raw.get("lock_tier") is not None else raw.get("trailing_tier")
+    )
+    return {
+        "symbol": sym,
+        "side": str(raw.get("side") or "LONG").strip().upper(),
+        "lane_account": raw.get("lane_account") or raw.get("account"),
+        "lane_id": raw.get("lane_id"),
+        "venue_profile": raw.get("venue_profile"),
+        "qty": _opt_float(raw.get("qty")),
+        "entry_price": _opt_float(
+            raw.get("entry_price")
+            if raw.get("entry_price") is not None
+            else raw.get("filled_avg_price")
+        ),
+        "active_stop": _opt_float(
+            raw.get("active_stop") if raw.get("active_stop") is not None else raw.get("stop_price")
+        ),
+        "initial_stop": _opt_float(raw.get("initial_stop")),
+        "lock_tier": raw_tier,
+        "session": raw.get("active_session") or raw.get("session") or raw.get("entered_session"),
+        "trailing_schedule": raw.get("trailing_schedule") or raw.get("schedule"),
+        "order_mode": raw.get("order_mode"),
+        "collar_bps": _opt_float(raw.get("collar_bps"), min_val=0.0),
+        "exit_triggered": bool(raw.get("exit_triggered") is True),
+        "reverse_flatten": bool(raw.get("reverse_flatten") is True),
+        "unrealized_pnl": _opt_float(raw.get("unrealized_pnl")),
+    }
+
+
 def _collect_paper_farm_coordination(
-    manifest_dir: Path, bundle: Mapping[str, Any] | None
+    manifest_dir: Path,
+    bundle: Mapping[str, Any] | None,
+    *,
+    out_dir: Path | None = None,
 ) -> dict[str, Any]:
     exec_doc = _read_json_optional(manifest_dir / "paper_farm_execution_status.json")
     perf_doc = _read_json_optional(manifest_dir / "paper_farm_live_performance_manifest.json")
+    auto_doc = _read_json_optional(manifest_dir / "paper_farm_live_auto_entry_status.json")
+    coord_doc: dict[str, Any] = {}
+    coord_candidates: list[Path] = []
+    if out_dir is not None:
+        coord_candidates.append(out_dir / "tv_engine_coordination_manifest.json")
+    coord_candidates.append(manifest_dir / "tv_engine_coordination_manifest.json")
+    for cand in coord_candidates:
+        loaded = _read_json_optional(cand)
+        if loaded:
+            coord_doc = loaded
+            break
     raw_per_lane = perf_doc.get("per_lane")
     per_lane: Mapping[str, Any] = raw_per_lane if isinstance(raw_per_lane, Mapping) else {}
     lane_assignments: dict[str, list[str]] = {}
     for row in (bundle or {}).get("top_potential_symbols", []):
         if isinstance(row, Mapping) and row.get("symbol") and row.get("lane_account"):
             lane_assignments.setdefault(str(row["lane_account"]), []).append(str(row["symbol"]))
+
+    pos_by_sym: dict[str, dict[str, Any]] = {}
+    for container in (exec_doc, coord_doc):
+        for key in ("active_positions", "positions", "guards"):
+            raw_list = container.get(key)
+            if isinstance(raw_list, Sequence) and not isinstance(raw_list, (str, bytes)):
+                for item in raw_list:
+                    if isinstance(item, Mapping):
+                        norm = _normalize_active_position(item)
+                        if norm is not None:
+                            pos_by_sym[norm["symbol"]] = norm
+            elif isinstance(raw_list, Mapping):
+                for sym_k, item in raw_list.items():
+                    if isinstance(item, Mapping):
+                        norm = _normalize_active_position({"symbol": sym_k, **item})
+                        if norm is not None:
+                            pos_by_sym[norm["symbol"]] = norm
+    for sym in exec_doc.get("managed_symbols") or ():
+        s_up = str(sym).strip().upper()
+        if s_up and s_up not in pos_by_sym:
+            pos_by_sym[s_up] = {
+                "symbol": s_up,
+                "side": "MANAGED",
+                "lane_account": None,
+                "lane_id": None,
+                "venue_profile": None,
+                "qty": None,
+                "entry_price": None,
+                "active_stop": None,
+                "initial_stop": None,
+                "lock_tier": None,
+                "session": exec_doc.get("active_session") or auto_doc.get("session"),
+                "trailing_schedule": None,
+                "order_mode": None,
+                "collar_bps": None,
+                "exit_triggered": False,
+                "reverse_flatten": False,
+                "unrealized_pnl": None,
+            }
+    active_positions = [pos_by_sym[k] for k in sorted(pos_by_sym)]
+
+    raw_coord_presets = (
+        coord_doc.get("coordination_decisions")
+        or coord_doc.get("coordinated_presets")
+        or coord_doc.get("presets")
+        or coord_doc.get("staged_presets")
+        or ()
+    )
+    coordinated_presets = [
+        dict(item)
+        for item in (
+            raw_coord_presets
+            if isinstance(raw_coord_presets, Sequence)
+            and not isinstance(raw_coord_presets, (str, bytes))
+            else ()
+        )
+        if isinstance(item, Mapping)
+    ]
+    ready_confirm_n = _opt_int(coord_doc.get("ready_for_operator_confirm_count"), min_val=0)
+    if ready_confirm_n is None:
+        ready_confirm_n = sum(
+            1 for c in coordinated_presets if c.get("ready_for_operator_confirm") is True
+        )
+    blocked_n = _opt_int(coord_doc.get("blocked_count"), min_val=0)
+    if blocked_n is None:
+        blocked_n = max(0, len(coordinated_presets) - ready_confirm_n)
     return {
         "execution_status": exec_doc.get("status"),
+        "active_session": exec_doc.get("active_session") or coord_doc.get("active_session"),
         "managed_symbols": list(exec_doc.get("managed_symbols") or ()),
+        "streams": list(exec_doc.get("streams") or ()),
+        "last_trade_utc": dict(exec_doc.get("last_trade_utc") or {}),
+        "entry_fault": exec_doc.get("entry_fault"),
         "tca_calibration_ok": (
             bool(bundle["tca_calibration_ok"])
             if isinstance(bundle, Mapping) and "tca_calibration_ok" in bundle
-            else None
+            else coord_doc.get("tca_calibration_ok")
         ),
         "paper_live_deployed": perf_doc.get("paper_live_deployed"),
         "accounts_reporting": sorted(str(k) for k in per_lane),
         "lane_assignments": lane_assignments,
+        "active_positions": active_positions,
+        "active_positions_count": len(active_positions),
+        "coordinated_presets": coordinated_presets,
+        "coordinated_presets_count": len(coordinated_presets),
+        "ready_for_operator_confirm_count": ready_confirm_n,
+        "blocked_count": blocked_n,
+        "any_breaker_tripped": bool(coord_doc.get("any_breaker_tripped") is True),
+        "coordination_manifest_present": bool(coord_doc),
+        "coordination_manifest_schema": coord_doc.get("schema_version"),
+        "coordination_generated_at_utc": coord_doc.get("generated_at_utc"),
     }
 
 
@@ -1553,6 +2503,8 @@ def build_tv_compounding_manifest(
     tickets_list = [t for t in doc.get("tickets", []) if isinstance(t, Mapping)]
     standby_list = [s for s in doc.get("standby_presets", []) if isinstance(s, Mapping)]
     all_rows = [*tickets_list, *standby_list]
+    active_sess = str(doc.get("active_session") or "CLOSED")
+    vp = str(doc.get("venue_profile") or resolve_venue_profile(str(doc.get("venue") or "IBKR"))[0])
 
     shas_map: dict[str, str] = dict(pine_shas or {})
     if not shas_map and _REPO_PINE_DIR.is_dir():
@@ -1586,15 +2538,36 @@ def build_tv_compounding_manifest(
         1 for t in tickets_list if str(t.get("action_gate") or "").startswith("READY_HALF_AUTO")
     )
     staged_scan_n = int(doc.get("staged_count") or 0)
+    setup_counts: dict[str, int] = {}
+    for r in all_rows:
+        arch = str(r.get("archetype") or "").strip()
+        if arch:
+            setup_counts[arch] = setup_counts.get(arch, 0) + 1
+    handles_matrix = build_venue_order_handles_matrix(session=active_sess)
+    handles_summary = {
+        k: {
+            "max_rpm": spec["max_rpm"],
+            "entry_modify_rpm_budget": spec["entry_modify_rpm_budget"],
+            "exit_reserve_rpm": spec["exit_reserve_rpm"],
+            "max_concurrent_trailed_positions": spec["max_concurrent_trailed_positions"],
+            "trailing_modify_cadence_secs": spec["trailing_modify_cadence_secs"],
+            "paper_only": spec["paper_only"],
+            "live_execution_enabled": spec["live_execution_enabled"],
+            "executable_now": spec["executable_now"],
+        }
+        for k, spec in handles_matrix.items()
+    }
+    lanes_sum = dict(paper_farm_lanes_summary or {})
     return {
         "schema_version": "tier0.tv-compounding-manifest.v1",
         "generated_at_et": doc.get("generated_at_et"),
         "movers_generated_at_utc": doc.get("movers_generated_at_utc"),
+        "venue_profile": vp,
         "paper_only": True,
         "semi_auto_confirmed": False,
         "live_execution_enabled": False,
         "qty": 1,
-        "active_session": doc.get("active_session", "CLOSED"),
+        "active_session": active_sess,
         "macro_regime": dict(doc.get("macro_regime") or {}),
         "tickets_count": len(tickets_list),
         "ready_tickets_count": ready_n,
@@ -1609,10 +2582,24 @@ def build_tv_compounding_manifest(
         "standby_unusual_vol_count": standby_uv_n,
         "standby_darkpool_hits_count": standby_dp_n,
         "darkpool_trf_covered_count": trf_covered_n,
+        "multi_situation_setup_counts": setup_counts,
+        "venue_order_handles_summary": handles_summary,
+        "active_engine_positions_count": int(lanes_sum.get("active_positions_count") or 0),
+        "coordinated_presets_count": int(lanes_sum.get("coordinated_presets_count") or 0),
+        "engine_coordination_summary": {
+            "execution_status": lanes_sum.get("execution_status"),
+            "coordination_manifest_present": bool(lanes_sum.get("coordination_manifest_present")),
+            "ready_for_operator_confirm_count": int(
+                lanes_sum.get("ready_for_operator_confirm_count") or 0
+            ),
+            "blocked_count": int(lanes_sum.get("blocked_count") or 0),
+            "active_positions_count": int(lanes_sum.get("active_positions_count") or 0),
+            "coordinated_presets_count": int(lanes_sum.get("coordinated_presets_count") or 0),
+        },
         "pin_symbols": list(doc.get("pin_symbols") or ()),
         "pine_omni_sha256": pine_sha,
         "pine_shas": shas_map,
-        "paper_farm_lanes_summary": dict(paper_farm_lanes_summary or {}),
+        "paper_farm_lanes_summary": lanes_sum,
         "artifacts": dict(artifacts or {}),
         "top_symbols": [
             {
@@ -1620,6 +2607,9 @@ def build_tv_compounding_manifest(
                 "tv_symbol": t.get("tv_symbol") or resolve_tv_exchange_symbol(t["symbol"]),
                 "side": t["side"],
                 "archetype": t["archetype"],
+                "recommended_omni_preset": t.get("recommended_omni_preset"),
+                "target_paper_lane": t.get("target_paper_lane") or t.get("paper_lane_account"),
+                "venue_profile": t.get("venue_profile") or vp,
                 "action_gate": t["action_gate"],
                 "order_preset_id": t.get("order_preset_id"),
                 "score": t.get("score"),
@@ -1642,6 +2632,9 @@ def build_tv_compounding_manifest(
                 "tv_symbol": s.get("tv_symbol") or resolve_tv_exchange_symbol(s["symbol"]),
                 "side": s["side"],
                 "archetype": s["archetype"],
+                "recommended_omni_preset": s.get("recommended_omni_preset"),
+                "target_paper_lane": s.get("target_paper_lane") or s.get("paper_lane_account"),
+                "venue_profile": s.get("venue_profile") or vp,
                 "watch_tier": s.get("watch_tier"),
                 "score": s.get("score"),
                 "rvol": s.get("rvol"),
@@ -1663,6 +2656,7 @@ def refresh_tickets_from_paths(
     out_dir: Path,
     bundle_path: Path | None = None,
     venue: str = "IBKR",
+    venue_profile: str | None = None,
     now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Load local mover/bundle manifests and atomically emit full TV SOTA Pack artifacts."""
@@ -1672,11 +2666,14 @@ def refresh_tickets_from_paths(
         if bundle_path is not None and bundle_path.is_file()
         else None
     )
-    vu = venue.strip().upper()
+    vp, vu = resolve_venue_profile(venue, venue_profile=venue_profile)
     manifest_dir = movers_path.parent
     manual_staged = _load_manual_staged_presets(out_dir, manifest_dir)
-    paper_coord = _collect_paper_farm_coordination(manifest_dir, bundle)
-    doc = build_half_auto_tickets(movers, bundle=bundle, venue=vu, now_utc=now_utc)
+    paper_coord = _collect_paper_farm_coordination(manifest_dir, bundle, out_dir=out_dir)
+    doc = build_half_auto_tickets(
+        movers, bundle=bundle, venue=vu, venue_profile=vp, now_utc=now_utc
+    )
+    doc["paper_farm_coordination"] = paper_coord
     if manual_staged:
         doc["manual_staged_presets"] = manual_staged
 
@@ -1686,7 +2683,16 @@ def refresh_tickets_from_paths(
         # Replace only the scanner-owned snapshot; manual/Pine intake has its own history.
         presets: list[dict[str, Any]] = []
         meta_by_id: dict[str, dict[str, Any]] = {}
+        macro_regime_int = int((doc.get("macro_regime") or {}).get("regime", 0))
         for t in doc["tickets"]:
+            if str(t.get("action_gate") or "").startswith("HOLD"):
+                continue
+            if (
+                t["side"] == "SELL"
+                and macro_regime_int != -1
+                and t.get("peak_confirmed") is not True
+            ):
+                continue
             if t["side"] != "SELL" or (
                 t["easy_to_borrow"]
                 and t["shortable"]
@@ -1702,6 +2708,7 @@ def refresh_tickets_from_paths(
                     "archetype": t.get("archetype"),
                     "pair_symbol": t.get("pair_symbol"),
                     "order_preset_id": t.get("order_preset_id"),
+                    "venue_profile": t.get("venue_profile") or vp,
                 }
         doc["staged_count"] = len(presets)
         _atomic_write_text(
@@ -1710,6 +2717,7 @@ def refresh_tickets_from_paths(
                 {
                     "schema_version": "tier0.staged-tv-presets.v1",
                     "scan_generated_at_utc": movers["generated_at_utc"],
+                    "venue_profile": vp,
                     "semi_auto_confirmed": False,
                     "presets": presets,
                 },
@@ -1732,7 +2740,9 @@ def refresh_tickets_from_paths(
     pine_shas = sync_pine_scripts_to_pack(out_dir)
     audit_summary = load_tv_audit_summary(audit_db_path)
 
-    order_presets = build_tv_order_presets(doc, manual_staged_presets=manual_staged)
+    order_presets = build_tv_order_presets(
+        doc, manual_staged_presets=manual_staged, paper_coordination=paper_coord
+    )
     _atomic_write_text(out_dir / "live_half_auto_tickets.json", json.dumps(doc, indent=2) + "\n")
     _atomic_write_text(out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md", render_tickets_markdown(doc))
     _atomic_write_text(
@@ -1795,15 +2805,41 @@ def main() -> None:
     p.add_argument("--manifest-dir", type=Path, default=DEFAULT_MANIFEST_DIR)
     p.add_argument("--out-dir", type=Path, default=DEFAULT_MANIFEST_DIR / "tv_sota_pack")
     p.add_argument("--venue", default="IBKR")
+    p.add_argument(
+        "--venue-profile",
+        default=None,
+        choices=sorted(ALL_TV_VENUE_PROFILES),
+        help="Optional explicit venue profile (e.g. IBKR_PAPER_4002, ALPACA_PAPER_1000).",
+    )
+    p.add_argument(
+        "--show-handles",
+        action="store_true",
+        help="Print 1000rpm/3000rpm Venue Order-Handle budgets as JSON and exit.",
+    )
     a = p.parse_args()
+    if a.show_handles:
+        sess = current_et_session(datetime.now(UTC).astimezone(NY_TZ))
+        alp_vp = (
+            a.venue_profile
+            if a.venue_profile in {"ALPACA_PAPER_200", "ALPACA_PAPER_1000"}
+            else None
+        )
+        print(
+            json.dumps(
+                build_venue_order_handles(alpaca_venue_profile=alp_vp, session=sess), indent=2
+            )
+        )
+        return
     doc = refresh_tickets_from_paths(
         movers_path=a.manifest_dir / "live_whole_market_movers_manifest.json",
         bundle_path=a.manifest_dir / "live_lane_order_preset_bundle.json",
         out_dir=a.out_dir,
         venue=a.venue,
+        venue_profile=a.venue_profile,
     )
     print(
         f"HALF_AUTO_REFRESH_OK=1 SESSION={doc['active_session']} "
+        f"VENUE_PROFILE={doc['venue_profile']} "
         f"TICKETS={len(doc['tickets'])} STANDBY={len(doc.get('standby_presets', []))} "
         f"SCHEMA_OK={doc['schema_validated_count']}"
     )

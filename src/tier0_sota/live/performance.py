@@ -22,6 +22,7 @@ from opentelemetry.sdk.metrics.export import (
 from opentelemetry.sdk.resources import Resource
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 
+from tier0_sota import engine as eng
 from tier0_sota.live.paper_farm import (
     ALPACA_LANE_PROFILES,
     IBKR_PAPER_ACCOUNT,
@@ -199,6 +200,8 @@ def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
     compounding_doc = _read_json_safe(pack_dir / "tv_compounding_manifest.json")
     movers_doc = _read_json_safe(manifest_dir / "live_whole_market_movers_manifest.json")
     cockpit_doc = _read_json_safe(pack_dir / "finos_tv_cockpit.json")
+    coord_doc = _read_json_safe(pack_dir / "tv_engine_coordination_manifest.json")
+    exec_doc = _read_json_safe(manifest_dir / "paper_farm_execution_status.json")
     scan_presets_doc = _read_json_safe(pack_dir / "staged_scan_presets.json")
     manual_presets_doc = _read_json_safe(pack_dir / "staged_tv_presets.json") or _read_json_safe(
         manifest_dir / "staged_tv_presets.json"
@@ -312,6 +315,14 @@ def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
         if isinstance(cockpit_doc.get("openbb_rows"), list)
         else top_symbols
     )
+    active_pos_raw = exec_doc.get("active_positions") or coord_doc.get("active_positions")
+    active_positions = (
+        [p for p in active_pos_raw if isinstance(p, dict)]
+        if isinstance(active_pos_raw, list)
+        else []
+    )
+    venue_handles_raw = coord_doc.get("venue_order_handles") or exec_doc.get("venue_order_handles")
+    venue_order_handles = dict(venue_handles_raw) if isinstance(venue_handles_raw, dict) else {}
     return {
         "schema_version": "tier0.tv-half-auto-telemetry.v1",
         "semi_auto_confirmed": False,
@@ -342,6 +353,13 @@ def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
         "pine_shas": pine_shas,
         "order_presets_present": (pack_dir / "tv_order_presets.json").is_file(),
         "finos_tv_cockpit_present": bool(cockpit_doc),
+        "coordination_present": bool(coord_doc),
+        "coordination_evaluated_count": int(coord_doc.get("staged_alerts_evaluated") or 0),
+        "coordination_ready_count": int(coord_doc.get("ready_for_operator_confirm_count") or 0),
+        "coordination_blocked_count": int(coord_doc.get("blocked_count") or 0),
+        "active_trailed_positions": active_positions,
+        "active_trailed_positions_count": len(active_positions),
+        "venue_order_handles": venue_order_handles,
         "top_symbols": top_symbols,
         "tv_openbb_rows": cockpit_rows,
         "generated_at_et": tickets_doc.get("generated_at_et")
@@ -661,6 +679,8 @@ def build_finos_openbb_export(
         },
         "openbb_rows": [per_lane[a] for a in accts],
         "tv_openbb_rows": list((tv_half_auto or {}).get("tv_openbb_rows") or []),
+        "active_positions": list((tv_half_auto or {}).get("active_trailed_positions") or []),
+        "venue_order_handles": dict((tv_half_auto or {}).get("venue_order_handles") or {}),
         "summary": summary,
         "tca_summary": tca_summary or {},
         "tv_half_auto": tv_half_auto or {},
@@ -844,6 +864,47 @@ def export_prometheus_metrics(
         "Causal SPY/QQQ/SOXX/RSP market regime (-1 crash, 0 neutral, +1 bull)",
         registry=reg,
     ).set(float(tv_doc.get("macro_regime") or 0))
+    Gauge(
+        "tier0_tv_engine_coordination_evaluated_count",
+        "Staged TradingView presets evaluated against Paper Farm & Nautilus SANDBOX parity",
+        registry=reg,
+    ).set(float(tv_doc.get("coordination_evaluated_count") or 0))
+    Gauge(
+        "tier0_tv_engine_coordination_ready_count",
+        "Staged TradingView presets ready for manual operator confirmation (semi_auto=false)",
+        registry=reg,
+    ).set(float(tv_doc.get("coordination_ready_count") or 0))
+    Gauge(
+        "tier0_paper_farm_active_trailed_positions",
+        "Active trailed positions managed across Paper Farm guards",
+        registry=reg,
+    ).set(float(tv_doc.get("active_trailed_positions_count") or 0))
+
+    v_handles = tv_doc.get("venue_order_handles")
+    venues_map: dict[str, dict[str, Any]] = (
+        {str(k): v for k, v in v_handles["venues"].items() if isinstance(v, dict)}
+        if isinstance(v_handles, dict) and isinstance(v_handles.get("venues"), dict)
+        else {}
+    )
+    if not venues_map:
+        active_sess = str(tv_doc.get("active_session") or "RTH")
+        for vp in ("IBKR_PAPER_4002", "ALPACA_PAPER_200", "ALPACA_PAPER_1000"):
+            venues_map[vp] = eng.build_venue_order_handle_spec(vp, session=active_sess)
+    g_vh_max = Gauge(
+        "tier0_venue_order_handle_max_rpm",
+        "Configured venue order-handle maximum requests per minute",
+        ("venue_profile",),
+        registry=reg,
+    )
+    g_vh_res = Gauge(
+        "tier0_venue_order_handle_exit_reserve_rpm",
+        "Configured venue order-handle >=10% protective exit reserve RPM",
+        ("venue_profile",),
+        registry=reg,
+    )
+    for vp, spec in venues_map.items():
+        g_vh_max.labels(vp).set(float(spec.get("max_rpm") or 0))
+        g_vh_res.labels(vp).set(float(spec.get("exit_reserve_rpm") or 0))
 
     prom_text = generate_latest(reg).decode("utf-8")
     if output_path is not None:
@@ -960,6 +1021,35 @@ def record_otel_metrics(
         meter.create_gauge("tier0.scanner.macro_regime", unit="").set(
             float(tv_doc.get("macro_regime") or 0), tv_attrs
         )
+        meter.create_gauge("tier0.tv_engine_coordination.evaluated_count", unit="").set(
+            float(tv_doc.get("coordination_evaluated_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_engine_coordination.ready_count", unit="").set(
+            float(tv_doc.get("coordination_ready_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.paper_farm.active_trailed_positions", unit="").set(
+            float(tv_doc.get("active_trailed_positions_count") or 0), sum_attrs
+        )
+        v_handles = tv_doc.get("venue_order_handles")
+        venues_map: dict[str, dict[str, Any]] = (
+            {str(k): v for k, v in v_handles["venues"].items() if isinstance(v, dict)}
+            if isinstance(v_handles, dict) and isinstance(v_handles.get("venues"), dict)
+            else {}
+        )
+        if not venues_map:
+            active_sess = str(tv_doc.get("active_session") or "RTH")
+            for vp in ("IBKR_PAPER_4002", "ALPACA_PAPER_200", "ALPACA_PAPER_1000"):
+                venues_map[vp] = eng.build_venue_order_handle_spec(vp, session=active_sess)
+        g_vh_max_ot = meter.create_gauge("tier0.venue_order_handle.max_rpm", unit="")
+        g_vh_res_ot = meter.create_gauge("tier0.venue_order_handle.exit_reserve_rpm", unit="")
+        for vp, spec in venues_map.items():
+            vp_attrs = {
+                "venue_profile": vp,
+                "broker": str(spec.get("broker") or ""),
+                "environment": str(spec.get("environment") or ""),
+            }
+            g_vh_max_ot.set(float(spec.get("max_rpm") or 0), vp_attrs)
+            g_vh_res_ot.set(float(spec.get("exit_reserve_rpm") or 0), vp_attrs)
 
         recorded_names: list[str] = []
         point_count = 0

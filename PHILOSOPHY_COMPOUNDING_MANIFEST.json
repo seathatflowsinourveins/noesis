@@ -113,7 +113,26 @@
       "broker_sdk": "alpaca-py==0.45.0",
       "schema_validation": "pydantic>=2.10.0",
       "tv_alert_model": "TvAlertV1",
+      "venue_order_handle_contract": "tier0.venue-order-handle.v1",
+      "venue_order_handle_profiles": {
+        "IBKR_PAPER_4002": {"max_rpm": 3000, "max_rps": 50, "exit_reserve_min_pct": 0.10, "paper_only": true},
+        "ALPACA_PAPER_1000": {"max_rpm": 1000, "max_rps": 25, "exit_reserve_min_pct": 0.10, "paper_only": true},
+        "ALPACA_PAPER_200": {"max_rpm": 200, "max_rps": 10, "exit_reserve_min_pct": 0.10, "paper_only": true},
+        "ALPACA_LIVE_PRO_LINE_1000": {"max_rpm": 1000, "max_rps": 25, "exit_reserve_min_pct": 0.10, "stage5_parity_only": true, "live_execution_enabled": false}
+      },
+      "multi_situation_setups": [
+        "EARLY_EP_MOMENTUM_BURST",
+        "VCP_BREAKOUT",
+        "VCP_COIL",
+        "PEAD_DRIFT",
+        "EXHAUSTION_HAMMER",
+        "HIDDEN_VOL_ACCUM",
+        "PARABOLIC_TOP",
+        "PEAK_REVERSAL",
+        "CRASH_ALIGNMENT"
+      ],
       "tv_order_preset_contract": "tier0.tv-order-presets.v1",
+      "tv_engine_coordination_contract": "tier0.tv-engine-coordination.v1",
       "finos_tv_cockpit_contract": "tier0.finos-openbb-tv-cockpit.v1",
       "tv_compounding_manifest_contract": "tier0.tv-compounding-manifest.v1",
       "pine_v6_suite": [
@@ -123,8 +142,11 @@
         "pine/tier0_darkpool_uv_buildup.pine"
       ],
       "modules": [
+        "src/tier0_sota/engine.py",
         "src/tier0_sota/live/scanner.py",
         "src/tier0_sota/live/paper_farm.py",
+        "src/tier0_sota/live/execution.py",
+        "src/tier0_sota/live/runner.py",
         "src/tier0_sota/live/performance.py",
         "src/tier0_sota/tv/bridge.py",
         "src/tier0_sota/tv/tickets.py"
@@ -232,6 +254,7 @@
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_order_presets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\TV_ORDER_PRESET_CARDS.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_engine_coordination_manifest.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\finos_tv_cockpit.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_scan_presets.json",
@@ -246,6 +269,7 @@
       ],
       "e2e_verification_gates": [
         "just test tests/test_tv_automation.py",
+        "just tv-land",
         "just adr-check",
         "just mcp-smoke",
         "just ast"

@@ -81,6 +81,7 @@
     ],
     "allowed_paper_venues": [
       "IBKR_PAPER_4002",
+      "ALPACA_PAPER_1000",
       "ALPACA_PAPER_200"
     ]
   },
@@ -341,7 +342,7 @@
     },
     "fitness_bound_accepted_ratio": "23/23",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "7373b09a6f4c8ab26b9676043e9380be2631f3eb7cd3aa144bdac82d55c82353"
+    "corpus_sha256": "1f88bfd0da33b58e3f342068434ce9c9d3cba083d0b46487c166ca3a39fe4a33"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -465,7 +466,9 @@
         "src/tier0_sota/engine.py",
         "src/tier0_sota/risk.py",
         "pine/tier0_omni_sota_24x5.pine",
-        "pine/tier0_market_regime.pine"
+        "pine/tier0_sota_strategy_24x5.pine",
+        "pine/tier0_market_regime.pine",
+        "pine/tier0_darkpool_uv_buildup.pine"
       ]
     },
     "L4": {
@@ -555,6 +558,7 @@
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
         "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
         "docs/POST_RESTART_RESUME_PLAYBOOK.md",
+        "docs/TV_AUTOMATION_PLAYBOOK.md",
         "docker/compose.sota.yml",
         "docker/otel-collector-config.yaml",
         "docker/prometheus.yml",

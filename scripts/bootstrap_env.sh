@@ -10,7 +10,22 @@ case "$(uname -s 2>/dev/null || true)" in
   MINGW*|MSYS*|CYGWIN*) IS_WIN_BASH=1 ;;
 esac
 
-if [[ "$IS_WIN_BASH" -eq 1 || "$PWD" == /mnt/* ]]; then
+IS_WSL=0
+if [[ "$IS_WIN_BASH" -eq 0 ]] && { [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/version 2>/dev/null; }; then
+  IS_WSL=1
+fi
+
+if [[ "$IS_WSL" -eq 1 && "$PWD" == /mnt/* ]]; then
+  # Keep WSL2 Python venv and caches on native Linux ext4 so WSL2 uv never contaminates Windows .venv on /mnt/z.
+  export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$HOME/noesis/.venv}"
+  mkdir -p "$(dirname "$UV_PROJECT_ENVIRONMENT")" "$HOME/.cache/uv" "$HOME/.local/share/uv/python" 2>/dev/null || true
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$HOME/.cache/uv}"
+  export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$HOME/.local/share/uv/python}"
+  export UV_LINK_MODE="${UV_LINK_MODE:-hardlink}"
+elif [[ "$IS_WIN_BASH" -eq 0 && -f ".venv/Scripts/python.exe" && ! -x ".venv/bin/python" && -z "${UV_PROJECT_ENVIRONMENT:-}" ]]; then
+  export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"
+  mkdir -p "$(dirname "$UV_PROJECT_ENVIRONMENT")" 2>/dev/null || true
+elif [[ "$IS_WIN_BASH" -eq 1 || "$PWD" == /mnt/* ]]; then
   for uv_cache in "/mnt/z/sota-cache/uv" "/z/sota-cache/uv"; do
     if [[ -d "$uv_cache" ]]; then
       export UV_CACHE_DIR="${UV_CACHE_DIR:-$uv_cache}"
@@ -97,16 +112,24 @@ _apply_tier0_runtime_defaults()
 """
     target.write_text(code, encoding="utf-8", newline="\n")
 
-import nautilus_trader  # noqa: E402
-import hftbacktest  # noqa: E402
-import polars  # noqa: E402
-import duckdb  # noqa: E402
 import alpaca  # noqa: E402
-import skfolio  # noqa: E402
+import duckdb  # noqa: E402
+import hftbacktest  # noqa: E402
 import ml4t.diagnostic  # noqa: E402
 import ml4t.engineer  # noqa: E402
+import nautilus_trader  # noqa: E402
+import polars  # noqa: E402
+import pydantic  # noqa: E402
+import skfolio  # noqa: E402
 
-print(f"python={sys.version.split()[0]} nautilus={nautilus_trader.__version__} polars={polars.__version__}")
+assert (purelib / "sitecustomize.py").is_file(), "sitecustomize.py missing from purelib"
+if pathlib.Path("src/tier0_sota/__init__.py").is_file():
+    import tier0_sota  # noqa: E402, F401
+
+print(
+    f"python={sys.version.split()[0]} nautilus={nautilus_trader.__version__} "
+    f"polars={polars.__version__} duckdb={duckdb.__version__} pydantic={pydantic.__version__}"
+)
 PYEOF
 
 echo "[BOOTSTRAP-SH OK] $PWD"

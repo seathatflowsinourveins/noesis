@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -31,9 +31,59 @@ from tier0_sota import risk as rk
 PAPER_ALPACA_ENDPOINT = "https://paper-api.alpaca.markets"
 IBKR_PAPER_ACCOUNT = "IBKR_DU_4002"
 IBKR_PAPER_MAX_RPM = 3000
+ALPACA_PAPER_DEFAULT_MAX_RPM = 200
+ALPACA_PAPER_PRO_LINE_MAX_RPM = 1000
 RTH_ENTRY_COLLAR_PCT = Decimal("0.0005")
 MAX_RTH_ENTRY_COLLAR_PCT = Decimal("0.0010")
 _NY_TZ = ZoneInfo("America/New_York")
+
+
+def resolve_alpaca_paper_venue_profile(
+    rate_budget_max_rpm: int | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> tuple[str, int]:
+    """Resolve Alpaca Paper venue profile (ALPACA_PAPER_200 / ALPACA_PAPER_1000) fail-closed."""
+    if rate_budget_max_rpm is not None:
+        if (
+            isinstance(rate_budget_max_rpm, bool)
+            or not isinstance(rate_budget_max_rpm, int)
+            or not (1 <= rate_budget_max_rpm <= ALPACA_PAPER_PRO_LINE_MAX_RPM)
+        ):
+            raise ValueError(
+                f"rate_budget_max_rpm out of [1, {ALPACA_PAPER_PRO_LINE_MAX_RPM}]: "
+                f"{rate_budget_max_rpm!r}"
+            )
+        vp = (
+            "ALPACA_PAPER_1000"
+            if rate_budget_max_rpm > ALPACA_PAPER_DEFAULT_MAX_RPM
+            else "ALPACA_PAPER_200"
+        )
+        return vp, rate_budget_max_rpm
+
+    source = os.environ if env is None else env
+    raw = str(source.get("TIER0_ALPACA_RPM", "")).strip().upper()
+    if not raw:
+        return "ALPACA_PAPER_200", ALPACA_PAPER_DEFAULT_MAX_RPM
+    if raw == "ALPACA_PAPER_1000":
+        return "ALPACA_PAPER_1000", ALPACA_PAPER_PRO_LINE_MAX_RPM
+    if raw == "ALPACA_PAPER_200":
+        return "ALPACA_PAPER_200", ALPACA_PAPER_DEFAULT_MAX_RPM
+    try:
+        rpm = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid TIER0_ALPACA_RPM={raw!r}; expected integer 1..1000") from exc
+    if not (1 <= rpm <= ALPACA_PAPER_PRO_LINE_MAX_RPM):
+        raise ValueError(
+            f"TIER0_ALPACA_RPM={rpm} out of bounds [1, {ALPACA_PAPER_PRO_LINE_MAX_RPM}]"
+        )
+    vp = "ALPACA_PAPER_1000" if rpm > ALPACA_PAPER_DEFAULT_MAX_RPM else "ALPACA_PAPER_200"
+    return vp, rpm
+
+
+def _default_alpaca_rate_budget() -> rk.ProtectiveExitRateBudget:
+    _, rpm = resolve_alpaca_paper_venue_profile()
+    return rk.ProtectiveExitRateBudget(rpm, rk.MIN_EXIT_RATE_RESERVE_FRACTION)
 
 
 def _assert_paper_trading_client(client: Any) -> None:
@@ -767,9 +817,7 @@ class AlpacaPaperLane:
     paper_only: bool = True
     live_execution_enabled: bool = False
     start_equity: Decimal = Decimal("100000")
-    rate_budget: rk.ProtectiveExitRateBudget = field(
-        default_factory=lambda: rk.ProtectiveExitRateBudget(200, Decimal("0.10"))
-    )
+    rate_budget: rk.ProtectiveExitRateBudget = field(default_factory=_default_alpaca_rate_budget)
     breaker: rk.DailyDrawdownBreaker = field(init=False)
     _budget_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _batch_conn: duckdb.DuckDBPyConnection | None = field(default=None, init=False, repr=False)
@@ -787,6 +835,7 @@ class AlpacaPaperLane:
             "extended_hours_protected": 0,
         }
     )
+    venue_profile: str = ""
 
     def __post_init__(self) -> None:
         if self.account not in ALPACA_LANE_PROFILES:
@@ -794,8 +843,51 @@ class AlpacaPaperLane:
         if not self.paper_only or self.live_execution_enabled:
             raise PermissionError("Refused non-paper execution; paper_only=True required.")
         _assert_paper_trading_client(self.trading_client)
-        eng.validate_venue_order_capability("ALPACA_PAPER_200")
+        explicit_vp = self.venue_profile.strip().upper()
+        if explicit_vp:
+            prof = eng.validate_venue_order_capability(explicit_vp)
+            if prof.broker != "ALPACA":
+                raise ValueError(
+                    f"AlpacaPaperLane requires an ALPACA paper venue profile, got {explicit_vp!r}"
+                )
+            if (
+                prof.venue_id == "ALPACA_PAPER_1000"
+                and self.rate_budget.max_rpm == ALPACA_PAPER_DEFAULT_MAX_RPM
+            ):
+                self.rate_budget = rk.ProtectiveExitRateBudget(
+                    prof.max_rpm, prof.min_exit_reserve_fraction
+                )
+            elif self.rate_budget.max_rpm > prof.max_rpm:
+                eng.validate_venue_order_capability(
+                    explicit_vp, requested_rpm=self.rate_budget.max_rpm
+                )
+            self.venue_profile = prof.venue_id
+        else:
+            inferred_vp = (
+                "ALPACA_PAPER_1000"
+                if self.rate_budget.max_rpm > ALPACA_PAPER_DEFAULT_MAX_RPM
+                else "ALPACA_PAPER_200"
+            )
+            eng.validate_venue_order_capability(inferred_vp, requested_rpm=self.rate_budget.max_rpm)
+            self.venue_profile = inferred_vp
         self.breaker = rk.DailyDrawdownBreaker(start_equity=self.start_equity)
+
+    def order_handle_spec(
+        self, session: str = "RTH", trailing_schedule: str = "baseline"
+    ) -> dict[str, Any]:
+        """Return deterministic SOTA venue order-handle spec bound to this lane's rate budget."""
+        spec = eng.build_venue_order_handle_spec(
+            self.venue_profile, session=session, trailing_schedule=trailing_schedule
+        )
+        eff_rpm = self.rate_budget.max_rpm
+        eff_exit = self.rate_budget.exit_reserve_rpm
+        return spec | {
+            "account": self.account,
+            "lane_id": self.profile["lane_id"],
+            "effective_max_rpm": eff_rpm,
+            "effective_exit_reserve_rpm": eff_exit,
+            "effective_entry_modify_rpm_budget": eff_rpm - eff_exit,
+        }
 
     @property
     def profile(self) -> dict[str, Any]:
@@ -1484,6 +1576,10 @@ class AlpacaPaperLane:
             "generated_at_utc": datetime.now(UTC).isoformat(),
             "account_alias": self.account,
             "lane_id": self.profile["lane_id"],
+            "venue_profile": self.venue_profile,
+            "rate_budget_max_rpm": self.rate_budget.max_rpm,
+            "exit_reserve_rpm": self.rate_budget.exit_reserve_rpm,
+            "entry_modify_rpm_budget": self.rate_budget.max_rpm - self.rate_budget.exit_reserve_rpm,
             "endpoint": PAPER_ALPACA_ENDPOINT,
             "paper_only": True,
             "live_execution_enabled": False,
@@ -1688,6 +1784,23 @@ class IbkrPaperAdapter:
         persist_tca_record_duckdb(self.duckdb_path, record)
         return record
 
+    def order_handle_spec(
+        self, session: str = "RTH", trailing_schedule: str = "baseline"
+    ) -> dict[str, Any]:
+        """Return deterministic SOTA IBKR :4002 3000rpm 24/5 venue order-handle spec."""
+        spec = eng.build_venue_order_handle_spec(
+            "IBKR_PAPER_4002", session=session, trailing_schedule=trailing_schedule
+        )
+        eff_rpm = self.rate_budget.max_rpm
+        eff_exit = self.rate_budget.exit_reserve_rpm
+        return spec | {
+            "account": IBKR_PAPER_ACCOUNT,
+            "lane_id": "IBKR_SMART_24X5",
+            "effective_max_rpm": eff_rpm,
+            "effective_exit_reserve_rpm": eff_exit,
+            "effective_entry_modify_rpm_budget": eff_rpm - eff_exit,
+        }
+
     def write_status(
         self,
         *,
@@ -1700,6 +1813,7 @@ class IbkrPaperAdapter:
             "generated_at_utc": datetime.now(UTC).isoformat(),
             "account_alias": IBKR_PAPER_ACCOUNT,
             "lane_id": "IBKR_SMART_24X5",
+            "venue_profile": "IBKR_PAPER_4002",
             "endpoint": f"ibkr://127.0.0.1:{self.port}",
             "paper_only": True,
             "live_execution_enabled": False,
@@ -1709,6 +1823,7 @@ class IbkrPaperAdapter:
             "daily_drawdown_pct": 0.0,
             "rate_budget_max_rpm": self.rate_budget_max_rpm,
             "exit_reserve_rpm": self.rate_budget.exit_reserve_rpm,
+            "entry_modify_rpm_budget": self.rate_budget.max_rpm - self.rate_budget.exit_reserve_rpm,
             "orders_submitted": 0,
             "fills": 0,
             "auto_shorts": 0,
@@ -1732,10 +1847,14 @@ class PaperFarmCoordinator:
         alpaca_clients: dict[str, Any] | None = None,
         data_client: Any | None = None,
         ibkr_port: int = 4002,
+        alpaca_rate_budget_max_rpm: int | None = None,
     ) -> None:
         self.manifest_dir = manifest_dir
         self.symbol_lock = CrossLaneSymbolLock()
         self.data_client = data_client
+        self.alpaca_venue_profile, self.alpaca_max_rpm = resolve_alpaca_paper_venue_profile(
+            alpaca_rate_budget_max_rpm
+        )
         self.lanes: dict[str, AlpacaPaperLane] = {}
         for acct in ALPACA_LANE_PROFILES:
             client = (alpaca_clients or {}).get(acct)
@@ -1754,10 +1873,62 @@ class PaperFarmCoordinator:
                     manifest_dir=manifest_dir,
                     trading_client=client,
                     symbol_lock=self.symbol_lock,
+                    rate_budget=rk.ProtectiveExitRateBudget(
+                        self.alpaca_max_rpm, rk.MIN_EXIT_RATE_RESERVE_FRACTION
+                    ),
+                    venue_profile=self.alpaca_venue_profile,
                 )
         self.ibkr = IbkrPaperAdapter(
             manifest_dir=manifest_dir, port=ibkr_port, symbol_lock=self.symbol_lock
         )
+
+    def venue_order_handles(
+        self, session: str = "RTH", trailing_schedule: str = "baseline"
+    ) -> dict[str, Any]:
+        """Return unified SOTA 1000rpm/3000rpm Paper Farm venue order-handle specs & budgets."""
+        per_account: dict[str, dict[str, Any]] = {
+            acct: lane.order_handle_spec(session=session, trailing_schedule=trailing_schedule)
+            for acct, lane in self.lanes.items()
+        }
+        per_account[IBKR_PAPER_ACCOUNT] = self.ibkr.order_handle_spec(
+            session=session, trailing_schedule=trailing_schedule
+        )
+        combined_max_rpm = self.ibkr.rate_budget.max_rpm + sum(
+            lane.rate_budget.max_rpm for lane in self.lanes.values()
+        )
+        combined_exit_reserve_rpm = self.ibkr.rate_budget.exit_reserve_rpm + sum(
+            lane.rate_budget.exit_reserve_rpm for lane in self.lanes.values()
+        )
+        return {
+            "schema_version": "tier0.paper-farm-venue-handles.v1",
+            "session": session,
+            "trailing_schedule": trailing_schedule,
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "alpaca_venue_profile": self.alpaca_venue_profile,
+            "alpaca_per_lane_max_rpm": self.alpaca_max_rpm,
+            "ibkr_venue_profile": "IBKR_PAPER_4002",
+            "combined_max_rpm": combined_max_rpm,
+            "combined_exit_reserve_rpm": combined_exit_reserve_rpm,
+            "combined_entry_modify_rpm_budget": combined_max_rpm - combined_exit_reserve_rpm,
+            "venues": {
+                "IBKR_PAPER_4002": eng.build_venue_order_handle_spec(
+                    "IBKR_PAPER_4002", session=session, trailing_schedule=trailing_schedule
+                ),
+                "ALPACA_PAPER_200": eng.build_venue_order_handle_spec(
+                    "ALPACA_PAPER_200", session=session, trailing_schedule=trailing_schedule
+                ),
+                "ALPACA_PAPER_1000": eng.build_venue_order_handle_spec(
+                    "ALPACA_PAPER_1000", session=session, trailing_schedule=trailing_schedule
+                ),
+                "ALPACA_LIVE_PRO_LINE_1000": eng.build_venue_order_handle_spec(
+                    "ALPACA_LIVE_PRO_LINE_1000",
+                    session=session,
+                    trailing_schedule=trailing_schedule,
+                ),
+            },
+            "per_account": per_account,
+        }
 
     def sync_all_lanes(
         self, *, account: str = "ALL", limit: int = 100, ibkr_gateway_ready: bool = False

@@ -270,6 +270,14 @@ probe_all_portals() {
             pnote="health_ok=true"
           fi
           ;;
+        openbb-backend)
+          local obb_widgets
+          obb_widgets="$(curl -sS -m 3 http://127.0.0.1:6900/widgets.json 2>/dev/null | jq -r 'if type=="object" then length else 0 end' 2>/dev/null || echo "0")"
+          if [[ ! "$obb_widgets" =~ ^[0-9]+$ || "$obb_widgets" -lt 10 ]]; then
+            pok="false"
+          fi
+          pnote="widgets=${obb_widgets}"
+          ;;
       esac
     else
       pnote="http_code=${code}"

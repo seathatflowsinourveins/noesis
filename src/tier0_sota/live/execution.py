@@ -131,6 +131,43 @@ class Guard:
     checked: float = 0
     last_exit_check: float = 0
     reverse_flatten: bool = False
+    lock_tier: int = 0
+    trailing_schedule: str = ""
+
+    def to_position_snapshot(self, session: str) -> dict[str, Any]:
+        """Serialize active trailed Paper Farm guard for TV cockpit & FINOS/OpenBB sync."""
+        sched_name, schedule = engine.select_pooled_trailing_schedule(self.natr)
+        prof = engine.get_session_protection_profile(session, schedule)
+        filled_qty_raw = getattr(self.parent, "filled_qty", None) or "0"
+        filled_avg_raw = getattr(self.parent, "filled_avg_price", None)
+        entry_px = (
+            float(Decimal(str(filled_avg_raw)))
+            if filled_avg_raw not in (None, "", "0", 0)
+            else None
+        )
+        return {
+            "symbol": self.symbol,
+            "account": self.lane.account,
+            "lane_id": self.lane.profile["lane_id"],
+            "venue_profile": self.lane.venue_profile,
+            "side": self.side,
+            "qty": float(Decimal(str(filled_qty_raw))),
+            "entry_price": entry_px,
+            "initial_stop": float(self.initial),
+            "active_stop": float(self.stop),
+            "natr_pct": float(self.natr),
+            "entered_session": self.entered_session,
+            "active_session": session,
+            "trailing_schedule": self.trailing_schedule or sched_name,
+            "lock_tier": int(self.lock_tier),
+            "order_mode": prof.order_mode,
+            "collar_bps": float(prof.limit_collar_bps),
+            "outside_rth": bool(prof.outside_rth),
+            "exit_triggered": bool(self.triggered),
+            "reverse_flatten": bool(self.reverse_flatten),
+            "client_order_id": self.client_id,
+            "broker_order_id": str(getattr(self.parent, "id", "") or ""),
+        }
 
     def save(self) -> None:
         with open_bounded_duckdb(self.lane.duckdb_path) as db:
@@ -177,12 +214,13 @@ class Guard:
         native = session == "RTH" and self.child and self.child.status.value in {"new", "accepted"}
         if not filled and not breached and not force_exit:
             return
-        _, schedule = engine.select_pooled_trailing_schedule(self.natr)
+        sched_name, schedule = engine.select_pooled_trailing_schedule(self.natr)
+        self.trailing_schedule = sched_name
         profile = engine.get_session_protection_profile(session, schedule)
         if not breached and not self.triggered and not force_exit:
             if not self.parent.filled_avg_price:
                 return
-            desired, _, _ = engine.compute_progressive_trailing_stop(
+            desired, tier, _ = engine.compute_progressive_trailing_stop(
                 entry_price=Decimal(self.parent.filled_avg_price),
                 side=self.side,
                 favorable_extreme=price,
@@ -191,6 +229,7 @@ class Guard:
                 natr_pct=self.natr,
                 profile=profile,
             )
+            self.lock_tier = max(self.lock_tier, int(tier))
             if desired == self.stop and (not native or Decimal(self.child.stop_price) == desired):
                 return
             if native:
@@ -437,14 +476,20 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
         if status == previous_status and time.monotonic() - last_report < 30:
             return
         previous_status, last_report = status, time.monotonic()
+        curr_sess = engine.classify_us_equity_session_et(time.time_ns())
+        active_positions = [guards[s].to_position_snapshot(curr_sess) for s in sorted(guards)]
         _atomic_write_json(
             state_path,
             {
                 "generated_at_utc": datetime.now(UTC).isoformat(),
                 "status": status,
+                "active_session": curr_sess,
                 "paper_only": True,
                 "live_execution_enabled": False,
                 "managed_symbols": sorted(guards),
+                "active_positions": active_positions,
+                "active_positions_count": len(active_positions),
+                "venue_order_handles": farm.venue_order_handles(session=curr_sess),
                 "streams": ["sip", "boats"],
                 "last_trade_utc": {
                     feed.value: ts.isoformat() for feed, ts in last_feed_trade.items()
@@ -864,6 +909,12 @@ def submit_confirmed_tv_preset_paper(
     if raw_preset.get("semi_auto_confirmed") is not False:
         raise PermissionError("Staged TV preset must retain semi_auto_confirmed=False")
     refuse_live_endpoints(raw_preset)
+    if req_vp := str(raw_preset.get("venue_profile") or "").strip().upper():
+        req_prof = engine.validate_venue_order_capability(req_vp)
+        if req_prof.broker != "ALPACA":
+            raise ValueError(
+                f"Alpaca paper TV handoff requires ALPACA paper venue profile, got {req_vp!r}"
+            )
 
     now = now_utc or datetime.now(UTC)
     now_ns = int(now.timestamp() * 1_000_000_000)
@@ -973,6 +1024,10 @@ def submit_confirmed_tv_preset_paper(
             "qty": qty,
             "lane_account": lane.account,
             "lane_id": lane.profile["lane_id"],
+            "venue_profile": lane.venue_profile,
+            "order_handle_spec": lane.order_handle_spec(
+                session=session, trailing_schedule=sched_name
+            ),
             "session": session,
             "origin": origin,
             "order_type": prof.order_mode,

@@ -12,6 +12,8 @@ uv_prefix := if os_family() == "windows" {
     ""
 } else if path_exists(wsl_venv / "bin/python") == "true" {
     "UV_PROJECT_ENVIRONMENT=" + wsl_venv + " "
+} else if path_exists(".venv/Scripts/python.exe") == "true" {
+    "UV_PROJECT_ENVIRONMENT=" + wsl_venv + " "
 } else {
     ""
 }
@@ -86,6 +88,22 @@ test *args:
 # Refresh Half-Auto extreme-mover TV tickets, watchlists & DuckDB audit table (qty=1, semi_auto_confirmed=false)
 tv-tickets:
     {{uv_run}} python -m tier0_sota.tv.tickets --venue ALPACA
+
+# Run one-shot live SIP scan + preset bundle + tv_sota_pack watchlists & order cards (paper-only, zero 60s gap)
+tv-sync: paper-farm
+    @echo 'TV_SYNC_OK=1 watchlist=Z:\sota-data\manifests\tv_sota_pack\tier0_sota_tv_watchlists_live.txt'
+
+# Run one-command live TradingView E2E landing (live SIP/BOATS scan -> TV pack & Pine sync -> DuckDB audit)
+[unix]
+tv-land venue="ALPACA": scan
+    TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" bash scripts/tv_console.sh tickets "{{venue}}" >/dev/null
+    TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" bash scripts/tv_console.sh sync-pine
+    TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" bash scripts/tv_console.sh audit
+
+# Run one-command live TradingView E2E landing (live SIP/BOATS scan -> TV pack & Pine sync -> DuckDB audit)
+[windows]
+tv-land venue="ALPACA": scan
+    pwsh -NoProfile -ExecutionPolicy Bypass -Command ". ./scripts/tv_console.ps1 -Venue '{{venue}}'; tv-tickets -Venue '{{venue}}' | Out-Null; tv-sync-pine; tv-audit"
 
 # Run TradingView Half-Auto E2E verification (ruff, ty, Pine v6 parity & pytest)
 tv-e2e:
@@ -208,7 +226,7 @@ scan *args:
 # Run whole-market Alpaca SIP extreme-mover scanner via fnox paper profile (graceful CI skip if unauthenticated)
 [unix]
 scan:
-    if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; out = Path('${data_root}') / 'manifests' / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=15, output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; elif [[ -n "${ALPACA_PA1_API_KEY:-}" || -n "${APCA_API_KEY_ID:-}" ]]; then uv run --no-sync python -c "$py_code"; else echo "[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID"; fi
+    if [[ ! -x .venv/bin/python && ( -x "$HOME/noesis/.venv/bin/python" || -f .venv/Scripts/python.exe ) ]]; then export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$HOME/noesis/.venv}"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; out = Path('${data_root}') / 'manifests' / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=15, output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; elif [[ -n "${ALPACA_PA1_API_KEY:-}" || -n "${APCA_API_KEY_ID:-}" ]]; then uv run --no-sync python -c "$py_code"; else echo "[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID"; fi
 
 # Authenticate every Paper Farm observation with the encrypted paper profile.
 [windows]

@@ -66,12 +66,14 @@ from tier0_sota.engine import (  # noqa: E402
     SESSION_PROTECTION_24X5,
     build_sandbox_live_node,
     build_venue_live_node_config,
+    build_venue_order_handle_spec,
     get_session_protection_profile,
     inspect_venue_capability,
     run_nautilus_signal_backtest,
     select_pooled_trailing_schedule,
     validate_venue_order_capability,
 )
+from tier0_sota.live.paper_farm import resolve_alpaca_paper_venue_profile  # noqa: E402
 from tier0_sota.risk import (  # noqa: E402
     MAX_STOP_LOSS_PCT,
     Side,
@@ -121,6 +123,7 @@ def get_engine_backbone_status(venue_profile: str = "IBKR_PAPER_4002") -> dict[s
             "max_order_submit_rate": str(re_cfg.max_order_submit_rate),
             "max_order_modify_rate": str(re_cfg.max_order_modify_rate),
         },
+        "order_handle_spec": build_venue_order_handle_spec(prof.venue_id),
         "sessions_24x5": sorted(SESSION_PROTECTION_24X5.keys()),
     }
 
@@ -131,14 +134,20 @@ def inspect_venue_profile(
     algo: str = "STOP_LIMIT",
     requested_rpm: int | None = None,
     require_24x5_overnight: bool = False,
+    session: str = "RTH",
+    trailing_schedule: str = "baseline",
 ) -> dict[str, Any]:
-    """Inspect multi-venue RPM pacing, algorithm support, and fail-closed LIVE posture."""
-    return inspect_venue_capability(
+    """Inspect multi-venue RPM pacing, order-handle spec, algo support & fail-closed LIVE gate."""
+    cap = inspect_venue_capability(
         venue_profile,
         algo=algo,
         requested_rpm=requested_rpm,
         require_24x5_overnight=require_24x5_overnight,
     )
+    cap["order_handle_spec"] = build_venue_order_handle_spec(
+        venue_profile, session=session, trailing_schedule=trailing_schedule
+    )
+    return cap
 
 
 @mcp.tool()
@@ -258,6 +267,7 @@ _ADMITTED_WATCHLIST_SCHEMAS = frozenset(
         "tier0.live-half-auto-tickets.v1",
         "tier0.live-lane-preset-bundle.v1",
         "tier0.tv-compounding-manifest.v1",
+        "tier0.tv-engine-coordination.v1",
     }
 )
 
@@ -311,6 +321,11 @@ def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, A
         if tickets is not None:
             tv_sync["tickets_count"] = len(tickets.get("tickets") or ())
             tv_sync["standby_presets_count"] = len(tickets.get("standby_presets") or ())
+        coord = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_engine_coordination_manifest.json"
+        )
+        if coord is not None:
+            tv_sync["tv_engine_coordination"] = coord
         if tv_sync:
             res["tv_sync"] = tv_sync
     return res
@@ -336,6 +351,11 @@ def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str,
     comp = _read_optional_json_dict(target.parent / "tv_sota_pack" / "tv_compounding_manifest.json")
     if comp is not None:
         res["tv_compounding"] = comp
+    coord = _read_optional_json_dict(
+        target.parent / "tv_sota_pack" / "tv_engine_coordination_manifest.json"
+    )
+    if coord is not None:
+        res["tv_engine_coordination"] = coord
     exe = _read_optional_json_dict(target.parent / "paper_farm_execution_status.json")
     if exe is not None:
         res["execution_status_snapshot"] = exe
@@ -400,8 +420,15 @@ def _stage_minimal_order_preset(
     if sess not in ("PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT"):
         raise ValueError(f"Unsupported or closed session {src.get('session')!r}")
     vu = venue.strip().upper()
-    if vu not in ("IBKR", "ALPACA"):
-        raise ValueError(f"Unsupported venue {venue!r}")
+    req_vp = str(src.get("venue_profile") or "").strip().upper()
+    if req_vp:
+        vprof = validate_venue_order_capability(req_vp)
+        vu = vprof.broker
+        resolved_vp = vprof.venue_id
+    else:
+        if vu not in ("IBKR", "ALPACA"):
+            raise ValueError(f"Unsupported venue {venue!r}")
+        resolved_vp = "IBKR_PAPER_4002" if vu == "IBKR" else resolve_alpaca_paper_venue_profile()[0]
     if vu == "ALPACA" and out_side == "SELL" and sess == "OVERNIGHT":
         raise ValueError("ALPACA overnight SHORT unsupported; use IBKR")
     natr = Decimal(str(src.get("natr_pct", "0.020")))
@@ -423,12 +450,16 @@ def _stage_minimal_order_preset(
     cd = int(src.get("reentry_cooldown_secs", 60))
     if cd < 60 or cd > 86_400:
         raise ValueError("reentry_cooldown_secs must be in [60, 86400]")
+    handle_spec = build_venue_order_handle_spec(
+        resolved_vp, session=prof.session, trailing_schedule=req_sched
+    )
     norm_preset: dict[str, Any] = {
         "symbol": sym,
         "qty": 1,
         "side": out_side,
         "session": prof.session,
         "venue": vu,
+        "venue_profile": resolved_vp,
         "order_type": order_type,
         "limit_collar_bps": collar,
         "trailing_schedule": req_sched,
@@ -436,6 +467,8 @@ def _stage_minimal_order_preset(
         "auto_reentry": bool(src.get("auto_reentry", True)),
         "reentry_cooldown_secs": cd,
         "semi_auto_confirmed": False,
+        "live_execution_enabled": False,
+        "order_handle_spec": handle_spec,
     }
     if src.get("darkpool_trf_ratio") is not None:
         trf_v = float(src["darkpool_trf_ratio"])
@@ -484,6 +517,7 @@ def stage_semi_auto_order_preset(
     staged_path: str | None = None,
     watchlist_path: str | None = None,
     venue: str = "IBKR",
+    venue_profile: str | None = None,
     live_intake: bool = False,
 ) -> dict[str, Any]:
     """Validate and stage a semi-auto qty=1 preset (always semi_auto_confirmed=False)."""
@@ -499,6 +533,8 @@ def stage_semi_auto_order_preset(
         src["side"] = side
     if session is not None:
         src["session"] = session
+    if venue_profile is not None:
+        src["venue_profile"] = venue_profile
     if qty != 1 or "qty" not in src:
         src["qty"] = qty
     try:
@@ -506,6 +542,16 @@ def stage_semi_auto_order_preset(
             if path is not None and (not path.strip() or Path(path).is_dir()):
                 raise ValueError("Expected a nonempty file path")
         if "schema_version" in src:
+            req_vp = str(src.get("venue_profile") or "").strip().upper()
+            resolved_vp = (
+                validate_venue_order_capability(req_vp).venue_id
+                if req_vp
+                else (
+                    "IBKR_PAPER_4002"
+                    if venue.strip().upper() == "IBKR"
+                    else resolve_alpaca_paper_venue_profile()[0]
+                )
+            )
             s_path = DEFAULT_STAGED_PATH if staged_path is None else Path(staged_path)
             w_path = DEFAULT_WATCHLIST_PATH if watchlist_path is None else Path(watchlist_path)
             staged = stage_tv_alert_preset(
@@ -515,17 +561,26 @@ def stage_semi_auto_order_preset(
                 venue=venue,
                 live_intake=live_intake,
             )
+            staged_with_handle = {
+                **staged,
+                "venue_profile": resolved_vp,
+                "order_handle_spec": build_venue_order_handle_spec(
+                    resolved_vp,
+                    session=str(staged.get("session") or "RTH"),
+                    trailing_schedule=str(staged.get("trailing_schedule") or "baseline"),
+                ),
+            }
             return {
                 "ok": True,
-                **staged,
+                **staged_with_handle,
                 "semi_auto_confirmed": False,
-                "preset": staged,
-                "order_preset": staged,
+                "preset": staged_with_handle,
+                "order_preset": staged_with_handle,
             }
         if live_intake:
             raise ValueError("Live intake requires a complete tier0.tv-alert.v1 payload")
         norm = _stage_minimal_order_preset(src, staged_path=staged_path, venue=venue)
-    except (ValueError, TypeError, KeyError, OSError, OverflowError) as exc:
+    except (ValueError, TypeError, KeyError, OSError, OverflowError, PermissionError) as exc:
         return {"ok": False, "error": str(exc), "semi_auto_confirmed": False}
     return {
         "ok": True,
@@ -563,6 +618,7 @@ def run_smoke_check() -> dict[str, Any]:
 
     st = get_engine_backbone_status()
     vp = inspect_venue_profile()
+    vp_alp1000 = inspect_venue_profile("ALPACA_PAPER_1000")
     stop = compute_risk_sized_stop("100.00", "LONG", "100000")
     pit = check_prewall_pit_session("2026-10-15")
     par = run_prewall_native_backbone_parity()
@@ -584,6 +640,11 @@ def run_smoke_check() -> dict[str, Any]:
         and st["broker_ports_open"] == 0
         and st["live_execution_enabled"] is False
         and vp["allowed"] is True
+        and vp_alp1000["allowed"] is True
+        and vp_alp1000["max_rpm"] == 1000
+        and vp_alp1000["exit_reserve_rpm"] == 100
+        and vp_alp1000["live_execution_enabled"] is False
+        and vp_alp1000["order_handle_spec"]["trailing_modify_cadence_secs"] >= 1.0
         and int(stop["shares"]) > 0
         and pit["pre_wall_ok"] is True
         and par["overall_ok"] is True

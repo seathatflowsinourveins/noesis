@@ -27,8 +27,61 @@ if ([string]::IsNullOrWhiteSpace($ManifestDir)) {
   $ManifestDir = Join-Path $DataRoot "manifests"
 }
 $PyExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $PyExe)) {
+$WinSitePackages = Join-Path $RepoRoot ".venv\Lib\site-packages"
+$WinVenvHasNautilus = (Test-Path -LiteralPath $PyExe -PathType Leaf) -and (
+  (Test-Path -LiteralPath (Join-Path $WinSitePackages "nautilus_trader") -PathType Container) -or
+  (@(Get-ChildItem -LiteralPath $WinSitePackages -Filter "nautilus_trader*.pyd" -ErrorAction SilentlyContinue).Count -gt 0)
+)
+$UseWslFallback = ($Mode -ne "start-loop") -and (-not $WinVenvHasNautilus)
+if (-not $UseWslFallback -and $Mode -ne "start-loop" -and -not (Test-Path -LiteralPath $PyExe -PathType Leaf)) {
   throw "Missing worktree virtual environment at $PyExe"
+}
+
+function ConvertTo-WslPath {
+  param([Parameter(Mandatory = $true)][string]$WinPath)
+  $trimmed = $WinPath.Trim()
+  if ($trimmed -match '^([A-Za-z]):(?:[\\/](.*))?$') {
+    $drive = $Matches[1].ToLowerInvariant()
+    $rest = ($Matches[2] -replace '\\', '/').TrimEnd('/')
+    if ([string]::IsNullOrEmpty($rest)) { return "/mnt/$drive" }
+    return "/mnt/$drive/$rest"
+  }
+  return ($trimmed -replace '\\', '/')
+}
+
+function Quote-BashSingle {
+  param([Parameter(Mandatory = $true)][string]$Value)
+  return "'" + ($Value -replace "'", "'""'""'") + "'"
+}
+
+function Invoke-WslTier0 {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$PythonArgs,
+    [switch]$WithFnoxPaper,
+    [string]$IbkrTcpReachable = "0"
+  )
+  $wslRepo = ConvertTo-WslPath -WinPath $RepoRoot
+  $wslData = ConvertTo-WslPath -WinPath $DataRoot
+  $quotedArgs = ($PythonArgs | ForEach-Object { Quote-BashSingle $_ }) -join " "
+  $prefix = @(
+    "set -euo pipefail",
+    "cd $(Quote-BashSingle $wslRepo)",
+    'export PATH=$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH',
+    "export PYTHONDONTWRITEBYTECODE=1",
+    "export PYTHONPATH=$(Quote-BashSingle ($wslRepo + '/src'))",
+    "export TIER0_DATA_ROOT=$(Quote-BashSingle $wslData)",
+    'export FNOX_AGE_KEY_FILE=${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}',
+    "export IBKR_PAPER_TCP_REACHABLE=$(Quote-BashSingle $IbkrTcpReachable)",
+    'if [[ -x .venv/bin/python ]]; then PY_BIN=.venv/bin/python; elif [[ -x $HOME/noesis/.venv/bin/python ]]; then PY_BIN=$HOME/noesis/.venv/bin/python; else echo missing_wsl_venv_python >&2; exit 2; fi'
+  )
+  if ($WithFnoxPaper) {
+    $prefix += 'if command -v ss >/dev/null 2>&1 && ss -lntH 2>/dev/null | grep -Eq ":(4001|7496|8798|8796)[[:space:]]"; then echo live_broker_port_active >&2; exit 2; fi'
+    $prefix += "fnox exec --profile paper -- `$PY_BIN $quotedArgs"
+  } else {
+    $prefix += "`$PY_BIN $quotedArgs"
+  }
+  & wsl.exe -d Noesis-SOTA -- bash -lc ($prefix -join "; ")
+  return $LASTEXITCODE
 }
 
 $CleanPins = @(
@@ -85,6 +138,11 @@ switch ($Mode) {
     exit 0
   }
   "preflight" {
+    if ($UseWslFallback) {
+      $wslManifest = ConvertTo-WslPath -WinPath $ManifestDir
+      $pySnippet = "from pathlib import Path; from tier0_sota import engine, risk; from tier0_sota.live import ALPACA_LANE_PROFILES, PAPER_ALPACA_ENDPOINT, IbkrPaperAdapter; ibkr = IbkrPaperAdapter(Path('$wslManifest')); assert PAPER_ALPACA_ENDPOINT == 'https://paper-api.alpaca.markets'; print('PREFLIGHT_OK', list(ALPACA_LANE_PROFILES.keys()), ibkr.connection_spec['port'], risk.MAX_STOP_LOSS_PCT)"
+      exit (Invoke-WslTier0 -PythonArgs @("-c", $pySnippet))
+    }
     & $PyExe -c @"
 from pathlib import Path
 from tier0_sota import engine, risk
@@ -96,6 +154,11 @@ print('PREFLIGHT_OK', list(ALPACA_LANE_PROFILES.keys()), ibkr.connection_spec['p
     exit $LASTEXITCODE
   }
   "scan" {
+    if ($UseWslFallback) {
+      $wslManifest = ConvertTo-WslPath -WinPath $ManifestDir
+      $pySnippet = "from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; pins = tuple('$PinArg'.split(',')); out = Path('$wslManifest') / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=$TopK, pin_symbols=pins, output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"
+      exit (Invoke-WslTier0 -WithFnoxPaper -PythonArgs @("-c", $pySnippet))
+    }
     & $PyExe -c @"
 from pathlib import Path
 from tier0_sota.live.scanner import scan_extreme_movers
@@ -122,12 +185,20 @@ print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])
       $env:IBKR_PAPER_TCP_REACHABLE = "0"
     } finally { $tcp.Dispose() }
     if ($Mode -eq "ibkr-paper" -or $Account -eq "IBKR_DU_4002") {
+      if ($UseWslFallback) {
+        $wslManifest = ConvertTo-WslPath -WinPath $ManifestDir
+        exit (Invoke-WslTier0 -IbkrTcpReachable $env:IBKR_PAPER_TCP_REACHABLE -PythonArgs @("-m", "tier0_sota.live.runner", "--ibkr-health", "--manifest-dir", $wslManifest))
+      }
       & $PyExe -m tier0_sota.live.runner --ibkr-health --manifest-dir $ManifestDir
       exit $LASTEXITCODE
     }
     if ($Account -ne "ALL") { throw "All three account inventories are required for the shared symbol lock." }
     if ($ConfirmPaper -eq $Observe) { throw "Select exactly one of -ConfirmPaper or -Observe." }
     $intent = if ($Observe) { "--observe" } else { "--confirm-paper" }
+    if ($UseWslFallback) {
+      $wslManifest = ConvertTo-WslPath -WinPath $ManifestDir
+      exit (Invoke-WslTier0 -WithFnoxPaper -IbkrTcpReachable $env:IBKR_PAPER_TCP_REACHABLE -PythonArgs @("-m", "tier0_sota.live.runner", $intent, "--manifest-dir", $wslManifest, "--top-k", "$TopK", "--pin-symbols", $PinArg))
+    }
     if (-not $env:FNOX_AGE_KEY_FILE) {
       $env:FNOX_AGE_KEY_FILE = [Environment]::GetEnvironmentVariable("FNOX_AGE_KEY_FILE", "User")
       if (-not $env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE = Join-Path $HOME ".config/fnox/age.txt" }
@@ -140,6 +211,11 @@ print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])
     exit $LASTEXITCODE
   }
   "performance" {
+    if ($UseWslFallback) {
+      $wslManifest = ConvertTo-WslPath -WinPath $ManifestDir
+      $pySnippet = "import json, os; from pathlib import Path; from tier0_sota.live.performance import aggregate_paper_farm_performance; mdir = Path('$wslManifest'); otlp_url = os.environ.get('TIER0_OTLP_METRICS_URL', 'http://127.0.0.1:4318/v1/metrics').strip() or None; perf = aggregate_paper_farm_performance(mdir, prom_output_path=mdir / 'paper_farm_metrics.prom', otlp_endpoint=otlp_url); lanes = {k: {f: v[f] for f in ('equity','entries','fills','tca_fills_count','mean_is_bps','auto_shorts','reverses','reentries','stop_replaces','fast_sells','status_present')} for k, v in perf['per_lane'].items()}; print('PERF_OK', json.dumps({'summary': perf['summary'], 'per_lane': lanes}))"
+      exit (Invoke-WslTier0 -PythonArgs @("-c", $pySnippet))
+    }
     & $PyExe -c @"
 import json, os
 from pathlib import Path

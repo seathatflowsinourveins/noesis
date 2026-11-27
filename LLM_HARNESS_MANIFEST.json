@@ -304,6 +304,7 @@
         "trading-skills-navigator"
       ],
       "upstream_gates": [
+        "just tv-e2e",
         "just test tests/test_tv_automation.py",
         "just mcp-smoke",
         "just ast"
@@ -313,15 +314,30 @@
         "scripts/tv_console.sh",
         "scripts/nautilus_mcp_server.py"
       ],
+      "paper_confirm_entrypoint": "just tv-confirm-paper",
+      "paper_confirm_api": "src/tier0_sota/live/execution.py::submit_confirmed_tv_preset_paper",
+      "paper_only": true,
+      "live_execution_enabled": false,
+      "paper_farm_combined_rpm": 3600,
+      "stage5_sandbox_spec_venue": "ALPACA_LIVE_PRO_LINE_1000",
+      "stage5_sandbox_spec_rpm": 1000,
+      "stage5_sandbox_spec_status": "LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC",
       "manifest_artifacts": [
         "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_order_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\TV_ORDER_PRESET_CARDS.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\finos_tv_cockpit.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_scan_presets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_tv_presets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_half_auto_audit.duckdb",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_staged_presets.parquet",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_omni_sota_24x5.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_strategy_24x5.pine",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_market_regime.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_darkpool_uv_buildup.pine",
         "Z:\\sota-data\\manifests\\staged_tv_presets.json"
       ]
     },

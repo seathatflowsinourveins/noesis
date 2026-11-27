@@ -14,8 +14,13 @@ from typing import Any
 import pytest
 
 from tier0_sota.tv import (
+    MULTI_SITUATION_SETUP_PLAYBOOK,
     TvAlertV1,
     build_half_auto_tickets,
+    build_tv_order_presets,
+    build_venue_order_handles,
+    build_venue_order_handles_matrix,
+    classify_multi_situation_setup,
     current_et_session,
     filter_extreme_movers,
     ingest_alerts_file,
@@ -25,6 +30,8 @@ from tier0_sota.tv import (
     render_tickets_markdown,
     render_tv_watchlist,
     resolve_tv_exchange_symbol,
+    resolve_venue_order_handle,
+    resolve_venue_profile,
     stage_tv_alert_preset,
     validate_tv_alert_payload,
 )
@@ -1358,7 +1365,7 @@ def test_zero_ticket_refresh_migrates_existing_legacy_duckdb_and_exports_parquet
     assert pq_path.is_file()
     with duckdb.connect(str(db_path), read_only=True) as conn:
         cols = conn.execute("DESCRIBE tv_staged_presets").fetchall()
-        assert len(cols) == 28
+        assert len(cols) == 29
         pq_rows = conn.execute(
             "SELECT alert_id, symbol FROM read_parquet(?)", [str(pq_path)]
         ).fetchall()
@@ -1667,6 +1674,7 @@ def test_pine_v6_strategy_darkpool_regime_and_emitted_json_roundtrip() -> None:
         'str.tostring(time_close, "0")': "1795747260000",
         "sig_side": "BUY",
         "eff_venue": "IBKR",
+        "eff_venue_profile": "IBKR_PAPER_4002",
         "sess_label": "OVERNIGHT",
         "order_type": "STOP_LIMIT",
         'str.tostring(safe_trig, "0.####")': "54.31",
@@ -1710,7 +1718,10 @@ def test_pine_v6_strategy_darkpool_regime_and_emitted_json_roundtrip() -> None:
 def test_tv_console_sh_syntax_shellcheck_and_ps1_extensions() -> None:
     ps1_src = (REPO_ROOT / "scripts" / "tv_console.ps1").read_text(encoding="utf-8")
     for fn in (
+        "function Resolve-Tier0PythonMode",
+        "function Invoke-Tier0Python",
         "function tv-presets",
+        "function tv-handles",
         "function tv-sync-pine",
         "function tv-copy-strategy",
         "function tv-copy-darkpool",
@@ -1731,8 +1742,16 @@ def test_tv_console_sh_syntax_shellcheck_and_ps1_extensions() -> None:
     assert "semi_auto_confirmed=false" in sh_src
     assert "http://localhost:1420/" in sh_src
     assert "http://127.0.0.1:1420/" not in sh_src
-    assert "tv_confirm_paper()" in sh_src
-    assert "tv-confirm-paper" in sh_src
+    for sh_tok in (
+        "_tier0_read_clipboard()",
+        "tv_ingest_clip()",
+        "tv_stage()",
+        "tv_handles()",
+        "tv_confirm_paper()",
+        "tv-confirm-paper",
+        "wslpath -w",
+    ):
+        assert sh_tok in sh_src
     assert (
         "fnox exec --profile paper -- uv run --no-sync python -m tier0_sota.live.runner" in sh_src
     )
@@ -1750,3 +1769,775 @@ def test_tv_console_sh_syntax_shellcheck_and_ps1_extensions() -> None:
         sc_bin = shutil.which("shellcheck")
         if sc_bin is not None:
             subprocess.run([sc_bin, str(sh_path)], check=True, capture_output=True, text=True)
+
+
+def test_bearish_neutral_regime_sell_never_flips_to_buy_or_hedge(tmp_path: Path) -> None:
+    on_bar = "2026-11-27T03:21:00Z"
+    on_now = datetime(2026, 11, 27, 3, 21, 10, tzinfo=UTC)
+    movers_doc = {
+        "schema_version": "tier0.whole-market-movers.v2",
+        "generated_at_utc": "2026-11-27T03:21:05Z",
+        "feed_sources": ["alpaca_boats"],
+        "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+        "macro_regime": {"regime": 0, "regime_label": "NEUTRAL"},
+        "entries": [
+            {
+                "rank": 1,
+                "symbol": "SQQQ",
+                "exchange": "NASDAQ",
+                "score": 53.78,
+                "last_price": 46.52,
+                "prior_close": 48.62,
+                "annual_borrow_rate": 0.0095,
+                "session_move_pct": -4.32,
+                "rvol_normalized": 3.55,
+                "peak_confirmed": False,
+                "side": "SELL",
+                "natr_pct": 0.012,
+                "extreme_mover_eligible": True,
+                "pinned": True,
+                "shortable": True,
+                "easy_to_borrow": True,
+                "borrow_source": "alpaca_paper_asset",
+                "short_fee_bps": 0.0,
+                "bar_close_utc": on_bar,
+            },
+            {
+                "rank": 2,
+                "symbol": "SOXL",
+                "exchange": "AMEX",
+                "score": 28.99,
+                "last_price": 36.30,
+                "prior_close": 37.09,
+                "session_move_pct": -2.13,
+                "rvol_normalized": 1.85,
+                "unusual_volume_buildup": True,
+                "peak_confirmed": False,
+                "side": "SELL",
+                "natr_pct": 0.014,
+                "extreme_mover_eligible": False,
+                "pinned": True,
+                "shortable": True,
+                "easy_to_borrow": True,
+                "bar_close_utc": on_bar,
+            },
+            {
+                "rank": 3,
+                "symbol": "SMCI",
+                "exchange": "NASDAQ",
+                "score": 44.0,
+                "last_price": 42.50,
+                "prior_close": 44.00,
+                "session_move_pct": -3.41,
+                "rvol_normalized": 2.6,
+                "peak_confirmed": True,
+                "side": "SELL",
+                "natr_pct": 0.014,
+                "extreme_mover_eligible": True,
+                "shortable": True,
+                "easy_to_borrow": True,
+                "bar_close_utc": on_bar,
+            },
+        ],
+    }
+    movers_path = tmp_path / "movers_neutral_sell.json"
+    movers_path.write_text(json.dumps(movers_doc), encoding="utf-8")
+    bundle_path = tmp_path / "bundle_neutral_sell.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.live-lane-preset-bundle.v1",
+                "top_potential_symbols": [
+                    {
+                        "symbol": "SQQQ",
+                        "lane_account": "ALPACA_PA3",
+                        "lane_id": "L3_AVWAP_TIGHT_LOCK",
+                        "entry_eligible": False,
+                        "entry_hold_reason": "MACRO_REGIME_NEUTRAL",
+                    },
+                    {
+                        "symbol": "SMCI",
+                        "lane_account": "ALPACA_PA2",
+                        "lane_id": "L2_STRUCTURAL_TREND",
+                        "entry_eligible": True,
+                        "entry_hold_reason": None,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Alpaca overnight with bundle: SQQQ keeps honest SELL, fails closed HOLD, never stages.
+    alp_dir = tmp_path / "alp_out"
+    alp_doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        bundle_path=bundle_path,
+        out_dir=alp_dir,
+        venue="ALPACA",
+        now_utc=on_now,
+    )
+    assert alp_doc["charter_guards"]["live_execution_enabled"] is False
+    assert alp_doc["charter_guards"]["semi_auto_confirmed"] is False
+    assert alp_doc["charter_guards"]["qty"] == 1
+    alp_by_sym = {t["symbol"]: t for t in alp_doc["tickets"]}
+    sqqq = alp_by_sym["SQQQ"]
+    assert sqqq["side"] == "SELL"
+    assert sqqq["stop_now"] > sqqq["live_price"]
+    assert sqqq["lock_at_1r"] < sqqq["live_price"]
+    assert sqqq["action_gate"] == "HOLD (MACRO_REGIME_NEUTRAL)"
+    assert "READY_HALF_AUTO" not in sqqq["action_gate"]
+    alp_staged = json.loads((alp_dir / "staged_scan_presets.json").read_text(encoding="utf-8"))
+    assert alp_staged["presets"] == [] and alp_doc["staged_count"] == 0
+
+    # Standby bearish SOXL also preserves honest SELL + short stop even with UV buildup.
+    standby_by_sym = {s["symbol"]: s for s in alp_doc["standby_presets"]}
+    assert standby_by_sym["SOXL"]["side"] == "SELL"
+    assert standby_by_sym["SOXL"]["stop_now"] > standby_by_sym["SOXL"]["live_price"]
+    assert standby_by_sym["SOXL"]["action_gate"] == "MONITOR_ONLY (<EXTREME GATE)"
+
+    # IBKR overnight without bundle: SQQQ STILL fails closed HOLD (never staged),
+    # while peak_confirmed=True SMCI still routes SELL / PEAK_REVERSAL / READY_HALF_AUTO.
+    ibkr_dir = tmp_path / "ibkr_out"
+    ibkr_doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        bundle_path=None,
+        out_dir=ibkr_dir,
+        venue="IBKR",
+        now_utc=on_now,
+    )
+    ibkr_by_sym = {t["symbol"]: t for t in ibkr_doc["tickets"]}
+    assert ibkr_by_sym["SQQQ"]["side"] == "SELL"
+    assert ibkr_by_sym["SQQQ"]["action_gate"] == "HOLD (BEARISH_UNCONFIRMED_REGIME)"
+    assert ibkr_by_sym["SMCI"]["side"] == "SELL"
+    assert ibkr_by_sym["SMCI"]["archetype"] == "PEAK_REVERSAL"
+    assert ibkr_by_sym["SMCI"]["action_gate"] == "READY_HALF_AUTO"
+    ibkr_staged = json.loads((ibkr_dir / "staged_scan_presets.json").read_text(encoding="utf-8"))
+    assert [p["symbol"] for p in ibkr_staged["presets"]] == ["SMCI"]
+    assert all(p["qty"] == 1 and p["semi_auto_confirmed"] is False for p in ibkr_staged["presets"])
+
+    # Crash regime (-1) inverse hedge behavior remains 100% intact.
+    crash_movers = {
+        **movers_doc,
+        "macro_regime": {"regime": -1, "regime_label": "CRASH"},
+    }
+    crash_doc = build_half_auto_tickets(crash_movers, now_utc=on_now, venue="ALPACA")
+    crash_by_sym = {t["symbol"]: t for t in crash_doc["tickets"]}
+    assert crash_by_sym["SQQQ"]["side"] == "BUY"
+    assert crash_by_sym["SQQQ"]["archetype"] == "CRASH_ALIGNMENT"
+    assert crash_by_sym["SQQQ"]["action_gate"] == "READY_HALF_AUTO_HEDGE"
+
+
+def test_watchlist_preserves_manual_staged_past_top15_and_iex_otc_prefixes(tmp_path: Path) -> None:
+    assert resolve_tv_exchange_symbol("IEXX", exchange="IEX") == "IEX:IEXX"
+    assert resolve_tv_exchange_symbol("IEXY", exchange="IEXG") == "IEX:IEXY"
+    assert resolve_tv_exchange_symbol("OTCX", exchange="OTC") == "OTC:OTCX"
+
+    on_bar = "2026-11-27T03:21:00Z"
+    on_now = datetime(2026, 11, 27, 3, 21, 10, tzinfo=UTC)
+    out_dir = tmp_path / "tv_sota_pack"
+
+    entries = [
+        {
+            "rank": i,
+            "symbol": f"MV{i:02d}",
+            "exchange": "IEX" if i == 1 else ("OTC" if i == 2 else "NASDAQ"),
+            "score": 80.0 - i,
+            "last_price": 50.0 + i,
+            "session_move_pct": 4.0,
+            "rvol_normalized": 3.0,
+            "natr_pct": 0.015,
+            "extreme_mover_eligible": True,
+            "bar_close_utc": on_bar,
+        }
+        for i in range(1, 17)
+    ]
+    movers_path = tmp_path / "movers_16.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-27T03:21:05Z",
+                "feed_sources": ["alpaca_boats"],
+                "macro_regime": {"regime": 1, "regime_label": "BULL"},
+                "entries": entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for manual_sym in ("RKLB", "CUSTOMZ"):
+        stage_tv_alert_preset(
+            _valid_alert(
+                symbol=manual_sym,
+                session="OVERNIGHT",
+                order_type="STOP_LIMIT",
+                trigger_price=40.0,
+                stop_price=39.6,
+                limit_collar_bps=50.0,
+            ),
+            staged_path=out_dir / "staged_tv_presets.json",
+            watchlist_path=tmp_path / "unused.json",
+            venue="IBKR",
+        )
+
+    refresh_tickets_from_paths(
+        movers_path=movers_path, out_dir=out_dir, venue="ALPACA", now_utc=on_now
+    )
+    wl_text = (out_dir / "tier0_sota_tv_watchlists_live.txt").read_text(encoding="utf-8")
+    movers_lines = [
+        ln
+        for ln in wl_text.split("###03_LIVE_MOVERS_TOP15\n", 1)[1]
+        .split("###04_DARKPOOL_UNUSUAL_VOL", 1)[0]
+        .splitlines()
+        if ln.strip()
+    ]
+    assert len(movers_lines) == 15
+    assert "IEX:MV01" in movers_lines and "OTC:MV02" in movers_lines
+
+    assert "###07_MANUAL_STAGED_PRESETS" in wl_text
+    manual_lines = [
+        ln for ln in wl_text.split("###07_MANUAL_STAGED_PRESETS\n", 1)[1].splitlines() if ln.strip()
+    ]
+    assert manual_lines == ["NASDAQ:RKLB", "CUSTOMZ"]
+
+    # Every non-header line in .txt watchlist must remain pure TradingView ticker syntax.
+    for raw_line in wl_text.splitlines():
+        if raw_line.startswith("###"):
+            continue
+        assert re.fullmatch(r"(?:[A-Z]+:)?[A-Z0-9.-]+", raw_line), f"Polluted ticker: {raw_line!r}"
+
+
+def test_metadata_propagation_carryover_notice_and_venue_order_handles_parity(
+    tmp_path: Path,
+) -> None:
+    from tier0_sota import engine as eng
+
+    on_bar = "2026-11-27T04:23:00Z"
+    on_now = datetime(2026, 11, 27, 4, 23, 10, tzinfo=UTC)
+    carry_as_of = "2026-11-25T20:55:00+00:00"
+    out_dir = tmp_path / "tv_sota_pack"
+    movers_path = tmp_path / "movers_meta.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-27T04:23:05Z",
+                "feed_sources": ["alpaca_boats", "finra_trf_exchange_d"],
+                "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+                "macro_regime": {"regime": 1, "regime_label": "BULL"},
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "INTC",
+                        "exchange": "NASDAQ",
+                        "score": 58.6,
+                        "last_price": 56.95,
+                        "prior_close": 55.01,
+                        "session_move_pct": 3.53,
+                        "rvol_normalized": 3.2,
+                        "darkpool_trf_ratio": 0.5108,
+                        "darkpool_trf_source": "prior_sip_trf_carryover",
+                        "darkpool_trf_as_of_utc": carry_as_of,
+                        "darkpool_block_count": 20,
+                        "trf_block_ratio": 0.4729,
+                        "unusual_volume_buildup": True,
+                        "natr_pct": 0.012,
+                        "extreme_mover_eligible": True,
+                        "pinned": False,
+                        "shortable": True,
+                        "easy_to_borrow": True,
+                        "borrow_source": "alpaca_paper_asset",
+                        "short_fee_bps": 0.0,
+                        "bar_close_utc": on_bar,
+                    },
+                    {
+                        "rank": 2,
+                        "symbol": "TQQQ",
+                        "exchange": "NASDAQ",
+                        "score": 32.96,
+                        "last_price": 48.54,
+                        "prior_close": 46.14,
+                        "session_move_pct": 5.20,
+                        "rvol_normalized": 0.35,
+                        "darkpool_trf_ratio": 0.3338,
+                        "darkpool_trf_source": "prior_sip_trf_carryover",
+                        "darkpool_trf_as_of_utc": carry_as_of,
+                        "natr_pct": 0.012,
+                        "extreme_mover_eligible": False,
+                        "pinned": True,
+                        "shortable": False,
+                        "easy_to_borrow": False,
+                        "borrow_source": "alpaca_paper_asset",
+                        "short_fee_bps": 30.0,
+                        "bar_close_utc": on_bar,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doc = refresh_tickets_from_paths(
+        movers_path=movers_path, out_dir=out_dir, venue="ALPACA", now_utc=on_now
+    )
+    intc = doc["tickets"][0]
+    tqqq = doc["standby_presets"][0]
+    assert intc["pinned"] is False
+    assert intc["borrow_source"] == "alpaca_paper_asset"
+    assert intc["short_fee_bps"] == pytest.approx(0.0)
+    assert intc["darkpool_trf_as_of_utc"] == carry_as_of
+    assert intc["darkpool_trf_age_hours"] == pytest.approx(31.5)
+
+    assert tqqq["pinned"] is True
+    assert tqqq["borrow_source"] == "alpaca_paper_asset"
+    assert tqqq["short_fee_bps"] == pytest.approx(30.0)
+    assert tqqq["darkpool_trf_as_of_utc"] == carry_as_of
+    assert tqqq["darkpool_trf_age_hours"] == pytest.approx(31.5)
+
+    tickets_md = (out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md").read_text(encoding="utf-8")
+    cards_md = (out_dir / "TV_ORDER_PRESET_CARDS.md").read_text(encoding="utf-8")
+    for md_text in (tickets_md, cards_md):
+        assert "prior_sip_trf_carryover" in md_text
+        assert carry_as_of in md_text
+        assert "31.5h" in md_text
+
+    # Watchlist .txt remains strictly free of carryover annotations.
+    wl_txt = (out_dir / "tier0_sota_tv_watchlists_live.txt").read_text(encoding="utf-8")
+    assert "prior_sip_trf_carryover" not in wl_txt and "31.5h" not in wl_txt
+
+    # Venue order handles parity matches engine.inspect_venue_capability verbatim.
+    presets_doc = json.loads((out_dir / "tv_order_presets.json").read_text(encoding="utf-8"))
+    assert presets_doc["paper_only"] is True
+    assert presets_doc["semi_auto_confirmed"] is False
+    assert presets_doc["live_execution_enabled"] is False
+    assert presets_doc["qty"] == 1
+
+    vh = presets_doc["venue_order_handles"]
+    assert vh["source"] == "tier0_sota.engine.inspect_venue_capability"
+    assert vh["paper_only"] is True and vh["live_execution_enabled"] is False
+    assert vh["combined_paper_farm_max_rpm"] == 3600
+    assert vh["combined_paper_farm_exit_reserve_rpm"] == 360
+    assert vh["combined_paper_farm_active_entry_rpm"] == 3240
+
+    alp_cap = eng.inspect_venue_capability("ALPACA_PAPER_200")
+    ibkr_cap = eng.inspect_venue_capability("IBKR_PAPER_4002")
+    pro_cap = eng.inspect_venue_capability("ALPACA_LIVE_PRO_LINE_1000")
+
+    alp_h = vh["active_paper_handles"]["ALPACA_PAPER_200"]
+    assert alp_h["max_rpm"] == alp_cap["max_rpm"] == 200
+    assert alp_h["lane_count"] == 3
+    assert alp_h["lane_accounts"] == ["ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3"]
+    assert alp_h["combined_max_rpm"] == 600
+    assert alp_h["combined_exit_reserve_rpm"] == 60
+    assert alp_h["paper_only"] is True and alp_h["live_execution_enabled"] is False
+    assert alp_h["execution_status"] == "PAPER_ACTIVE"
+
+    ibkr_h = vh["active_paper_handles"]["IBKR_PAPER_4002"]
+    assert ibkr_h["max_rpm"] == ibkr_cap["max_rpm"] == 3000
+    assert ibkr_h["exit_reserve_rpm"] == ibkr_cap["exit_reserve_rpm"] == 300
+    assert ibkr_h["combined_max_rpm"] == 3000
+    assert ibkr_h["paper_only"] is True and ibkr_h["live_execution_enabled"] is False
+    assert ibkr_h["execution_status"] == "PAPER_ACTIVE"
+
+    pro_h = vh["stage5_sandbox_reference_specs"]["ALPACA_LIVE_PRO_LINE_1000"]
+    assert pro_h["max_rpm"] == pro_cap["max_rpm"] == 1000
+    assert pro_h["max_rps"] == pro_cap["max_rps"] == 25
+    assert pro_h["exit_reserve_rpm"] == pro_cap["exit_reserve_rpm"] == 100
+    assert pro_h["live_execution_enabled"] is False
+    assert pro_h["paper_only"] is True
+    assert pro_h["allowed"] is False and pro_h["executable_now"] is False
+    assert pro_h["stage5_readiness_spec_only"] is True
+    assert pro_h["execution_status"] == "LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC"
+
+    for tok in (
+        "3600 rpm",
+        "ALPACA_PAPER_200",
+        "IBKR_PAPER_4002",
+        "ALPACA_LIVE_PRO_LINE_1000",
+        "LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC",
+    ):
+        assert tok in cards_md
+
+    # Zero live broker endpoints, live ports, or CDP :9223 across all emitted text artifacts.
+    for artifact in out_dir.iterdir():
+        if artifact.suffix not in {".json", ".md", ".txt"}:
+            continue
+        blob = artifact.read_text(encoding="utf-8")
+        for forbidden in ("api.alpaca.markets", ":4001", ":7496", ":8798", ":8796", "9223"):
+            assert forbidden not in blob, f"Forbidden {forbidden!r} in {artifact.name}"
+
+
+def test_multi_situation_setup_playbook_and_classification() -> None:
+    expected_archetypes = {
+        "EARLY_EP_MOMENTUM_BURST",
+        "VCP_BREAKOUT",
+        "VCP_COIL",
+        "PEAD_DRIFT",
+        "EXHAUSTION_HAMMER",
+        "HIDDEN_VOL_ACCUM",
+        "PARABOLIC_TOP",
+        "PEAK_REVERSAL",
+        "CRASH_ALIGNMENT",
+        "EXTREME_REVERSAL",
+    }
+    assert set(MULTI_SITUATION_SETUP_PLAYBOOK) == expected_archetypes
+    for arch, pb in MULTI_SITUATION_SETUP_PLAYBOOK.items():
+        assert pb["archetype"] == arch
+        assert pb["climax_auto_reverse"] is True
+        assert pb["reentry_cooldown_secs"] == 60
+        assert pb["target_paper_lane"] in {"ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3"}
+
+    assert classify_multi_situation_setup(
+        {"symbol": "SOXS"}, regime_int=-1, sess_chg=4.0, rvol=2.5
+    ) == ("BUY", "LONG", "CRASH_ALIGNMENT")
+    assert classify_multi_situation_setup(
+        {"symbol": "NVDA"}, regime_int=-1, sess_chg=-3.0, rvol=3.0
+    ) == ("SELL", "SHORT", "CRASH_ALIGNMENT")
+    assert classify_multi_situation_setup(
+        {"symbol": "SMCI", "side": "SELL"},
+        regime_int=0,
+        sess_chg=-2.5,
+        rvol=2.4,
+        peak_confirmed=True,
+    ) == ("SELL", "SHORT", "PEAK_REVERSAL")
+    assert classify_multi_situation_setup(
+        {"symbol": "NVDA", "earnings_catalyst": True}, regime_int=1, sess_chg=5.0, rvol=3.5
+    ) == ("BUY", "LONG", "PEAD_DRIFT")
+    assert classify_multi_situation_setup(
+        {"symbol": "PLTR"}, regime_int=1, sess_chg=4.5, rvol=3.8
+    ) == ("BUY", "LONG", "EARLY_EP_MOMENTUM_BURST")
+    assert classify_multi_situation_setup(
+        {"symbol": "AVGO", "vcp_breakout": True}, regime_int=1, sess_chg=1.5, rvol=2.0
+    ) == ("BUY", "LONG", "VCP_BREAKOUT")
+    assert classify_multi_situation_setup(
+        {"symbol": "AMD", "coil_ok": True}, regime_int=1, sess_chg=0.8, rvol=1.4, natr_pct=0.012
+    ) == ("BUY", "LONG", "VCP_COIL")
+    assert classify_multi_situation_setup(
+        {"symbol": "META", "lower_wick_ratio": 0.62}, regime_int=1, sess_chg=0.5, rvol=1.6
+    ) == ("BUY", "LONG", "EXHAUSTION_HAMMER")
+    assert classify_multi_situation_setup(
+        {"symbol": "INTC"},
+        regime_int=1,
+        sess_chg=1.0,
+        rvol=1.8,
+        darkpool_trf_ratio=0.45,
+        unusual_volume_buildup=True,
+    ) == ("BUY", "LONG", "HIDDEN_VOL_ACCUM")
+    assert classify_multi_situation_setup(
+        {"symbol": "MSTR", "parabolic_top": True}, regime_int=0, sess_chg=1.0, rvol=1.2
+    ) == ("SELL", "SHORT", "PARABOLIC_TOP")
+    assert classify_multi_situation_setup(
+        {"symbol": "MSTR", "parabolic_top": True}, regime_int=1, sess_chg=1.0, rvol=1.2
+    ) == ("BUY", "LONG", "PARABOLIC_TOP")
+    assert classify_multi_situation_setup(
+        {"symbol": "TSLA"}, regime_int=1, sess_chg=1.2, rvol=1.1
+    ) == ("BUY", "LONG", "EXTREME_REVERSAL")
+
+
+def test_venue_profile_order_handles_1000rpm_3000rpm_and_stage5_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TIER0_VENUE_PROFILE", raising=False)
+    monkeypatch.delenv("TIER0_ALPACA_RPM", raising=False)
+
+    assert resolve_venue_profile("IBKR") == ("IBKR_PAPER_4002", "IBKR")
+    assert resolve_venue_profile("ALPACA") == ("ALPACA_PAPER_200", "ALPACA")
+    assert resolve_venue_profile("ALPACA", venue_profile="ALPACA_PAPER_1000") == (
+        "ALPACA_PAPER_1000",
+        "ALPACA",
+    )
+
+    # Env opt-in for ALPACA_PAPER_1000; out-of-range RPM and LIVE env vars fail closed to paper.
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "1000")
+    assert resolve_venue_profile("ALPACA") == ("ALPACA_PAPER_1000", "ALPACA")
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "ALPACA_PAPER_1000")
+    assert resolve_venue_profile("ALPACA") == ("ALPACA_PAPER_1000", "ALPACA")
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "9999")
+    assert resolve_venue_profile("ALPACA") == ("ALPACA_PAPER_200", "ALPACA")
+    monkeypatch.setenv("TIER0_ALPACA_RPM", "200")
+    monkeypatch.setenv("TIER0_VENUE_PROFILE", "ALPACA_LIVE_PRO_LINE_1000")
+    assert resolve_venue_profile("ALPACA") == ("ALPACA_PAPER_200", "ALPACA")
+
+    with pytest.raises(ValueError, match="Unsupported TV venue"):
+        resolve_venue_profile("CRYPTO")
+    with pytest.raises(ValueError, match="Unsupported TV venue_profile"):
+        resolve_venue_profile("ALPACA", venue_profile="ALPACA_UNKNOWN")
+
+    # Matrix specs match engine SSOT (IBKR 3000rpm, Alpaca 1000rpm & 200rpm, Stage-5 LIVE refused).
+    matrix = build_venue_order_handles_matrix(
+        session="OVERNIGHT", trailing_schedule="tight_near_lossless"
+    )
+    assert matrix["IBKR_PAPER_4002"]["max_rpm"] == 3000
+    assert matrix["IBKR_PAPER_4002"]["exit_reserve_rpm"] == 300
+    assert matrix["IBKR_PAPER_4002"]["entry_modify_rpm_budget"] == 2700
+    assert matrix["IBKR_PAPER_4002"]["executable_now"] is True
+    assert matrix["ALPACA_PAPER_1000"]["max_rpm"] == 1000
+    assert matrix["ALPACA_PAPER_1000"]["max_rps"] == 25
+    assert matrix["ALPACA_PAPER_1000"]["exit_reserve_rpm"] == 100
+    assert matrix["ALPACA_PAPER_1000"]["entry_modify_rpm_budget"] == 900
+    assert matrix["ALPACA_PAPER_1000"]["executable_now"] is True
+    assert matrix["ALPACA_PAPER_1000"]["paper_only"] is True
+    assert matrix["ALPACA_PAPER_1000"]["live_execution_enabled"] is False
+    assert matrix["ALPACA_LIVE_PRO_LINE_1000"]["executable_now"] is False
+    assert matrix["ALPACA_LIVE_PRO_LINE_1000"]["live_execution_enabled"] is False
+    assert resolve_venue_order_handle("ALPACA_PAPER_1000", session="RTH")["max_rpm"] == 1000
+
+    # Paper Farm 1000rpm combined handles reach 6,000 rpm while keeping Stage-5 LIVE refused.
+    h1000 = build_venue_order_handles(alpaca_venue_profile="ALPACA_PAPER_1000")
+    assert h1000["paper_only"] is True and h1000["live_execution_enabled"] is False
+    assert h1000["active_alpaca_profile"] == "ALPACA_PAPER_1000"
+    assert h1000["combined_paper_farm_max_rpm"] == 6000
+    assert h1000["combined_paper_farm_exit_reserve_rpm"] == 600
+    assert h1000["combined_paper_farm_active_entry_rpm"] == 5400
+    assert h1000["active_paper_handles"]["ALPACA_PAPER_1000"]["execution_status"] == "PAPER_ACTIVE"
+    assert (
+        h1000["active_paper_handles"]["ALPACA_PAPER_200"]["execution_status"]
+        == "PAPER_FALLBACK_200RPM"
+    )
+    assert (
+        h1000["stage5_sandbox_reference_specs"]["ALPACA_LIVE_PRO_LINE_1000"]["execution_status"]
+        == "LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC"
+    )
+
+    presets = build_tv_order_presets(
+        {
+            "generated_at_et": "2026-11-25T09:35:00-05:00",
+            "active_session": "RTH",
+            "venue": "ALPACA",
+            "venue_profile": "ALPACA_PAPER_1000",
+            "macro_regime": {"regime": 1, "regime_label": "BULL"},
+            "tickets": [],
+            "standby_presets": [],
+        }
+    )
+    assert presets["venue_profile"] == "ALPACA_PAPER_1000"
+    assert presets["venue_order_handles"]["combined_paper_farm_max_rpm"] == 6000
+
+
+def test_bridge_live_intake_refuses_stage5_live_venue_profile_and_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import duckdb
+
+    from tier0_sota.tv import bridge as tv_bridge
+
+    # Fixed RTH instant: 2026-11-25 14:35:00Z (09:35 ET, valid XNYS RTH session).
+    bar_ms = int(datetime(2026, 11, 25, 14, 35, 0, tzinfo=UTC).timestamp() * 1000)
+    monkeypatch.setattr(tv_bridge.time, "time_ns", lambda: (bar_ms + 5_000) * 1_000_000)
+
+    rth_buy = _valid_alert(
+        symbol="NVDA",
+        ts_utc_ms=bar_ms,
+        side="BUY",
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        session="RTH",
+        order_type="STOP_MARKET",
+        trigger_price=100.0,
+        stop_price=98.5,
+        stop_distance_pct=0.015,
+        limit_collar_bps=0.0,
+        trailing_schedule="tight_near_lossless",
+        natr_pct=0.012,
+        data_source="tradingview_pine_v6",
+    )
+    staged_ok = stage_tv_alert_preset(
+        rth_buy,
+        staged_path=tmp_path / "staged_tv_presets.json",
+        watchlist_path=tmp_path / "missing_wl.json",
+        venue="ALPACA",
+        live_intake=True,
+    )
+    assert staged_ok["venue_profile"] == "ALPACA_PAPER_1000"
+    assert staged_ok["semi_auto_confirmed"] is False and staged_ok["qty"] == 1
+
+    # DuckDB 29-column audit table persists venue_profile cleanly.
+    db_path = tmp_path / "tv_half_auto_audit.duckdb"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        cols = conn.execute("DESCRIBE tv_staged_presets").fetchall()
+        assert len(cols) == 29
+        vp_rows = conn.execute(
+            "SELECT symbol, venue_profile FROM tv_staged_presets WHERE alert_id = ?",
+            [staged_ok["alert_id"]],
+        ).fetchall()
+        assert vp_rows == [("NVDA", "ALPACA_PAPER_1000")]
+
+    # Live intake MUST refuse Stage-5 LIVE venue profiles and cross-venue mismatches.
+    for live_vp in ("ALPACA_LIVE_PRO_LINE_1000", "ALPACA_LIVE_ELITE_SMART_ROUTER"):
+        with pytest.raises(ValueError, match="Refused Stage-5 LIVE venue_profile"):
+            validate_tv_alert_payload(
+                {**rth_buy, "venue_profile": live_vp}, venue="ALPACA", live_intake=True
+            )
+    with pytest.raises(ValueError, match="disagrees with routed venue"):
+        validate_tv_alert_payload(
+            {**rth_buy, "venue_profile": "IBKR_PAPER_4002"}, venue="ALPACA", live_intake=True
+        )
+
+    # Display preview (live_intake=False) still validates Stage-5 schema enum for read-only HUD.
+    preview = validate_tv_alert_payload(
+        {**rth_buy, "venue_profile": "ALPACA_LIVE_PRO_LINE_1000"}, venue="ALPACA", live_intake=False
+    )
+    assert preview["venue_profile"] == "ALPACA_LIVE_PRO_LINE_1000"
+    assert preview["semi_auto_confirmed"] is False and preview["qty"] == 1
+
+
+def test_engine_coordination_manifest_active_positions_and_1000rpm_pack_sync(
+    tmp_path: Path,
+) -> None:
+    import duckdb
+
+    rth_bar = "2026-11-25T15:00:00Z"
+    rth_now = datetime(2026, 11, 25, 15, 0, 10, tzinfo=UTC)
+    out_dir = tmp_path / "tv_sota_pack"
+    out_dir.mkdir(parents=True)
+
+    (tmp_path / "paper_farm_execution_status.json").write_text(
+        json.dumps(
+            {
+                "status": "SUPERVISING",
+                "active_session": "RTH",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "managed_symbols": ["NVDA"],
+                "streams": ["sip", "boats"],
+                "active_positions": [
+                    {
+                        "symbol": "NVDA",
+                        "account": "ALPACA_PA1",
+                        "lane_id": "L1_ORB_BURST",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "side": "LONG",
+                        "qty": 10.0,
+                        "entry_price": 145.0,
+                        "initial_stop": 142.83,
+                        "active_stop": 146.10,
+                        "active_session": "RTH",
+                        "trailing_schedule": "tight_near_lossless",
+                        "lock_tier": 2,
+                        "order_mode": "STOP_MARKET",
+                        "collar_bps": 0.0,
+                    }
+                ],
+                "active_positions_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "tv_engine_coordination_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-engine-coordination.v1",
+                "generated_at_utc": "2026-11-25T15:00:08+00:00",
+                "active_session": "RTH",
+                "paper_only": True,
+                "semi_auto_confirmed": False,
+                "live_execution_enabled": False,
+                "auto_submit_enabled": False,
+                "tca_calibration_ok": True,
+                "any_breaker_tripped": False,
+                "staged_alerts_evaluated": 1,
+                "ready_for_operator_confirm_count": 1,
+                "blocked_count": 0,
+                "coordination_decisions": [
+                    {
+                        "alert_id": "1234567890abcdef",
+                        "symbol": "APP",
+                        "side": "LONG",
+                        "qty": 1,
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "target_account": "ALPACA_PA2",
+                        "target_lane_id": "L2_STRUCTURAL_TREND",
+                        "semi_auto_confirmed": False,
+                        "ready_for_operator_confirm": True,
+                        "discipline_gate": "READY_FOR_OPERATOR_CONFIRM",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    movers_path = tmp_path / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-25T15:00:05Z",
+                "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+                "macro_regime": {"regime": 1, "regime_label": "RISK_ON"},
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "APP",
+                        "exchange": "XNAS",
+                        "score": 88.0,
+                        "last_price": 320.0,
+                        "prior_close": 300.0,
+                        "session_move_pct": 6.67,
+                        "rvol_normalized": 4.1,
+                        "earnings_catalyst": True,
+                        "darkpool_trf_ratio": 0.42,
+                        "unusual_volume_buildup": True,
+                        "natr_pct": 0.014,
+                        "extreme_mover_eligible": True,
+                        "bar_close_utc": rth_bar,
+                        "shortable": True,
+                        "easy_to_borrow": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        out_dir=out_dir,
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        now_utc=rth_now,
+    )
+    assert doc["venue_profile"] == "ALPACA_PAPER_1000"
+    assert doc["venue_order_handle"]["max_rpm"] == 1000
+    assert doc["tickets"][0]["archetype"] == "PEAD_DRIFT"
+    assert doc["tickets"][0]["venue_profile"] == "ALPACA_PAPER_1000"
+    assert doc["tickets"][0]["recommended_omni_preset"] == "STOCKBEE_EP_MOMENTUM_BURST"
+    assert doc["tickets"][0]["target_paper_lane"] == "ALPACA_PA2"
+    assert doc["paper_farm_coordination"]["active_positions_count"] == 1
+    assert doc["paper_farm_coordination"]["coordinated_presets_count"] == 1
+
+    with duckdb.connect(str(out_dir / "tv_half_auto_audit.duckdb"), read_only=True) as conn:
+        vp_row = conn.execute(
+            "SELECT symbol, venue_profile FROM tv_staged_presets WHERE symbol = 'APP'"
+        ).fetchone()
+    assert vp_row == ("APP", "ALPACA_PAPER_1000")
+
+    md = (out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md").read_text(encoding="utf-8")
+    assert "## Active Hosted Engine 24/5 Trailing Positions & Order-Handle Coordination" in md
+    assert "`ALPACA_PAPER_1000`" in md and "`IBKR_PAPER_4002`" in md
+    assert "`146.10`" in md and "`READY_FOR_OPERATOR_CONFIRM`" in md
+
+    presets_doc = json.loads((out_dir / "tv_order_presets.json").read_text(encoding="utf-8"))
+    assert presets_doc["venue_profile"] == "ALPACA_PAPER_1000"
+    assert presets_doc["venue_order_handles"]["combined_paper_farm_max_rpm"] == 6000
+    assert len(presets_doc["active_engine_positions"]) == 1
+    assert "PEAD_DRIFT" in presets_doc["multi_situation_playbook"]
+
+    cards_md = (out_dir / "TV_ORDER_PRESET_CARDS.md").read_text(encoding="utf-8")
+    assert "## Active Hosted Engine 24/5 Trailing & Coordination Status" in cards_md
+    assert "## Multi-Situation Setup Playbook" in cards_md and "`PEAD_DRIFT`" in cards_md
+
+    cockpit = json.loads((out_dir / "finos_tv_cockpit.json").read_text(encoding="utf-8"))
+    assert cockpit["venue_profile"] == "ALPACA_PAPER_1000"
+    assert cockpit["summary"]["active_engine_positions_count"] == 1
+    assert cockpit["summary"]["coordinated_presets_count"] == 1
+    assert cockpit["openbb_rows"][0]["venue_profile"] == "ALPACA_PAPER_1000"
+    assert cockpit["openbb_rows"][0]["max_rpm"] == 1000
+
+    comp = json.loads((out_dir / "tv_compounding_manifest.json").read_text(encoding="utf-8"))
+    assert comp["venue_profile"] == "ALPACA_PAPER_1000"
+    assert comp["active_engine_positions_count"] == 1
+    assert comp["coordinated_presets_count"] == 1
+    assert comp["multi_situation_setup_counts"] == {"PEAD_DRIFT": 1}
+    assert comp["venue_order_handles_summary"]["ALPACA_PAPER_1000"]["max_rpm"] == 1000
+    assert comp["venue_order_handles_summary"]["IBKR_PAPER_4002"]["max_rpm"] == 3000

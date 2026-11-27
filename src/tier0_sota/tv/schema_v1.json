@@ -32,6 +32,17 @@
     "side": { "type": "string", "enum": ["BUY", "SELL"] },
     "qty": { "const": 1 },
     "venue": { "type": "string", "enum": ["IBKR", "ALPACA"] },
+    "venue_profile": {
+      "type": "string",
+      "enum": [
+        "IBKR_PAPER_4002",
+        "ALPACA_PAPER_200",
+        "ALPACA_PAPER_1000",
+        "IBKR_LIVE_3000",
+        "ALPACA_LIVE_PRO_LINE_1000",
+        "ALPACA_LIVE_ELITE_SMART_ROUTER"
+      ]
+    },
     "session": {
       "type": "string",
       "enum": ["PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT"]

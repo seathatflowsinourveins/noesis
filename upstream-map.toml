@@ -81,7 +81,7 @@ tv_ecosystem_firewall = [
 ]
 forbidden_live_ports = [4001, 7496, 8798, 8796]
 forbidden_live_hosts = ["api.alpaca.markets"]
-allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_200"]
+allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_1000", "ALPACA_PAPER_200"]
 # Zero Self-Invention is strictly enforced via real upstream gates only:
 # ast-grep rules, uv.lock single-winner + banned-package & SPDX OSI firewalls,
 # deptry, ruff, ty, prek, zizmor, trivy, gitleaks, Z3 SMT proofs, exact risk.py SHA-256,
@@ -186,7 +186,7 @@ why = "Immutable pure Decimal Rule-612 risk kernel (SHA-256 & Z3 UNSAT verified)
 how = "integrate"
 upstream = "nautilus_trader"
 secondary_upstreams = ["hftbacktest", "polars", "exchange_calendars"]
-feature = "NautilusTrader v2 24/5 session protection, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse & venue rate pacing"
+feature = "NautilusTrader v2 24/5 session protection, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse & 1000rpm/3000rpm venue order-handle pacing"
 why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity directly to NautilusTrader v2"
 
 [files."src/tier0_sota/discovery.py"]
@@ -234,7 +234,7 @@ why = "Delegates Paper Farm execution and isolated per-account telemetry to pinn
 how = "integrate"
 upstream = "alpaca-py"
 secondary_upstreams = ["duckdb", "pydantic"]
-feature = "Authenticated paper inventory, broker activity reconciliation and SIP-to-TV staging"
+feature = "Authenticated paper inventory, broker activity reconciliation, bidirectional TV-to-engine coordination manifest & SIP-to-TV staging"
 why = "Uses the native Trading API, per-account DuckDB transactions and the validated TV preset contract"
 
 [files."src/tier0_sota/live/execution.py"]

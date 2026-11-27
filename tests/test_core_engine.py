@@ -53,6 +53,7 @@ from tier0_sota.engine import (
     build_ibkr_paper_connection_spec,
     build_sandbox_live_node,
     build_venue_live_node_config,
+    build_venue_order_handle_spec,
     build_venue_risk_engine_config,
     classify_us_equity_session_et,
     compute_collared_entry_limit_price,
@@ -749,3 +750,103 @@ def test_thanksgiving_overnight_to_black_friday_early_close_24x5_parity() -> Non
     )
     assert alp_res.orders_total == 0 and alp_res.fills_total == 0
     assert ib_res.outside_rth_limit_entries == 1 and ib_res.fills_total >= 1
+
+
+def test_alpaca_paper_1000_and_venue_order_handle_spec() -> None:
+    prof = EXECUTION_VENUE_PROFILES["ALPACA_PAPER_1000"]
+    assert prof.broker == "ALPACA"
+    assert prof.environment == "PAPER"
+    assert prof.routing_tier == "ALPACA_PAPER_PRO_LINE_1000"
+    assert prof.max_rpm == 1000 and prof.max_rps == 25
+    assert prof.max_concurrent_trailed_positions == 10
+    assert prof.min_exit_reserve_fraction == Decimal("0.10")
+    assert prof.live_execution_enabled is False
+    assert prof.supports_native_trailing is True
+    assert prof.supports_extended_overnight_24x5 is False
+
+    cap = inspect_venue_capability("ALPACA_PAPER_1000", requested_rpm=1000)
+    assert cap["allowed"] is True and cap["exit_reserve_rpm"] == 100
+    assert cap["active_entry_rpm"] == 900
+    assert inspect_venue_capability("ALPACA_PAPER_1000", requested_rpm=1001)["allowed"] is False
+    assert validate_venue_order_capability("ALPACA_PAPER_1000").max_rpm == 1000
+
+    re_cfg = build_venue_risk_engine_config("ALPACA_PAPER_1000")
+    assert re_cfg.bypass is False
+    assert str(re_cfg.max_order_submit_rate) == "25/00:00:01"
+    assert str(re_cfg.max_order_modify_rate) == "25/00:00:01"
+    ln_cfg = build_venue_live_node_config("ALPACA_PAPER_1000")
+    assert ln_cfg.environment == Environment.SANDBOX
+    node = build_sandbox_live_node(venue_profile="ALPACA_PAPER_1000")
+    try:
+        assert node.environment == Environment.SANDBOX
+    finally:
+        node.dispose()
+
+    ib_spec = build_venue_order_handle_spec("IBKR_PAPER_4002", "OVERNIGHT", "tight_near_lossless")
+    ap1000_spec = build_venue_order_handle_spec("ALPACA_PAPER_1000", "PRE_MARKET", "baseline")
+    ap200_spec = build_venue_order_handle_spec("ALPACA_PAPER_200", "RTH", "wide_natr_adaptive")
+    live_spec = build_venue_order_handle_spec("ALPACA_LIVE_PRO_LINE_1000", "RTH", "baseline")
+    closed_spec = build_venue_order_handle_spec("IBKR_PAPER_4002", "CLOSED", "baseline")
+
+    assert ib_spec["max_rpm"] == 3000 and ib_spec["exit_reserve_rpm"] == 300
+    assert ib_spec["entry_modify_rpm_budget"] == 2700
+    assert ib_spec["session_order_mode"] == "STOP_LIMIT" and ib_spec["limit_collar_bps"] == 50.0
+    assert ib_spec["outside_rth"] is True and ib_spec["executable_now"] is True
+    assert ib_spec["nautilus_submit_rate"] == "50/00:00:01"
+
+    assert ap1000_spec["max_rpm"] == 1000 and ap1000_spec["exit_reserve_rpm"] == 100
+    assert ap1000_spec["entry_modify_rpm_budget"] == 900
+    assert ap1000_spec["max_concurrent_trailed_positions"] == 10
+    assert ap1000_spec["session_order_mode"] == "STOP_LIMIT"
+    assert ap1000_spec["limit_collar_bps"] == 35.0 and ap1000_spec["outside_rth"] is True
+    assert ap1000_spec["executable_now"] is True and ap1000_spec["live_execution_enabled"] is False
+
+    assert ap200_spec["max_rpm"] == 200 and ap200_spec["exit_reserve_rpm"] == 20
+    assert ap200_spec["session_order_mode"] == "STOP_MARKET" and ap200_spec["outside_rth"] is False
+    assert (
+        ib_spec["trailing_modify_cadence_secs"]
+        <= ap1000_spec["trailing_modify_cadence_secs"]
+        <= ap200_spec["trailing_modify_cadence_secs"]
+    )
+    assert live_spec["executable_now"] is False and live_spec["live_execution_enabled"] is False
+    assert closed_spec["session"] == "CLOSED" and closed_spec["max_notional_scale"] == 0.0
+
+    for vid in EXECUTION_VENUE_PROFILES:
+        s = build_venue_order_handle_spec(vid, "RTH", "baseline")
+        assert s["exit_reserve_rpm"] * 10 >= s["max_rpm"]
+        assert s["trailing_modify_cadence_secs"] >= 1.0
+        worst_trail_rpm = (60.0 / s["trailing_modify_cadence_secs"]) * s[
+            "max_concurrent_trailed_positions"
+        ]
+        assert worst_trail_rpm <= s["entry_modify_rpm_budget"]
+
+    expected_session_modes = {
+        "RTH": ("STOP_MARKET", 0.0, False),
+        "PRE_MARKET": ("STOP_LIMIT", 35.0, True),
+        "AFTER_HOURS": ("STOP_LIMIT", 35.0, True),
+        "OVERNIGHT": ("STOP_LIMIT", 50.0, True),
+    }
+    for sess, (exp_mode, exp_collar, exp_outside) in expected_session_modes.items():
+        for sched in ("tight_near_lossless", "baseline", "wide_natr_adaptive"):
+            spec = build_venue_order_handle_spec("ALPACA_PAPER_1000", sess, sched)
+            assert spec["venue_profile"] == "ALPACA_PAPER_1000"
+            assert spec["environment"] == "PAPER"
+            assert spec["max_rpm"] == 1000 and spec["max_rps"] == 25
+            assert spec["exit_reserve_rpm"] == 100 and spec["entry_modify_rpm_budget"] == 900
+            assert spec["max_concurrent_trailed_positions"] == 10
+            assert spec["session"] == sess and spec["trailing_schedule"] == sched
+            assert spec["session_order_mode"] == exp_mode
+            assert spec["limit_collar_bps"] == exp_collar
+            assert spec["outside_rth"] is exp_outside
+            assert 0.0 < spec["initial_max_loss_pct"] <= 0.02
+            assert spec["nautilus_submit_rate"] == "25/00:00:01"
+            assert spec["nautilus_modify_rate"] == "25/00:00:01"
+            assert spec["paper_only"] is True and spec["live_execution_enabled"] is False
+            assert spec["executable_now"] is True
+
+    with pytest.raises(ValueError, match="Unknown execution venue profile"):
+        build_venue_order_handle_spec("UNKNOWN_VENUE")
+    with pytest.raises(ValueError, match="Unknown trailing_schedule"):
+        build_venue_order_handle_spec("ALPACA_PAPER_1000", "RTH", "bogus_sched")
+    with pytest.raises(ValueError, match="Unknown 24/5 market session"):
+        build_venue_order_handle_spec("ALPACA_PAPER_1000", "BOGUS_SESSION")
