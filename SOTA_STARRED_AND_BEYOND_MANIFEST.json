@@ -564,5 +564,87 @@
         "CDP :9223 & ToU scrapers: atilaahmettaner/tradingview-mcp, tradesdontlie/tradingview-mcp, python-tradingview-ta, TradingView-Screener, tvdatafeed, TradingView-API, tradingview-scraper"
       ]
     }
+  },
+  "backtest_platform_and_dashboard_form_audit": {
+    "verified_date": "2026-11-27",
+    "authoritative_adrs": ["ADR-0003", "ADR-0016", "ADR-0017", "ADR-0018", "ADR-0021", "ADR-0028"],
+    "canonical_manifest_path": "/mnt/z/sota-data/manifests/backtest_platform_and_dashboard_sota_manifest.json",
+    "architectural_principle": "Decoupled Rust-native execution & microstructure queue engines (NautilusTrader v2 + hftbacktest) composed with five specialized official OSI upstream dashboard forms fed solely by declarative artifacts (zero self-built or engine-coupled web GUIs).",
+    "five_upstream_dashboard_forms": {
+      "form_a_static_tearsheets": {
+        "name": "Unmodified Interactive Plotly HTML Tearsheets",
+        "repos": [
+          {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "spdx": "LGPL-3.0-only", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark')"},
+          {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.report_generation.combine_figures_to_html (pure Plotly HTML; Streamlit [dashboard] extra excluded)"},
+          {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution"},
+          {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution"},
+          {"repo": "caddyserver/caddy", "version": "2.11.9-alpine", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:8793/tearsheets/"}
+        ]
+      },
+      "form_b_control_planes": {
+        "name": "Experiment, Hyperparameter, Asset-Lineage, Safety Eval & Living ADR Control Planes",
+        "repos": [
+          {"repo": "mlflow/mlflow", "version": "3.18.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:5000"},
+          {"repo": "optuna/optuna-dashboard", "version": "0.21.0", "spdx": "MIT", "endpoint": "http://127.0.0.1:8080/dashboard"},
+          {"repo": "dagster-io/dagster", "version": "1.13.31", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:3000"},
+          {"repo": "UKGovernmentBEIS/inspect_ai", "version": "0.3.292", "spdx": "MIT", "endpoint": "http://127.0.0.1:7575"},
+          {"repo": "zensical/zensical", "version": "0.1.3", "spdx": "MIT", "endpoint": "http://127.0.0.1:8010"}
+        ]
+      },
+      "form_c_institutional_terminal": {
+        "name": "Declarative Institutional Terminal & Streaming Arrow Blotter",
+        "repos": [
+          {"repo": "openbq-org/finos-workspace", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:1420"},
+          {"repo": "openbq-org/finos-workspace-plugins", "spdx": "Apache-2.0", "plugins": ["ag-grid@2.3.0", "plotly-charts@2.5.0", "@finos-workspace/mermaid@1.0.0"]},
+          {"repo": "OpenBB-finance/OpenBB", "spdx": "Apache-2.0", "note": "V5+ Apache-2.0 (migrated from V4 AGPL-3.0-only); paired with openbq-org/backends-for-openbb MIT on :6900"},
+          {"repo": "finos/perspective", "spdx": "Apache-2.0", "note": "WASM/Rust Arrow streaming grid with memory64 & DuckDB/Polars virtual server"},
+          {"repo": "tradingview/lightweight-charts", "spdx": "Apache-2.0", "note": "v5 HTML5 canvas charts"},
+          {"repo": "ag-grid/ag-grid", "spdx": "MIT", "note": "ag-grid-community ONLY; Enterprise commercial EULA blocked"}
+        ]
+      },
+      "form_d_observability_and_sql": {
+        "name": "Live 24/5 Observability & Read-Only SQL Workbench",
+        "repos": [
+          {"repo": "grafana/grafana", "version": "13.3.1", "spdx": "AGPL-3.0-only", "endpoint": "http://127.0.0.1:3001"},
+          {"repo": "prometheus/prometheus", "version": "v3.16.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9090"},
+          {"repo": "prometheus/alertmanager", "version": "v0.28.1", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9093"},
+          {"repo": "open-telemetry/opentelemetry-collector-contrib", "version": "0.166.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9464"},
+          {"repo": "duckdb/duckdb-ui", "version": "2.0.1", "spdx": "MIT", "endpoint": "http://127.0.0.1:4213"}
+        ]
+      },
+      "form_e_frontier_watches": {
+        "name": "Earned-Trigger 2026 Frontier Backtest UI & Storage Workbenches (ADR-0018 4-Gate Watch)",
+        "repos": [
+          {"repo": "marimo-team/marimo", "spdx": "Apache-2.0", "role": "Reactive pure-.py notebook/app with native DuckDB/Polars SQL & PEP 723 metadata (zero .ipynb)"},
+          {"repo": "rerun-io/rerun", "spdx": "MIT OR Apache-2.0", "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog)"},
+          {"repo": "uwdata/mosaic", "spdx": "BSD-3-Clause", "role": "DuckDB/WASM v2 linked multi-view cross-filtering over millions/billions of ticks (v0.35+)"},
+          {"repo": "finos/FDC3", "spdx": "Apache-2.0", "role": "Cross-widget fdc3.instrument context bus inside FINOS Workspace"},
+          {"repo": "evidence-dev/evidence", "spdx": "MIT", "role": "SQL+Markdown static Stage-5 dossiers served via Caddy (Core only)"},
+          {"repo": "vortex-data/vortex", "spdx": "Apache-2.0", "role": "Linux Foundation columnar successor to Parquet for DuckDB/Arrow when lake > 100 GB/run"}
+        ]
+      }
+    },
+    "evaluated_backtest_engine_peers": [
+      {"repo": "QuantConnect/Lean", "spdx": "Apache-2.0", "decision": "rejected_l3_overlap", "reason": "C#/Python engine duplicating NautilusTrader v2 single-engine SSOT; cloud/data commercial"},
+      {"repo": "barter-rs/barter-rs", "spdx": "MIT", "decision": "watch_excluded_l3_overlap", "reason": "Modular pure-Rust trading/backtest crates without Python ML/research parity; overlaps NautilusTrader v2"},
+      {"repo": "ml4t/backtest", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Pure-Python event backtester overlapping Rust-core NautilusTrader v2 (retain ml4t/diagnostic, ml4t/engineer, ml4t/skills)"},
+      {"repo": "ml4t/live", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Python live broker runner overlapping NautilusTrader v2 LiveNode/SANDBOX"},
+      {"repo": "microsoft/qlib", "spdx": "MIT", "decision": "excluded_l2_l3_overlap", "reason": "Daily ML quant research framework lacking 24/5 Rust tick/queue Sim==Paper==Live parity; companion rd-agent banned"},
+      {"repo": "microsoft/MarS", "spdx": "MIT", "decision": "earned_trigger_l13_watch", "reason": "Generative LMM L2/L3 order-book market simulator (OSI winner replacing unlicensed peernagy/LOBS5)"},
+      {"repo": "polakowo/vectorbt", "spdx": "Apache-2.0 (Pro commercial)", "decision": "banned_l3", "reason": "Vectorized bar engine breaking Sim==Paper==Live parity; commercial Pro fails OSI firewall"},
+      {"repo": "mementum/backtrader", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Unmaintained bar-loop engine banned in upstream-map.toml and ast-grep"},
+      {"repo": "stefan-jansen/zipline-reloaded", "spdx": "Apache-2.0", "decision": "banned_l3", "reason": "Legacy daily-centric engine banned in upstream-map.toml and ast-grep"},
+      {"repo": "freqtrade/freqtrade", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Crypto-centric GPL-3.0 bot banned in upstream-map.toml and ast-grep"},
+      {"repo": "hummingbot/hummingbot", "spdx": "Apache-2.0", "decision": "excluded_l3_domain_mismatch", "reason": "Crypto market-making bot outside US equities 24/5 SIP/BOATS + NautilusTrader v2 SSOT"}
+    ],
+    "excluded_backtest_dashboard_wrappers": [
+      {"repo": "Black101081/Nautilus-Web-Interface", "decision": "excluded_redundant_custom_ui", "reason": "Community FastAPI+React admin UI coupling web server state to NautilusTrader and duplicating official FINOS/OpenBB/Grafana/MLflow"},
+      {"repo": "openzim/nautilus-webui", "decision": "excluded_redundant_custom_ui", "reason": "SaaS-style community wrapper duplicating official L6/L10 upstream platforms"},
+      {"repo": "mirkovicdev/HFTENGINE", "decision": "excluded_tui_overlap", "reason": "Crypto Binance-focused VGA TUI for hftbacktest; defer L2/L3 visual replay to rerun-io/rerun (MIT/Apache-2.0)"},
+      {"repo": "neosun100/lean-allinone", "decision": "excluded_l3_ui_overlap", "reason": "Third-party Lean Docker/WebUI bundle for rejected L3 engine"},
+      {"repo": "aarjaneiro/QtLean", "decision": "excluded_desktop_ui_overlap", "reason": "Qt desktop GUI for rejected L3 engine"},
+      {"repo": "ml4t/diagnostic[dashboard]", "decision": "excluded_streamlit_extra", "reason": "Optional extra pulls banned streamlit; use ml4t-diagnostic pure Plotly HTML tearsheet API served via Caddy :8793"},
+      {"repo": "ranaroussi/quantstats", "decision": "banned_l5", "reason": "Pulls banned yfinance and omits CPCV/DSR/PBO/SPA/HAC multiple-testing falsification"}
+    ]
   }
 }
