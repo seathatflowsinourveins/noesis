@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -4215,6 +4216,9 @@ def test_order_preset_cards_sweep_summary_early_stage_table_and_zero_bare_staged
                         "last_price": 13.30,
                         "daily_change_pct": 52.40,
                         "tod_rvol": 14.5,
+                        "spread_bps": 18.4,
+                        "adv_20": 4_250_000.0,
+                        "split_adjusted": False,
                         "dollar_vol": 42_500_000.0,
                         "ranking_reason": "+52.40% daily | PaceRVOL 14.50x | Climax Surge",
                     },
@@ -4241,6 +4245,10 @@ def test_order_preset_cards_sweep_summary_early_stage_table_and_zero_bare_staged
                         "last_price": 17.30,
                         "daily_change_pct": 18.42,
                         "tod_rvol": 4.25,
+                        "spread_bps": 24.5,
+                        "adv_20": 8_750_000.0,
+                        "split_adjusted": True,
+                        "split_factor": 5.0,
                         "dollar_vol": 195_000_000.0,
                         "ranking_reason": "+18.42% daily | PaceRVOL 4.25x | Early Ignition",
                     }
@@ -4324,6 +4332,9 @@ def test_order_preset_cards_sweep_summary_early_stage_table_and_zero_bare_staged
     assert "**Entire-US-Market Sweep Summary:** `12,005` NMS equities in `1.23s`" in cards_md
     assert "Early-Stage Ignition `29` | Extreme Expansion `21` | Parabolic Climax `10`" in cards_md
     assert "## Top Entire-Market Extreme Movers & Early-Stage Ignition (>= $1)" in cards_md
+    assert "| Spread (bps) | ADV20 | Split Adj |" in cards_md
+    assert "`18.4` | `4.25M` | `NO`" in cards_md
+    assert "`24.5` | `8.75M` | `YES (5x)`" in cards_md
     assert "`NASDAQ:AEHL`" in cards_md and "`NASDAQ:XP`" in cards_md and "`BATS:COHX`" in cards_md
     assert "+18.42% daily · PaceRVOL 4.25x · Early Ignition" in cards_md
     assert "NASDAQ:PENNY" not in cards_md
@@ -4332,6 +4343,12 @@ def test_order_preset_cards_sweep_summary_early_stage_table_and_zero_bare_staged
     for wl_key in ("active", "alert_bound"):
         syms = payload["watchlists"][wl_key]["symbols"]
         assert all(":" in s for s in syms), f"Bare ticker in payload[{wl_key}]: {syms}"
+    expected_top10 = payload["watchlists"]["active"]["symbols"][:10]
+    expected_sha = hashlib.sha256(",".join(expected_top10).encode("utf-8")).hexdigest()
+    assert payload["top10_membership_symbols"] == expected_top10
+    assert payload["top10_membership_sha256"] == expected_sha
+    assert payload["min_cloud_sync_interval_secs"] == 900
+    assert payload["sync_policy"] == "delta_gated_15m_max_96_per_day"
 
     # Direct render call with un-prefixed staged row resolves via full_market_movers automatically
     direct_txt = render_tv_movers_first_watchlist(
@@ -4356,3 +4373,107 @@ def test_order_preset_cards_sweep_summary_early_stage_table_and_zero_bare_staged
         "CBOE:VIX",
         "NASDAQ:TLT",
     ]
+
+
+def test_refuse_live_endpoints_allows_market_decimals_and_hex_ids_while_blocking_live() -> None:
+    """Regression test: fractional market prices/ratios & hex IDs must not false-positive,
+    while every live broker host or live port marker remains strictly fail-closed."""
+    # True negatives — finite fractional floats/Decimals, stringified decimals,
+    # hex alert_ids / client_order_ids, UUIDs, ISO timestamps with .4001 microseconds.
+    benign_payload: dict[str, Any] = {
+        "price": 74.96,
+        "entry_price": 40.01,
+        "ts_utc_ms": 1795874960000,
+        "trigger_price": 12.4001,
+        "stop_price": Decimal("12.2000"),
+        "darkpool_trf_ratio": 0.7496,
+        "hidden_volume_ratio": Decimal("0.008796"),
+        "natr_pct": 101.8798,
+        "rvol": 5.8796,
+        "high_price_stock": 4001.5,
+        "high_price_int": 4001,
+        "daily_volume": 7496,
+        "share_count": 9223,
+        "high_price_dec": Decimal("7496.25"),
+        "str_prices": ["12.4001", "74.96", "40.01", "0.7496", "101.8798", "5.8796", "4001.50"],
+        "alert_id": "a4001f9c2e8b7d10",
+        "alt_alert_ids": [
+            "c7496d8e1a2b3c4d",
+            "4001a9c2e8b7d10f",
+            "9c2e8b7d10fa8798",
+            "noesis-tv-9c2e8b7d10fa4001",
+        ],
+        "uuid": "550e8400-4001-41d4-a716-446655440000",
+        "staged_at_utc": "2026-11-27T15:51:19.4001+00:00",
+        "dt_obj": datetime(2026, 11, 27, 15, 51, 19, 400100, tzinfo=UTC),
+        "notes": "trigger=12.4001 trf=0.7496 high=4001.50 price=74.96",
+        "paper_url": "https://paper-api.alpaca.markets/v2/orders",
+        "paper_port": 4002,
+        "flag_true": True,
+        "flag_false": False,
+        "none_val": None,
+    }
+    refuse_live_endpoints(benign_payload)
+
+    # Full validate_tv_alert_payload round-trip with .4001 / .7496 / .8796 / .8798 values
+    validated = validate_tv_alert_payload(
+        _valid_alert(
+            trigger_price=74.96,
+            stop_price=74.01,
+            ts_utc_ms=1795874960000,
+            stop_distance_pct=0.012673,
+            darkpool_trf_ratio=0.7496,
+            hidden_volume_ratio=0.008796,
+            rvol=5.8796,
+            natr_pct=0.08798,
+            trailing_schedule="wide_natr_adaptive",
+        )
+    )
+    assert validated["symbol"] == "NVDA"
+    assert validated["trigger_price"] == pytest.approx(74.96)
+
+    # True positives — EVERY live/CDP port or live host form must STILL fail closed
+    forbidden_payloads: list[dict[str, Any]] = [
+        {"port": 4001},
+        {"port": 7496},
+        {"port": 8798},
+        {"port": 8796},
+        {"port": 9223},
+        {"cdp": 9223},
+        {"cdp": "9223"},
+        {"cdp_port": 9223},
+        {"port": 4001.0},
+        {"port": Decimal("7496.00")},
+        {"port": "4001"},
+        {"port": " 7496 "},
+        {"port": "4001.0"},
+        {"port": "4.001e3"},
+        {"ports": [4002, 8798]},
+        {"host": "127.0.0.1:4001"},
+        {"host": "localhost:4001"},
+        {"host": "localhost:7496"},
+        {"url": "http://127.0.0.1:7496"},
+        {"url": "ibkr://host:8798"},
+        {"url": "http://127.0.0.1:8796/v1"},
+        {"url": "http://127.0.0.1:9223/json"},
+        {"cfg": "port=8796"},
+        {"cfg": "port 8798"},
+        {"cfg": "--port=4001"},
+        {"cfg": "port=4001.0"},
+        {"cfg": "cdp=9223"},
+        {"cfg": "live4001"},
+        {"endpoint_4001": "paper"},
+        {"url": "https://api.alpaca.markets/v2/orders"},
+        {"url": "https://live.alpaca.markets/v2/orders"},
+        {
+            "paper": "https://paper-api.alpaca.markets/v2/orders",
+            "live": "https://api.alpaca.markets/v2/orders",
+        },
+        {"nested": [{"host": "127.0.0.1:4001"}]},
+        {"mixed": "price=12.4001 host=127.0.0.1:4001"},
+        {"mixed_hex": "id=a4001f9c2e8b7d10 host=localhost:7496"},
+        {"raw_bytes": b"127.0.0.1:4001"},
+    ]
+    for bad in forbidden_payloads:
+        with pytest.raises(ValueError, match="live broker endpoint"):
+            refuse_live_endpoints(bad)

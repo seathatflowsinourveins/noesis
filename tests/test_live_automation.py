@@ -7312,6 +7312,150 @@ def test_ibkr_health_reuses_fresh_ready_ttl_and_backs_off_balance_timeout(
     assert doc_rec["ready"] is True and doc_rec["probe_error"] is None
 
 
+def test_ibkr_health_backs_off_node_exited_and_collects_probe_cycles_on_worker_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transient `node_exited:` honors 300s backoff (fail-closed ready=False), non-transient/
+    PermissionError never bypasses, and cyclic !Send probe objects drop on creating thread."""
+    import gc
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tier0_sota.live import runner
+
+    adapter = IbkrPaperAdapter(tmp_path)
+    monkeypatch.setenv("IBKR_PAPER_TCP_REACHABLE", "1")
+    monkeypatch.setenv("TIER0_IBKR_HEALTH_TTL_SECS", "600")
+    monkeypatch.setenv("TIER0_IBKR_ERROR_BACKOFF_SECS", "300")
+
+    probe_calls = 0
+    probe_mode = "node_exited_err"
+
+    def _fake_probe(**_kw: Any) -> dict[str, Any]:
+        nonlocal probe_calls
+        probe_calls += 1
+        if probe_mode == "node_exited_err":
+            return {
+                "authenticated": False,
+                "all_du_paper_accounts": True,
+                "account_id": None,
+                "equity": None,
+                "tcp_reachable": False,
+                "reason": "node_exited:Failed to connect execution clients: INTERACTIVE_BROKERS",
+            }
+        if probe_mode == "node_exited_bare":
+            return {
+                "authenticated": False,
+                "all_du_paper_accounts": True,
+                "account_id": None,
+                "equity": None,
+                "tcp_reachable": False,
+                "reason": "node_exited",
+            }
+        if probe_mode == "permission_error":
+            raise PermissionError("Refused non-DU IBKR account; paper DU* account required")
+        if probe_mode == "config_error":
+            return {
+                "authenticated": False,
+                "all_du_paper_accounts": False,
+                "equity": None,
+                "reason": "du_account_unresolved",
+            }
+        return {
+            "authenticated": True,
+            "all_du_paper_accounts": True,
+            "account_id": "DU" + "T999004",
+            "equity": 175000.0,
+            "tcp_reachable": True,
+        }
+
+    orig_probe = runner._probe_ibkr_paper_session
+    monkeypatch.setattr(runner, "_probe_ibkr_paper_session", _fake_probe)
+
+    # 1. `node_exited:...` persists ready=False and skips re-probe inside 300s backoff.
+    assert runner.ibkr_health(adapter) is True
+    assert probe_calls == 1
+    doc1 = json.loads(adapter.status_path.read_text(encoding="utf-8"))
+    assert doc1["ready"] is False
+    assert str(doc1["probe_error"]).startswith("node_exited:Failed to connect")
+
+    assert runner.ibkr_health(adapter) is True
+    assert probe_calls == 1  # skipped during 300s backoff
+    doc1_cached = json.loads(adapter.status_path.read_text(encoding="utf-8"))
+    assert doc1_cached["ready"] is False
+    assert doc1_cached["probe_checked_at_utc"] == doc1["probe_checked_at_utc"]
+
+    # 2. Bare `node_exited` also honors backoff after TTL expiry; expires cleanly at 0s.
+    monkeypatch.setenv("TIER0_IBKR_ERROR_BACKOFF_SECS", "0")
+    probe_mode = "node_exited_bare"
+    assert runner.ibkr_health(adapter) is True
+    assert probe_calls == 2
+    monkeypatch.setenv("TIER0_IBKR_ERROR_BACKOFF_SECS", "300")
+    assert runner.ibkr_health(adapter) is True
+    assert probe_calls == 2
+
+    # 3. Non-transient errors (`du_account_unresolved`) & `PermissionError` NEVER back off.
+    monkeypatch.setenv("TIER0_IBKR_ERROR_BACKOFF_SECS", "0")
+    probe_mode = "config_error"
+    assert runner.ibkr_health(adapter) is True
+    assert probe_calls == 3
+    monkeypatch.setenv("TIER0_IBKR_ERROR_BACKOFF_SECS", "300")
+    assert runner.ibkr_health(adapter) is True
+    assert probe_calls == 4  # NOT skipped by backoff!
+
+    probe_mode = "permission_error"
+    with pytest.raises(PermissionError, match="non-DU"):
+        runner.ibkr_health(adapter)
+    assert probe_calls == 5
+    with pytest.raises(PermissionError, match="non-DU"):
+        runner.ibkr_health(adapter)
+    assert probe_calls == 6  # PermissionError never suppressed by backoff
+
+    # Even if a status file ever carried `node_exited:PermissionError:...`, fail closed.
+    assert runner._is_transient_ibkr_probe_error("node_exited:PermissionError: refused") is False
+    assert runner._is_transient_ibkr_probe_error("node_exited:Failed to connect") is True
+    assert runner._is_transient_ibkr_probe_error("balance_timeout") is True
+    assert runner._is_transient_ibkr_probe_error("du_account_unresolved") is False
+
+    # 4. Same-thread cyclic collection inside `_probe_ibkr_paper_session` on worker thread.
+    lifecycle: dict[str, int | None] = {"created_tid": None, "dropped_tid": None}
+
+    class _UnsendableCycleSentinel:
+        def __init__(self) -> None:
+            self.created_tid = threading.get_ident()
+            lifecycle["created_tid"] = self.created_tid
+            self.self_ref: Any = self
+
+        def __del__(self) -> None:
+            lifecycle["dropped_tid"] = threading.get_ident()
+
+    async def _fake_async_probe(**_kw: Any) -> dict[str, Any]:
+        sentinel = _UnsendableCycleSentinel()
+        assert sentinel.self_ref is sentinel
+        return {
+            "authenticated": False,
+            "all_du_paper_accounts": True,
+            "account_id": None,
+            "equity": None,
+            "tcp_reachable": False,
+            "reason": "node_exited:Failed to connect execution clients: INTERACTIVE_BROKERS",
+        }
+
+    monkeypatch.setattr(runner, "_probe_ibkr_paper_session", orig_probe)
+    monkeypatch.setattr(runner, "_probe_ibkr_paper_session_async", _fake_async_probe)
+    main_tid = threading.get_ident()
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="ibkr-health") as pool:
+        res = pool.submit(
+            runner._probe_ibkr_paper_session,
+            account_id="DU" + "T999004",
+        ).result()
+    gc.collect()
+    assert res["reason"].startswith("node_exited:")
+    assert lifecycle["created_tid"] is not None
+    assert lifecycle["created_tid"] != main_tid
+    assert lifecycle["dropped_tid"] == lifecycle["created_tid"]
+
+
 def test_tca_order_level_notional_weighting_and_exit_context_trigger_timestamp(
     tmp_path: Path,
 ) -> None:
@@ -7430,6 +7574,113 @@ def test_tca_order_level_notional_weighting_and_exit_context_trigger_timestamp(
     assert ctx[8] == fill_ts
 
 
+def test_run_cycle_runs_ibkr_health_concurrently_without_stalling_scanner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run_cycle decouples slow IBKR :4002 probe from scanner.scan() (fail-closed preserved)."""
+    from tier0_sota.live import runner
+
+    ibkr_started = threading.Event()
+    scanner_ran_during_ibkr = threading.Event()
+    release_ibkr = threading.Event()
+
+    def _slow_ibkr_health(_adapter: Any) -> bool:
+        ibkr_started.set()
+        release_ibkr.wait(timeout=5.0)
+        return True
+
+    class _FakeScanner:
+        data_client = None
+
+        def scan(self, *, top_k: int, output_path: Path) -> dict[str, Any]:
+            assert ibkr_started.wait(timeout=5.0)
+            scanner_ran_during_ibkr.set()
+            release_ibkr.set()
+            doc = {
+                "ranked_count": 0,
+                "macro_regime": {"regime": 0, "regime_label": "NEUTRAL"},
+                "entries": [],
+            }
+            output_path.write_text(json.dumps(doc), encoding="utf-8")
+            return doc
+
+    monkeypatch.setattr(runner, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(runner, "ibkr_health", _slow_ibkr_health)
+    monkeypatch.setattr(
+        runner,
+        "PaperFarmCoordinator",
+        lambda mdir: SimpleNamespace(
+            lanes={},
+            ibkr=SimpleNamespace(status_path=mdir / "ibkr_du_4002_live_automation_status.json"),
+        ),
+    )
+    monkeypatch.setattr(
+        runner.ExtremeMoverScanner,
+        "from_env",
+        classmethod(lambda _cls, **_kw: _FakeScanner()),
+    )
+    monkeypatch.setattr(runner, "refresh_accounts", lambda *_a, **_kw: {})
+    monkeypatch.setattr(
+        runner,
+        "build_live_lane_preset_bundle",
+        lambda *_a, **_kw: {"top_potential_symbols": []},
+    )
+    monkeypatch.setattr(
+        runner,
+        "reconcile_staged_tv_presets_for_engine",
+        lambda *_a, **_kw: {
+            "schema_version": "tier0.tv-engine-coordination.v1",
+            "staged_alerts_evaluated": 0,
+            "ready_for_operator_confirm_count": 0,
+            "blocked_count": 0,
+            "active_positions_count": 0,
+            "adopted_external_positions_count": 0,
+            "synthetic_offhours_trailed_count": 0,
+            "peak_reverse_armed_count": 0,
+            "rapid_reentry_ready_count": 0,
+            "any_breaker_tripped": False,
+            "venue_order_handles": {"combined_max_rpm": 6000},
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "refresh_tickets_from_paths",
+        lambda **_kw: {"staged_count": 0, "standby_presets": []},
+    )
+    monkeypatch.setattr(
+        runner,
+        "aggregate_paper_farm_performance",
+        lambda *_a, prom_output_path=None, **_kw: (
+            prom_output_path.write_text("# ok\n", encoding="utf-8") if prom_output_path else None,
+            {
+                "generated_at_utc": datetime.now(UTC).isoformat(),
+                "summary": {"tca_fills_count": 0},
+                "tv_half_auto": {},
+                "per_lane": {},
+                "paper_live_deployed": False,
+            },
+        )[1],
+    )
+    from tier0_sota.live import execution
+
+    monkeypatch.setattr(execution, "cost_calibration_allows_entry", lambda _d: True)
+
+    res = runner.run_cycle(tmp_path, top_k=5, pins=("SPY",))
+    assert scanner_ran_during_ibkr.is_set()
+    assert res["ibkr_tcp_reachable"] is True
+    assert res["paper_only"] is True
+    assert res["live_execution_enabled"] is False
+
+    # PermissionError from ibkr_health MUST still propagate fail-closed!
+    def _live_refusal(_adapter: Any) -> bool:
+        raise PermissionError("Refused non-DU IBKR account")
+
+    monkeypatch.setattr(runner, "ibkr_health", _live_refusal)
+    ibkr_started.set()
+    with pytest.raises(PermissionError, match="non-DU"):
+        runner.run_cycle(tmp_path, top_k=5, pins=("SPY",))
+
+
 def test_prewall_ushape_tod_rvol_curve_early_close_and_flat_vs_shock_open(
     tmp_path: Path,
 ) -> None:
@@ -7508,7 +7759,7 @@ def test_prewall_ushape_tod_rvol_curve_early_close_and_flat_vs_shock_open(
             UTC
         )
         assert compute_tod_expected_volume_fraction(ts_ec_ah, "AFTER_HOURS") == pytest.approx(
-            TOD_RVOL_EARLY_CLOSE_SCALE
+            TOD_RVOL_EARLY_CLOSE_SCALE + 0.06 * (30.0 / 240.0)
         )
 
     # 4. Flat-open FPR protection vs shock-open detection (direct formula + 09:30 auction guard).
@@ -7637,3 +7888,181 @@ def test_prewall_ushape_tod_rvol_curve_early_close_and_flat_vs_shock_open(
     assert bf_doc["full_market_sweep_summary"]["tod_rvol_early_close"] is True
     assert bf_by_sym["SOXS"]["rvol_normalized"] >= 2.0
     assert bf_by_sym["SOXS"]["extreme_mover_eligible"] is True
+
+
+def test_scanner_reverse_split_spread_gate_adv20_pm_tod_rvol_vwap_cap_and_vixy_proxy(
+    tmp_path: Path,
+) -> None:
+    """Verify reverse-split adj, spread gate, ADV_20, PM ToD RVOL, VWAP cap & VIXY proxy."""
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+
+    from tier0_sota.live.scanner import (
+        TOD_RVOL_PM_SHARE_OF_FULLDAY,
+        ExtremeMoverScanner,
+        compute_tod_expected_volume_fraction,
+    )
+
+    ny = ZoneInfo("America/New_York")
+    # 1. PRE_MARKET ToD RVOL scaling uses TOD_RVOL_PM_SHARE_OF_FULLDAY (0.01871) with 0.002 floor.
+    pm_700 = datetime(2026, 11, 27, 7, 0, tzinfo=ny).astimezone(UTC)
+    assert compute_tod_expected_volume_fraction(pm_700, "PRE_MARKET") == pytest.approx(
+        TOD_RVOL_PM_SHARE_OF_FULLDAY * (180.0 / 330.0), rel=1e-6
+    )
+    pm_405 = datetime(2026, 11, 27, 4, 5, tzinfo=ny).astimezone(UTC)
+    assert compute_tod_expected_volume_fraction(pm_405, "PRE_MARKET") == pytest.approx(0.002)
+
+    # 2. End-to-end RTH sweep: INLF (1-for-16 reverse split), FIEE (1163 bps dead spread),
+    #    GDEV (+17.1% extended over VWAP), CLN1 (clean early-stage mover w/ ADV_20), VIXY proxy.
+    now_rth = datetime(2026, 11, 27, 10, 30, tzinfo=ny).astimezone(UTC)
+    prior_day = datetime(2026, 11, 25, 16, 0, tzinfo=ny).astimezone(UTC)
+
+    def _snap(
+        px: float,
+        prev_c: float,
+        dvol: float,
+        pvol: float,
+        *,
+        dvwap: float,
+        bid: float,
+        ask: float,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            latest_trade=SimpleNamespace(price=px),
+            latest_quote=SimpleNamespace(bid_price=bid, ask_price=ask),
+            daily_bar=SimpleNamespace(open=dvwap, close=px, volume=dvol, vwap=dvwap),
+            previous_daily_bar=SimpleNamespace(close=prev_c, volume=pvol, timestamp=prior_day),
+        )
+
+    snaps = {
+        "INLF": _snap(
+            2.42, 0.1626, 400_000.0, 6_400_000.0, dvwap=2.45, bid=2.41, ask=2.43
+        ),  # 1-for-16 reverse split -> adj prev=2.6016 (-6.98%, NOT +1388%!)
+        "FIEE": _snap(
+            1.80, 1.40, 600_000.0, 200_000.0, dvwap=1.78, bid=1.70, ask=1.91
+        ),  # spread 1163.4 bps > 500 bps -> excluded from BOTH early & top movers
+        "GDEV": _snap(
+            25.00, 20.50, 500_000.0, 150_000.0, dvwap=21.35, bid=24.96, ask=25.04
+        ),  # +17.10% over VWAP > +12% cap -> excluded from EARLY_STAGE_IGNITION
+        "CLNA": _snap(
+            10.50, 9.50, 600_000.0, 2_000_000.0, dvwap=10.00, bid=10.49, ask=10.51
+        ),  # +10.53%, +5.0% VWAP, 19.0 bps spread, ADV_20=200k (vs 2M spike prev_vol)
+        "VIXY": _snap(18.26, 20.00, 1_500_000.0, 2_000_000.0, dvwap=18.50, bid=18.25, ask=18.27),
+        "SPY": _snap(605.0, 600.0, 20_000_000.0, 50_000_000.0, dvwap=603.0, bid=604.99, ask=605.01),
+        "QQQ": _snap(515.0, 510.0, 15_000_000.0, 40_000_000.0, dvwap=513.0, bid=514.99, ask=515.01),
+        "SOXX": _snap(230.0, 225.0, 2_000_000.0, 5_000_000.0, dvwap=228.0, bid=229.95, ask=230.05),
+    }
+
+    class _EmptyScreener:
+        def get_most_actives(self, _req: Any) -> SimpleNamespace:
+            return SimpleNamespace(most_actives=[])
+
+        def get_market_movers(self, _req: Any) -> SimpleNamespace:
+            return SimpleNamespace(gainers=[], losers=[])
+
+    class _CorpActions:
+        def get_corporate_actions(self, _req: Any) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "reverse_splits": [
+                        SimpleNamespace(
+                            symbol="INLF",
+                            old_rate=16.0,
+                            new_rate=1.0,
+                            ex_date=date(2026, 11, 27),
+                        )
+                    ],
+                    "forward_splits": [],
+                }
+            )
+
+    class _Trading:
+        def get_all_assets(self, _req: Any) -> list[SimpleNamespace]:
+            return [SimpleNamespace(symbol=s, tradable=True, exchange="NASDAQ") for s in snaps]
+
+        def get_asset(self, sym: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                symbol=sym, shortable=True, easy_to_borrow=True, exchange="NASDAQ"
+            )
+
+    class _Data:
+        def get_stock_snapshot(self, req: Any) -> dict[str, Any]:
+            syms = getattr(req, "symbol_or_symbols", ())
+            syms = [syms] if isinstance(syms, str) else list(syms)
+            return {s: snaps[s] for s in syms if s in snaps}
+
+        def get_stock_bars(self, req: Any) -> SimpleNamespace:
+            syms = getattr(req, "symbol_or_symbols", ())
+            syms = [syms] if isinstance(syms, str) else list(syms)
+            tf_str = str(getattr(req, "timeframe", "")).lower()
+            out: dict[str, list[SimpleNamespace]] = {}
+            if "day" in tf_str:
+                for s in syms:
+                    base_v = 200_000.0 if s == "CLNA" else 500_000.0
+                    out[s] = [
+                        SimpleNamespace(
+                            timestamp=datetime(2026, 11, 10 + i, 16, 0, tzinfo=ny).astimezone(UTC),
+                            open=10.0,
+                            high=10.5,
+                            low=9.5,
+                            close=10.0,
+                            volume=base_v,
+                        )
+                        for i in range(10)
+                    ]
+                return SimpleNamespace(data=out)
+            for s in syms:
+                if s not in snaps:
+                    continue
+                px = float(snaps[s].latest_trade.price)
+                out[s] = [
+                    SimpleNamespace(
+                        timestamp=now_rth - timedelta(minutes=15 - i),
+                        open=px * 0.995,
+                        high=px * 1.002,
+                        low=px * 0.992,
+                        close=px,
+                        volume=50_000.0,
+                    )
+                    for i in range(15)
+                ]
+            return SimpleNamespace(data=out)
+
+    sc = ExtremeMoverScanner(
+        screener_client=_EmptyScreener(),
+        data_client=_Data(),
+        trading_client=_Trading(),
+        corp_actions_client=_CorpActions(),
+        pin_symbols=("SPY", "QQQ", "SOXX"),
+        enable_sec_pit_catalysts=False,
+        universe_cache_path=tmp_path / "uni.json",
+        split_cache_path=tmp_path / "splits.json",
+        adv20_cache_path=tmp_path / "adv20.json",
+    )
+    doc = sc.scan(top_k=10, now_utc=now_rth)
+    full_top = {r["symbol"]: r for r in doc["full_market_top_movers"]}
+    early_syms = {r["symbol"] for r in doc["early_stage_ignition_movers"]}
+
+    # INLF reverse-split adjusted: -6.98% (NOT +1388%), split_adjusted=True, NOT #1!
+    assert "INLF" in full_top
+    assert full_top["INLF"]["split_adjusted"] is True
+    assert full_top["INLF"]["split_factor"] == pytest.approx(16.0)
+    assert full_top["INLF"]["daily_change_pct"] == pytest.approx(-6.98, abs=0.05)
+    assert doc["full_market_top_movers"][0]["symbol"] != "INLF"
+
+    # FIEE (1163 bps spread) excluded from BOTH full_market_top_movers and early_stage_ignition!
+    assert "FIEE" not in full_top
+    assert "FIEE" not in early_syms
+
+    # GDEV (+17.1% over VWAP) excluded from early_stage_ignition, while CLNA passes with ADV_20!
+    assert "GDEV" not in early_syms
+    assert "CLNA" in early_syms
+    assert full_top["CLNA"]["adv_20"] == pytest.approx(200_000.0)
+    assert full_top["CLNA"]["rvol_baseline_source"] == "adv_20_median_split_adj"
+    assert full_top["CLNA"]["spread_bps"] == pytest.approx(19.0, abs=0.2)
+
+    # VIXY proxy populated in macro_regime
+    macro = doc["macro_regime"]
+    assert macro["vix_proxy_symbol"] == "VIXY"
+    assert macro["vix_proxy_daily_pct"] == pytest.approx(-8.7, abs=0.05)
+    assert macro["vix_available"] is True

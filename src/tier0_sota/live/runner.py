@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import gc
 import hashlib
 import json
 import logging
@@ -66,6 +68,14 @@ _IBKR_HEALTH_CLIENT_ID = 97
 _IBKR_HEALTH_TIMEOUT_SECS = 4.0
 _IBKR_HEALTH_TTL_SECS_DEFAULT = 600.0
 _IBKR_ERROR_BACKOFF_SECS_DEFAULT = 300.0
+_IBKR_TRANSIENT_BACKOFF_PREFIXES = ("balance_timeout", "node_exited:")
+
+
+def _is_transient_ibkr_probe_error(err_raw: str) -> bool:
+    """Return True strictly for transient gateway handshake failures eligible for backoff."""
+    if not err_raw or "permissionerror" in err_raw.lower():
+        return False
+    return err_raw == "node_exited" or err_raw.startswith(_IBKR_TRANSIENT_BACKOFF_PREFIXES)
 
 
 def _parse_nonneg_float_env(name: str, default: float) -> float:
@@ -171,17 +181,22 @@ async def _probe_ibkr_paper_session_async(
     task = asyncio.create_task(node.run_async())
     venue = Venue("INTERACTIVE_BROKERS")
     steps = max(1, int(timeout_secs / 0.05))
+    live_acct: Any = None
+    balances: Any = None
+    bal: Any = None
     try:
         for _ in range(steps):
             if task.done():
                 exc = task.exception() if not task.cancelled() else None
+                reason = f"node_exited:{exc}" if exc is not None else "node_exited"
+                exc = None
                 return {
                     "authenticated": False,
                     "all_du_paper_accounts": True,
                     "account_id": None,
                     "equity": None,
                     "tcp_reachable": False,
-                    "reason": f"node_exited:{exc}" if exc is not None else "node_exited",
+                    "reason": reason,
                 }
             await asyncio.sleep(0.05)
             live_acct = cache.account_for_venue(venue)
@@ -210,11 +225,18 @@ async def _probe_ibkr_paper_session_async(
             "reason": "balance_timeout",
         }
     finally:
-        handle.stop()
-        try:
-            await asyncio.wait_for(task, timeout=3.0)
-        except (TimeoutError, asyncio.CancelledError, RuntimeError):
-            task.cancel()
+        if not task.done():
+            handle.stop()
+            try:
+                await asyncio.wait_for(task, timeout=3.0)
+            except (TimeoutError, asyncio.CancelledError, RuntimeError):
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(TimeoutError, asyncio.CancelledError, RuntimeError):
+                        await asyncio.wait_for(task, timeout=1.0)
+        # Drop all !Send PyO3 references before coroutine exit so gc.collect() on the
+        # creating thread reclaims PyNodeRun/PyLiveNode/PyCache cycles deterministically.
+        del cache, handle, node, task, cfg, venue, usd, live_acct, balances, bal
 
 
 def _probe_ibkr_paper_session(
@@ -242,15 +264,20 @@ def _probe_ibkr_paper_session(
         }
 
     def _run_probe() -> dict[str, Any]:
-        return asyncio.run(
-            _probe_ibkr_paper_session_async(
-                host=host,
-                port=port,
-                client_id=client_id,
-                timeout_secs=timeout_secs,
-                account_id=du_acct,
+        try:
+            return asyncio.run(
+                _probe_ibkr_paper_session_async(
+                    host=host,
+                    port=port,
+                    client_id=client_id,
+                    timeout_secs=timeout_secs,
+                    account_id=du_acct,
+                )
             )
-        )
+        finally:
+            # NautilusTrader PyLiveNode/PyNodeRun/PyCache are !Send PyO3 objects;
+            # collect cyclic references on the same creating thread before returning.
+            gc.collect()
 
     try:
         asyncio.get_running_loop()
@@ -320,7 +347,7 @@ def _persist_ibkr_health_status(
 
 
 def _try_reuse_ibkr_health_status(adapter: IbkrPaperAdapter, *, now: datetime) -> bool | None:
-    """Reuse fresh verified IBKR ready status or honor balance_timeout backoff without probing."""
+    """Reuse fresh verified IBKR ready status or honor transient failure backoff without probing."""
     prev = _read_json_dict(adapter.status_path)
     if (
         prev.get("schema_version") != "tier0.ibkr-paper-lane.v1"
@@ -371,13 +398,15 @@ def _try_reuse_ibkr_health_status(adapter: IbkrPaperAdapter, *, now: datetime) -
         return True
 
     err_raw = str(prev.get("probe_error") or "")
-    if prev.get("ready") is False and err_raw.startswith("balance_timeout"):
+    if prev.get("ready") is False and _is_transient_ibkr_probe_error(err_raw):
         backoff_secs = _parse_nonneg_float_env(
             "TIER0_IBKR_ERROR_BACKOFF_SECS", _IBKR_ERROR_BACKOFF_SECS_DEFAULT
         )
         if backoff_secs > 0.0 and age_secs < backoff_secs:
             LOG.info(
-                "IBKR :4002 balance_timeout backoff active (%.0fs/%.0fs); skipping Client %d probe",
+                "IBKR :4002 transient probe backoff active (%s, %.0fs/%.0fs); "
+                "skipping Client %d probe",
+                err_raw,
                 age_secs,
                 backoff_secs,
                 _IBKR_HEALTH_CLIENT_ID,
@@ -1241,16 +1270,20 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
     # DuckDB's exclusive writer lock serializes scheduler invocations and manual cycles.
     with open_bounded_duckdb(manifest_dir / "paper_farm_runner.duckdb"):
         farm = PaperFarmCoordinator(manifest_dir)
-        reachable = ibkr_health(farm.ibkr)
         now = datetime.now(UTC)
         session = engine.classify_us_equity_session_et(int(now.timestamp() * 1e9))
-        scanner = ExtremeMoverScanner.from_env(pin_symbols=pins)
-        refresh_accounts(farm, now, session, data_client=scanner.data_client)
-        movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
-        scan = scanner.scan(
-            top_k=top_k,
-            output_path=movers_path,
-        )
+        # Decouple synchronous IBKR :4002 probe (up to 5s on balance_timeout) from scanner.scan()
+        # and Alpaca account refresh while preserving fail-closed PermissionError propagation.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="ibkr-health") as ibkr_pool:
+            ibkr_future = ibkr_pool.submit(ibkr_health, farm.ibkr)
+            scanner = ExtremeMoverScanner.from_env(pin_symbols=pins)
+            refresh_accounts(farm, now, session, data_client=scanner.data_client)
+            movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
+            scan = scanner.scan(
+                top_k=top_k,
+                output_path=movers_path,
+            )
+            reachable = ibkr_future.result()
         from tier0_sota.live.execution import cost_calibration_allows_entry
 
         tca_ok = cost_calibration_allows_entry(manifest_dir)

@@ -6,13 +6,14 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal, cast
@@ -38,8 +39,36 @@ DEFAULT_STAGED_PATH = DEFAULT_MANIFEST_DIR / "staged_tv_presets.json"
 DEFAULT_PACK_STAGED_PATH = DEFAULT_MANIFEST_DIR / "tv_sota_pack" / "staged_tv_presets.json"
 DEFAULT_WATCHLIST_PATH = DEFAULT_MANIFEST_DIR / "live_watchlist_manifest.json"
 DEFAULT_MOVERS_PATH = DEFAULT_MANIFEST_DIR / "live_whole_market_movers_manifest.json"
-FORBIDDEN_ENDPOINT_MARKERS = ("4001", "7496", "8798", "8796")
-_LIVE_ALPACA_RE = re.compile(r"(?<![a-z0-9-])api\.alpaca\.markets(?![a-z0-9-])")
+FORBIDDEN_ENDPOINT_MARKERS = ("4001", "7496", "8798", "8796", "9223")
+FORBIDDEN_LIVE_PORTS: frozenset[int] = frozenset(int(p) for p in FORBIDDEN_ENDPOINT_MARKERS)
+_MIN_FORBIDDEN_PORT = min(FORBIDDEN_LIVE_PORTS)
+_MAX_FORBIDDEN_PORT = max(FORBIDDEN_LIVE_PORTS)
+_PORT_ALT = "|".join(re.escape(port) for port in FORBIDDEN_ENDPOINT_MARKERS)
+_LIVE_ALPACA_RE = re.compile(r"(?<![a-z0-9-])(?:api|live)\.alpaca\.markets(?![a-z0-9-])")
+_DECIMAL_STRING_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$")
+_ISO_TS_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}:\d{2}\.\d+(?:z|[+-]\d{2}:?\d{2})?\b")
+_UUID_TOKEN_RE = re.compile(
+    r"(?<![0-9a-z:])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-z])"
+)
+_HEX_DIGEST_TOKEN_RE = re.compile(
+    r"(?<![0-9a-z:])(?=[0-9a-f]{16,64}(?![0-9a-z]))(?=[0-9a-f]*[a-f])[0-9a-f]{16,64}"
+)
+_FRACTIONAL_DECIMAL_TOKEN_RE = re.compile(r"(?<![0-9a-z:.])\d+\.(?:0*[1-9]\d*)(?![0-9a-z.])")
+_FORBIDDEN_PORT_RE = re.compile(r"(?<!\d)(?:" + _PORT_ALT + r")(?!\d)")
+_COLON_PORT_RE = re.compile(r":(?:" + _PORT_ALT + r")(?:\.0+)?(?![0-9])")
+_LABELED_PORT_RE = re.compile(
+    r"(?<![a-z0-9])(?:--?)?(?:"
+    r"(?:port|cdp|endpoint|host|gateway|broker|relay|socket|listen|bind)(?:[_\-.]?(?:port|num|id))?[\s:=_-]+"
+    r"|(?:port|cdp|live|endpoint)[_-]?"
+    r")(?:" + _PORT_ALT + r")(?:\.0+)?(?![0-9])"
+)
+_ENDPOINT_KEY_RE = re.compile(
+    r"(?:^|[_\-.])(?:port|ports|endpoint|endpoints|host|hosts|url|urls|uri|uris|"
+    r"cdp|broker|gateway|socket|addr|address|target|proxy|relay|webhook|server|listen|bind)"
+    r"(?:$|[_\-.]|\d)",
+    re.IGNORECASE,
+)
+_REFUSE_LIVE_ENDPOINT_MSG = "Refused live broker endpoint or port marker in alert payload"
 MAX_INPUT_AGE_MS = 15 * 60_000
 
 _Archetype = Literal[
@@ -234,16 +263,91 @@ class TvAlertV1(BaseModel):
         return s
 
 
+def _is_forbidden_decimal(val: Decimal) -> bool:
+    return (
+        val.is_finite()
+        and _MIN_FORBIDDEN_PORT <= val <= _MAX_FORBIDDEN_PORT
+        and val == val.to_integral_value()
+        and int(val) in FORBIDDEN_LIVE_PORTS
+    )
+
+
+def _check_endpoint_str(text: str, *, key_is_endpoint: bool = False) -> None:
+    s = text.strip().lower()
+    if not s:
+        return
+    if ("alpaca" in s and "paper-api" not in s and "markets" in s) or _LIVE_ALPACA_RE.search(s):
+        raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+    if _DECIMAL_STRING_RE.fullmatch(s):
+        if not key_is_endpoint:
+            return
+        try:
+            if _is_forbidden_decimal(Decimal(s)):
+                raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+        except InvalidOperation:
+            if _FORBIDDEN_PORT_RE.search(s):
+                raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG) from None
+        return
+    if _COLON_PORT_RE.search(s) or _LABELED_PORT_RE.search(s):
+        raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+    if key_is_endpoint:
+        scrubbed = _ISO_TS_RE.sub(" ", s)
+        scrubbed = _UUID_TOKEN_RE.sub(" ", scrubbed)
+        scrubbed = _HEX_DIGEST_TOKEN_RE.sub(" ", scrubbed)
+        scrubbed = _FRACTIONAL_DECIMAL_TOKEN_RE.sub(" ", scrubbed)
+        if _FORBIDDEN_PORT_RE.search(scrubbed):
+            raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+
+
 def refuse_live_endpoints(payload: Mapping[str, Any]) -> None:
-    """Reject any live broker host or forbidden live port marker in alert payloads."""
+    """Reject any live broker host or forbidden live/CDP port marker in alert payloads.
+
+    Forbidden ports (4001/7496/8796/8798/9223) are refused strictly in URL/host `:PORT`
+    syntax, explicit port/cdp/endpoint/live markers, or values under endpoint/port/host/url/cdp
+    keys — never false-positiving on arbitrary numeric prices, timestamps, volumes, or hex IDs.
+    """
     raw = json.dumps(dict(payload), default=str).lower()
     live_alpaca = "alpaca" in raw and "paper-api" not in raw and "markets" in raw
-    if (
-        live_alpaca
-        or _LIVE_ALPACA_RE.search(raw)
-        or any(re.search(rf"(?<!\d){port}(?!\d)", raw) for port in FORBIDDEN_ENDPOINT_MARKERS)
-    ):
-        raise ValueError("Refused live broker endpoint or port marker in alert payload")
+    if live_alpaca or _LIVE_ALPACA_RE.search(raw):
+        raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+
+    stack: list[tuple[Any, bool]] = [(payload, False)]
+    while stack:
+        val, in_endpoint_ctx = stack.pop()
+        if val is None or isinstance(val, bool):
+            continue
+        if isinstance(val, Mapping):
+            for k, v in val.items():
+                key_str = str(k)
+                _check_endpoint_str(key_str, key_is_endpoint=False)
+                child_ctx = in_endpoint_ctx or bool(_ENDPOINT_KEY_RE.search(key_str))
+                stack.append((v, child_ctx))
+        elif isinstance(val, str):
+            _check_endpoint_str(val, key_is_endpoint=in_endpoint_ctx)
+        elif isinstance(val, (bytes, bytearray)):
+            _check_endpoint_str(
+                val.decode("utf-8", errors="ignore"), key_is_endpoint=in_endpoint_ctx
+            )
+        elif isinstance(val, (Sequence, set, frozenset)):
+            for item in val:
+                stack.append((item, in_endpoint_ctx))
+        elif isinstance(val, int):
+            if in_endpoint_ctx and val in FORBIDDEN_LIVE_PORTS:
+                raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+        elif isinstance(val, float):
+            if (
+                in_endpoint_ctx
+                and math.isfinite(val)
+                and _MIN_FORBIDDEN_PORT <= val <= _MAX_FORBIDDEN_PORT
+                and val.is_integer()
+                and int(val) in FORBIDDEN_LIVE_PORTS
+            ):
+                raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+        elif isinstance(val, Decimal):
+            if in_endpoint_ctx and _is_forbidden_decimal(val):
+                raise ValueError(_REFUSE_LIVE_ENDPOINT_MSG)
+        else:
+            _check_endpoint_str(str(val), key_is_endpoint=in_endpoint_ctx)
 
 
 def _check_live_intake(

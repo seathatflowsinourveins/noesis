@@ -3946,9 +3946,9 @@ def render_order_preset_cards_markdown(presets_doc: Mapping[str, Any]) -> str:
                 "",
                 (
                     "| Rank | TV Symbol | Stage | Price Tier | Last $ | Daily % "
-                    "| Pace RVOL | Dollar Vol | Ranking Reason |"
+                    "| Pace RVOL | Spread (bps) | ADV20 | Split Adj | Dollar Vol | Ranking Reason |"
                 ),
-                "|---:|---|---|---|---:|---:|---:|---:|---|",
+                "|---:|---|---|---|---:|---:|---:|---:|---:|:---:|---:|---|",
             ]
         )
         for idx_m, row_m in enumerate(merged_movers, 1):
@@ -3980,12 +3980,32 @@ def render_order_preset_cards_markdown(presets_doc: Mapping[str, Any]) -> str:
                 min_val=0.0,
             )
             pace_cell = f"`{pace_m:.2f}x`" if pace_m is not None else "—"
+            spread_m = _opt_float(row_m.get("spread_bps"), min_val=0.0)
+            spread_cell = f"`{spread_m:.1f}`" if spread_m is not None else "—"
+            adv20_m = _opt_float(row_m.get("adv_20"), min_val=0.0)
+            if adv20_m is None:
+                adv20_cell = "—"
+            elif adv20_m >= 1_000_000.0:
+                adv20_cell = f"`{adv20_m / 1_000_000.0:.2f}M`"
+            elif adv20_m >= 1_000.0:
+                adv20_cell = f"`{adv20_m / 1_000.0:.1f}K`"
+            else:
+                adv20_cell = f"`{adv20_m:.0f}`"
+            raw_split_adj = row_m.get("split_adjusted")
+            if raw_split_adj is True:
+                split_fac = _opt_float(row_m.get("split_factor"), min_val=0.0)
+                split_cell = f"`YES ({split_fac:g}x)`" if split_fac is not None else "`YES`"
+            elif raw_split_adj is False:
+                split_cell = "`NO`"
+            else:
+                split_cell = "—"
             dvol_m = _opt_float(row_m.get("dollar_vol"), min_val=0.0)
             dvol_cell = f"`${dvol_m / 1_000_000.0:.2f}M`" if dvol_m is not None else "—"
             reason_m = str(row_m.get("ranking_reason") or "—").replace("|", "·").strip()
             lines.append(
                 f"| {idx_m} | `{tv_sym_m}` | `{stage_m}` | `{tier_m}` | {px_cell} "
-                f"| {chg_cell} | {pace_cell} | {dvol_cell} | {reason_m} |"
+                f"| {chg_cell} | {pace_cell} | {spread_cell} | {adv20_cell} | {split_cell} "
+                f"| {dvol_cell} | {reason_m} |"
             )
 
     lines.extend(
@@ -5661,6 +5681,8 @@ def build_tv_watchlist_sync_payload(
             ]
         )
     )
+    top10_syms = list(active_syms[:10])
+    top10_membership_sha256 = hashlib.sha256(",".join(top10_syms).encode("utf-8")).hexdigest()
     return {
         "schema_version": "tier0.tv-watchlist-sync-payload.v1",
         "generated_at_et": doc.get("generated_at_et"),
@@ -5676,6 +5698,10 @@ def build_tv_watchlist_sync_payload(
         "qty": 1,
         "mcp_server": "tradingview-sota-mcp_official",
         "mcp_url": "https://mcp.tradingview.com/mcp",
+        "top10_membership_symbols": top10_syms,
+        "top10_membership_sha256": top10_membership_sha256,
+        "min_cloud_sync_interval_secs": 900,
+        "sync_policy": "delta_gated_15m_max_96_per_day",
         "watchlists": {
             "active": {
                 "watchlist_id": TV_CLOUD_WATCHLIST_IDS["active"],

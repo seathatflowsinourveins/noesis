@@ -573,3 +573,203 @@ def test_prometheus_premarket_session_gate_and_alertmanager_momentum_grouping() 
         "severity",
     ]
     assert momentum_route["receiver"] == "tier0-local-null"
+
+
+def test_scanner_split_adjustment_spread_gate_adv20_tod_rvol_vwap_cap_and_vixy(
+    tmp_path: Path,
+) -> None:
+    from tier0_sota.live.scanner import (
+        TOD_RVOL_EARLY_CLOSE_SCALE,
+        TOD_RVOL_PM_SHARE_OF_FULLDAY,
+        compute_tod_expected_volume_fraction,
+    )
+
+    # 1. PRE_MARKET ToD RVOL scales by TOD_RVOL_PM_SHARE_OF_FULLDAY (0.01871) & floor 0.002.
+    pm_0415 = datetime(2026, 11, 27, 4, 15, tzinfo=_NY_TZ).astimezone(UTC)
+    pm_0645 = datetime(2026, 11, 27, 6, 45, tzinfo=_NY_TZ).astimezone(UTC)
+    pm_0925 = datetime(2026, 11, 27, 9, 25, tzinfo=_NY_TZ).astimezone(UTC)
+    assert compute_tod_expected_volume_fraction(pm_0415, "PRE_MARKET") == pytest.approx(0.002)
+    assert compute_tod_expected_volume_fraction(pm_0645, "PRE_MARKET") == pytest.approx(
+        TOD_RVOL_PM_SHARE_OF_FULLDAY * (165.0 / 330.0), rel=1e-4
+    )
+    assert compute_tod_expected_volume_fraction(pm_0925, "PRE_MARKET") == pytest.approx(
+        TOD_RVOL_PM_SHARE_OF_FULLDAY * (325.0 / 330.0), rel=1e-4
+    )
+
+    # 2. AFTER_HOURS early-close scaling uses 0.4026 + 0.06 * ah_frac; regular day stays 1.0.
+    ah_ec_1500 = datetime(2026, 11, 27, 15, 0, tzinfo=_NY_TZ).astimezone(UTC)
+    assert compute_tod_expected_volume_fraction(ah_ec_1500, "AFTER_HOURS") == pytest.approx(
+        TOD_RVOL_EARLY_CLOSE_SCALE + 0.06 * (120.0 / 240.0), rel=1e-6
+    )
+    ah_reg_1700 = datetime(2026, 10, 15, 17, 0, tzinfo=_NY_TZ).astimezone(UTC)
+    assert compute_tod_expected_volume_fraction(ah_reg_1700, "AFTER_HOURS") == pytest.approx(1.0)
+
+    # 3. End-to-end sweep: INLF 1:16 reverse split, SPRC 1:5 reverse split, AMZE prior-ex
+    #    no-double-adjust, FIEE 1156bps dead spread excluded, GDEV +17% VWAP cap excluded,
+    #    clean XP passes EARLY_STAGE_IGNITION with ADV_20 baseline, and VIXY sets vix_available.
+    now_utc = datetime(2026, 11, 27, 15, 30, tzinfo=_NY_TZ).astimezone(UTC)
+    pdb_ts = datetime(2026, 11, 25, 5, 0, tzinfo=UTC)
+
+    class _CorpActions:
+        def get_corporate_actions(self, _req: Any) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "reverse_splits": [
+                        SimpleNamespace(
+                            symbol="INLF",
+                            old_rate=16.0,
+                            new_rate=1.0,
+                            ex_date=date(2026, 11, 27),
+                        ),
+                        SimpleNamespace(
+                            symbol="SPRC",
+                            old_rate=5.0,
+                            new_rate=1.0,
+                            ex_date=date(2026, 11, 27),
+                        ),
+                        SimpleNamespace(
+                            symbol="AMZE",
+                            old_rate=100.0,
+                            new_rate=1.0,
+                            ex_date=date(2026, 11, 25),
+                        ),
+                    ],
+                    "forward_splits": [],
+                }
+            )
+
+    def _snap(
+        px: float,
+        prev_c: float,
+        dvol: float,
+        pvol: float,
+        bid: float,
+        ask: float,
+        vwap: float,
+        dopen: float | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            latest_trade=SimpleNamespace(price=px),
+            latest_quote=SimpleNamespace(bid_price=bid, ask_price=ask),
+            daily_bar=SimpleNamespace(
+                open=dopen if dopen is not None else prev_c,
+                close=px,
+                volume=dvol,
+                vwap=vwap,
+            ),
+            previous_daily_bar=SimpleNamespace(close=prev_c, volume=pvol, timestamp=pdb_ts),
+        )
+
+    snaps = {
+        "INLF": _snap(2.42, 0.1626, 355_794.0, 4_438_345.0, 2.41, 2.45, 2.52, dopen=2.45),
+        "SPRC": _snap(1.34, 0.2008, 804_980.0, 12_123_184.0, 1.33, 1.35, 1.35, dopen=1.20),
+        "AMZE": _snap(5.20, 5.00, 300_000.0, 100_000.0, 5.19, 5.21, 5.15, dopen=5.05),
+        "FIEE": _snap(2.37, 2.50, 255_620.0, 2_846.0, 2.20, 2.47, 2.58, dopen=2.55),
+        "GDEV": _snap(9.20, 8.15, 320_000.0, 10_254.0, 9.15, 9.25, 7.80, dopen=8.10),
+        "AEHL": _snap(13.30, 7.14, 5_061_180.0, 26_471.0, 13.28, 13.37, 12.04, dopen=7.36),
+        "XP": _snap(17.30, 14.39, 23_906_279.0, 10_222_478.0, 17.28, 17.35, 17.05, dopen=17.20),
+        "VIXY": _snap(30.50, 32.00, 1_500_000.0, 1_400_000.0, 30.48, 30.52, 30.70, dopen=31.00),
+    }
+
+    prior_dates = [date(2026, 11, d) for d in range(1, 21)]
+    adv_daily_bars = {
+        sym: [
+            SimpleNamespace(
+                timestamp=datetime(d.year, d.month, d.day, 5, 0, tzinfo=UTC),
+                open=10.0,
+                high=10.5,
+                low=9.5,
+                close=10.0,
+                volume=vol,
+            )
+            for d in prior_dates
+        ]
+        for sym, vol in (
+            ("INLF", 250_000.0),
+            ("SPRC", 2_000_000.0),
+            ("AMZE", 90_000.0),
+            ("FIEE", 50_000.0),
+            ("GDEV", 40_000.0),
+            ("AEHL", 120_000.0),
+            ("XP", 8_000_000.0),
+            ("VIXY", 1_400_000.0),
+        )
+    }
+
+    class _EmptyScreener:
+        def get_most_actives(self, _req: Any) -> SimpleNamespace:
+            return SimpleNamespace(most_actives=[])
+
+        def get_market_movers(self, _req: Any) -> SimpleNamespace:
+            return SimpleNamespace(gainers=[], losers=[])
+
+    class _Trading:
+        def get_all_assets(self, _req: Any) -> list[SimpleNamespace]:
+            return [SimpleNamespace(symbol=s, tradable=True, exchange="NASDAQ") for s in snaps]
+
+        def get_asset(self, sym: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                symbol=sym, shortable=True, easy_to_borrow=True, exchange="NASDAQ"
+            )
+
+    class _Data:
+        def get_stock_snapshot(self, req: Any) -> dict[str, Any]:
+            req_syms = getattr(req, "symbol_or_symbols", ())
+            req_syms = [req_syms] if isinstance(req_syms, str) else list(req_syms)
+            return {s: snaps[s] for s in req_syms if s in snaps}
+
+        def get_stock_bars(self, req: Any) -> SimpleNamespace:
+            req_syms = getattr(req, "symbol_or_symbols", ())
+            req_syms = [req_syms] if isinstance(req_syms, str) else list(req_syms)
+            tf = str(getattr(req, "timeframe", ""))
+            if "Day" in tf or "1Day" in tf:
+                return SimpleNamespace(
+                    data={s: adv_daily_bars[s] for s in req_syms if s in adv_daily_bars}
+                )
+            return SimpleNamespace(data={})
+
+    scanner = ExtremeMoverScanner(
+        screener_client=_EmptyScreener(),
+        data_client=_Data(),
+        trading_client=_Trading(),
+        corp_actions_client=_CorpActions(),
+        pin_symbols=("XP",),
+        universe_cache_path=tmp_path / "nms_cache.json",
+    )
+    doc = scanner.scan(top_k=10, now_utc=now_utc)
+    full_by_sym = {r["symbol"]: r for r in doc["full_market_top_movers"]}
+    early_by_sym = {r["symbol"]: r for r in doc["early_stage_ignition_movers"]}
+
+    # INLF adjusted 1:16 -> -6.98% (NOT +1388% #1!), AEHL is #1 genuine mover!
+    assert full_by_sym["INLF"]["split_adjusted"] is True
+    assert full_by_sym["INLF"]["split_factor"] == pytest.approx(16.0)
+    assert full_by_sym["INLF"]["daily_change_pct"] == pytest.approx(-6.98, abs=0.05)
+    assert full_by_sym["INLF"]["rank"] > 1
+    assert doc["full_market_top_movers"][0]["symbol"] == "AEHL"
+
+    # SPRC adjusted 1:5 -> +33.47% (NOT +567%) and demoted below high-RVOL movers
+    assert full_by_sym["SPRC"]["split_adjusted"] is True
+    assert full_by_sym["SPRC"]["daily_change_pct"] == pytest.approx(33.47, abs=0.1)
+    assert full_by_sym["SPRC"]["low_rvol_demoted"] is True
+
+    # AMZE had ex_date == pdb_date -> NOT double-adjusted!
+    assert full_by_sym["AMZE"]["split_adjusted"] is False
+    assert full_by_sym["AMZE"]["daily_change_pct"] == pytest.approx(4.0, abs=0.05)
+
+    # FIEE (1156 bps spread) excluded from BOTH full_market_top_movers and early_stage_ignition!
+    assert "FIEE" not in full_by_sym
+    assert "FIEE" not in early_by_sym
+
+    # GDEV (+17.95% above VWAP) excluded from early_stage_ignition by upper 12% VWAP cap!
+    assert "GDEV" not in early_by_sym
+
+    # XP passes EARLY_STAGE_IGNITION using ADV_20 median split-adjusted baseline!
+    assert "XP" in early_by_sym
+    assert early_by_sym["XP"]["adv_20"] == pytest.approx(8_000_000.0)
+    assert early_by_sym["XP"]["rvol_baseline_source"] == "adv_20_median_split_adj"
+    assert early_by_sym["XP"]["spread_bps"] is not None
+
+    # VIXY proxy populates macro_regime!
+    assert doc["macro_regime"]["vix_proxy_symbol"] == "VIXY"
+    assert doc["macro_regime"]["vix_proxy_daily_pct"] == pytest.approx(-4.688, abs=0.01)
+    assert doc["macro_regime"]["vix_available"] is True

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import statistics
 import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -22,7 +23,14 @@ import alpaca.trading as at
 import polars as pl
 from alpaca.common.enums import Sort
 from alpaca.common.exceptions import APIError
-from alpaca.data.enums import DataFeed, Exchange, MostActivesBy, OptionsFeed
+from alpaca.data.enums import (
+    Adjustment,
+    CorporateActionsType,
+    DataFeed,
+    Exchange,
+    MostActivesBy,
+    OptionsFeed,
+)
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.historical.news import NewsClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
@@ -47,6 +55,7 @@ from tier0_sota import engine as eng
 from tier0_sota import risk as rk
 
 _NY_TZ = ZoneInfo("America/New_York")
+VIX_PROXY_SYMBOL: str = "VIXY"
 DEFAULT_PIN_SYMBOLS: tuple[str, ...] = ("SOXL", "SOXS", "TQQQ", "SQQQ")
 DEFAULT_EARLY_MOVER_TUNING_FILENAME = "early_mover_tuning_manifest.json"
 EARLY_MOVER_TUNING_MAX_AGE_HOURS = 168.0
@@ -214,10 +223,14 @@ def compute_tod_expected_volume_fraction(
         base_frac = pm_part + TOD_RVOL_RTH_SHARE_OF_FULLDAY * f_rth
         return max(1e-4, min(1.0, ec_scale * base_frac))
     if sess == "PRE_MARKET":
-        return max(0.10, min(1.0, (mins - 240.0) / 330.0))
+        pm_progress = max(0.10, min(1.0, (mins - 240.0) / 330.0))
+        return max(0.002, TOD_RVOL_PM_SHARE_OF_FULLDAY * pm_progress)
     if sess == "AFTER_HOURS":
         rth_close_hm = _xnys_rth_close_hm(ny.date())
-        return TOD_RVOL_EARLY_CLOSE_SCALE if rth_close_hm < 960 else 1.0
+        if rth_close_hm < 960:
+            ah_frac = max(0.0, min(1.0, (mins - float(rth_close_hm)) / 240.0))
+            return min(1.0, TOD_RVOL_EARLY_CLOSE_SCALE + 0.06 * ah_frac)
+        return 1.0
     return 0.25
 
 
@@ -1499,6 +1512,8 @@ class ExtremeMoverScanner:
     early_mover_min_price: float = 1.0
     early_mover_min_dollar_vol: float = 500_000.0
     universe_cache_path: Path | None = None
+    split_cache_path: Path | None = None
+    adv20_cache_path: Path | None = None
 
     @classmethod
     def from_env(cls, account: str = "ALPACA_PA1", **kw: Any) -> ExtremeMoverScanner:
@@ -1803,6 +1818,201 @@ class ExtremeMoverScanner:
                 pass
         return out
 
+    def _resolve_daily_cache_path(self, explicit: Path | None, filename: str) -> Path | None:
+        """Resolve per-ET-day cache path while keeping test `universe_cache_path` dirs isolated."""
+        if explicit is not None:
+            return explicit
+        if self.universe_cache_path is not None:
+            return self.universe_cache_path.parent / filename
+        default_root = r"Z:\sota-data" if os.name == "nt" else "/mnt/z/sota-data"
+        data_root = Path(os.environ.get("TIER0_DATA_ROOT", "").strip() or default_root)
+        if data_root.exists():
+            return data_root / "manifests" / filename
+        return None
+
+    def _load_recent_split_factors(self, now_utc: datetime) -> dict[str, dict[str, Any]]:
+        """Load daily-cached forward/reverse split adjustment factors via CorporateActions."""
+        cc = self.corp_actions_client
+        if cc is None or not hasattr(cc, "get_corporate_actions"):
+            return {}
+        ny_date = now_utc.astimezone(_NY_TZ).date()
+        ny_day = ny_date.isoformat()
+        cache_p = self._resolve_daily_cache_path(
+            self.split_cache_path, ".nms_split_factors_cache.json"
+        )
+        if cache_p is not None and cache_p.is_file():
+            try:
+                cached = json.loads(cache_p.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached, Mapping)
+                    and cached.get("ny_date") == ny_day
+                    and isinstance(cached.get("splits"), Mapping)
+                ):
+                    return {
+                        str(k).strip().upper(): dict(v)
+                        for k, v in cached["splits"].items()
+                        if isinstance(v, Mapping) and _f(v.get("factor"), 0.0) > 0.0
+                    }
+            except (OSError, ValueError, TypeError):
+                pass
+        try:
+            resp = cc.get_corporate_actions(
+                CorporateActionsRequest(
+                    types=[
+                        CorporateActionsType.REVERSE_SPLIT,
+                        CorporateActionsType.FORWARD_SPLIT,
+                    ],
+                    start=ny_date - timedelta(days=3),
+                    end=ny_date,
+                    limit=1000,
+                )
+            )
+        except (APIError, ValueError, TypeError, AttributeError, OSError, RuntimeError):
+            return {}
+        data = _ga(resp, "data")
+        if not isinstance(data, Mapping):
+            data = resp if isinstance(resp, Mapping) else {}
+        out: dict[str, dict[str, Any]] = {}
+        for bucket in ("reverse_splits", "forward_splits"):
+            items = data.get(bucket) or ()
+            for item in items:
+                sym = str(_ga(item, "symbol", "") or "").strip().upper()
+                old_rate = _f(_ga(item, "old_rate"), 0.0)
+                new_rate = _f(_ga(item, "new_rate"), 0.0)
+                if not sym or old_rate <= 0.0 or new_rate <= 0.0:
+                    continue
+                factor = old_rate / new_rate
+                if factor <= 0.0 or not math.isfinite(factor):
+                    continue
+                raw_ex = _ga(item, "ex_date") or _ga(item, "process_date") or ny_day
+                ex_iso = raw_ex.isoformat() if isinstance(raw_ex, date) else str(raw_ex)[:10]
+                prev_rec = out.get(sym)
+                if prev_rec is None or ex_iso >= str(prev_rec.get("ex_date") or ""):
+                    out[sym] = {
+                        "factor": round(factor, 6),
+                        "old_rate": old_rate,
+                        "new_rate": new_rate,
+                        "ex_date": ex_iso,
+                        "kind": bucket,
+                    }
+        if cache_p is not None:
+            try:
+                cache_p.parent.mkdir(parents=True, exist_ok=True)
+                tmp = cache_p.with_name(f".{cache_p.name}.{os.getpid()}.tmp")
+                tmp.write_text(
+                    json.dumps({"ny_date": ny_day, "splits": out}) + "\n", encoding="utf-8"
+                )
+                tmp.replace(cache_p)
+            except OSError:
+                pass
+        return out
+
+    def _load_or_fetch_adv20(
+        self,
+        syms: Sequence[str],
+        now_utc: datetime,
+        feed: DataFeed,
+    ) -> dict[str, float]:
+        """Load or batch-fetch split-adjusted 20-day median ADV cached per ET day."""
+        unique_syms = sorted({str(s).strip().upper() for s in syms if s and str(s).strip()})
+        if not unique_syms:
+            return {}
+        ny_date = now_utc.astimezone(_NY_TZ).date()
+        ny_day = ny_date.isoformat()
+        cache_p = self._resolve_daily_cache_path(self.adv20_cache_path, ".nms_adv20_cache.json")
+        cached_map: dict[str, float] = {}
+        if cache_p is not None and cache_p.is_file():
+            try:
+                cached = json.loads(cache_p.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached, Mapping)
+                    and cached.get("ny_date") == ny_day
+                    and isinstance(cached.get("adv20"), Mapping)
+                ):
+                    cached_map = {
+                        str(k).strip().upper(): _f(v, 0.0)
+                        for k, v in cached["adv20"].items()
+                        if _f(v, 0.0) > 0.0
+                    }
+            except (OSError, ValueError, TypeError):
+                cached_map = {}
+
+        missing = [s for s in unique_syms if s not in cached_map]
+        dc = self.data_client
+        newly_fetched: dict[str, float] = {}
+        if missing and dc is not None and hasattr(dc, "get_stock_bars"):
+            start_utc = now_utc - timedelta(days=35)
+            end_utc = now_utc - timedelta(days=1)
+            chunks = [missing[i : i + 200] for i in range(0, len(missing), 200)]
+
+            def _fetch_adv_chunk(batch: list[str]) -> dict[str, float]:
+                try:
+                    req = StockBarsRequest(
+                        symbol_or_symbols=batch,
+                        timeframe=TimeFrame.Day,
+                        start=start_utc,
+                        end=end_utc,
+                        feed=feed,
+                        adjustment=Adjustment.SPLIT,
+                    )
+                    res = dc.get_stock_bars(req)
+                except (APIError, ValueError, TypeError, AttributeError, OSError, RuntimeError):
+                    return {}
+                data_map = _ga(res, "data") or {}
+                if not isinstance(data_map, Mapping):
+                    return {}
+                chunk_out: dict[str, float] = {}
+                for raw_sym, b_list in data_map.items():
+                    sym = str(raw_sym or "").strip().upper()
+                    if not sym or not b_list:
+                        continue
+                    prior_vols: list[float] = []
+                    prior_days: set[date] = set()
+                    for bar in b_list:
+                        ts = _ga(bar, "timestamp")
+                        if ts is None:
+                            continue
+                        b_day = (
+                            ts.astimezone(_NY_TZ).date()
+                            if isinstance(ts, datetime)
+                            else (ts if isinstance(ts, date) else None)
+                        )
+                        if b_day is None or b_day >= ny_date:
+                            continue
+                        v = _f(_ga(bar, "volume"), 0.0)
+                        if v > 0.0:
+                            prior_vols.append(v)
+                            prior_days.add(b_day)
+                    # Require >= 3 distinct prior dates so intraday 1m mocks fall back cleanly.
+                    if len(prior_days) >= 3 and prior_vols:
+                        med = float(statistics.median(prior_vols[-20:]))
+                        if med > 0.0:
+                            chunk_out[sym] = round(med, 2)
+                return chunk_out
+
+            if len(chunks) == 1:
+                newly_fetched.update(_fetch_adv_chunk(chunks[0]))
+            else:
+                with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
+                    for part in pool.map(_fetch_adv_chunk, chunks):
+                        newly_fetched.update(part)
+
+            if newly_fetched:
+                cached_map.update(newly_fetched)
+                if cache_p is not None:
+                    try:
+                        cache_p.parent.mkdir(parents=True, exist_ok=True)
+                        tmp = cache_p.with_name(f".{cache_p.name}.{os.getpid()}.tmp")
+                        tmp.write_text(
+                            json.dumps({"ny_date": ny_day, "adv20": cached_map}) + "\n",
+                            encoding="utf-8",
+                        )
+                        tmp.replace(cache_p)
+                    except OSError:
+                        pass
+
+        return {s: cached_map[s] for s in unique_syms if s in cached_map and cached_map[s] > 0.0}
+
     def _sweep_full_market_movers(
         self,
         now_utc: datetime,
@@ -1820,6 +2030,9 @@ class ExtremeMoverScanner:
             "early_stage_count": 0,
             "extreme_expansion_count": 0,
             "parabolic_climax_count": 0,
+            "split_adjusted_count": 0,
+            "spread_filtered_count": 0,
+            "adv20_covered_count": 0,
             "min_price_usd": float(self.early_mover_min_price),
             "min_dollar_vol_usd": float(self.early_mover_min_dollar_vol),
             "tod_rvol_expected_frac": 0.0,
@@ -1839,8 +2052,11 @@ class ExtremeMoverScanner:
             return [], [], empty_summary, {}
 
         syms = list(universe)
+        ny_date = now_utc.astimezone(_NY_TZ).date()
+        ny_day = ny_date.isoformat()
         elapsed_frac = _estimate_session_elapsed_fraction(now_utc, sess)
-        is_early_close_day = _xnys_rth_close_hm(now_utc.astimezone(_NY_TZ).date()) < 960
+        is_early_close_day = _xnys_rth_close_hm(ny_date) < 960
+        split_factors = self._load_recent_split_factors(now_utc)
         chunks = [syms[i : i + 1000] for i in range(0, len(syms), 1000)]
 
         def _fetch_chunk(batch: list[str]) -> Mapping[str, Any]:
@@ -1852,14 +2068,17 @@ class ExtremeMoverScanner:
             except (APIError, ValueError, TypeError, AttributeError, OSError, RuntimeError):
                 return {}
 
-        snap_meta: dict[str, dict[str, Any]] = {}
-        qualifying: list[dict[str, Any]] = []
-        early_candidates: list[dict[str, Any]] = []
         if len(chunks) == 1:
             parts = [_fetch_chunk(chunks[0])]
         else:
             with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
                 parts = list(pool.map(_fetch_chunk, chunks))
+
+        parsed_all: dict[str, dict[str, Any]] = {}
+        adv_targets: set[str] = {
+            p.strip().upper() for p in self.pin_symbols if p and p.strip()
+        } | set(EQUITY_BENCHMARKS)
+        adv_targets.add(VIX_PROXY_SYMBOL)
 
         for part in parts:
             for raw_sym, snap in part.items():
@@ -1867,6 +2086,7 @@ class ExtremeMoverScanner:
                 if not sym or sym not in universe:
                     continue
                 lt = _ga(snap, "latest_trade")
+                lq = _ga(snap, "latest_quote")
                 db = _ga(snap, "daily_bar")
                 pdb = _ga(snap, "previous_daily_bar")
                 px = _f(_ga(lt, "price"), 0.0) if lt is not None else 0.0
@@ -1879,104 +2099,224 @@ class ExtremeMoverScanner:
                 pvol = _f(_ga(pdb, "volume"), 0.0) if pdb is not None else 0.0
                 dopen = _f(_ga(db, "open"), 0.0) if db is not None else 0.0
                 dvwap = _f(_ga(db, "vwap"), 0.0) if db is not None else 0.0
+
+                bid = _f(_ga(lq, "bid_price"), 0.0) if lq is not None else 0.0
+                ask = _f(_ga(lq, "ask_price"), 0.0) if lq is not None else 0.0
+                spread_bps: float | None = None
+                if bid > 0.0 and ask >= bid:
+                    mid = 0.5 * (bid + ask)
+                    if mid > 0.0:
+                        spread_bps = round(((ask - bid) / mid) * 10_000.0, 1)
+
+                pdb_ts = _ga(pdb, "timestamp") if pdb is not None else None
+                pdb_day: str | None = None
+                if isinstance(pdb_ts, datetime):
+                    pdb_day = pdb_ts.astimezone(_NY_TZ).date().isoformat()
+                elif isinstance(pdb_ts, date):
+                    pdb_day = pdb_ts.isoformat()
+
+                split_adjusted = False
+                split_factor = 1.0
+                split_rec = split_factors.get(sym)
+                if split_rec is not None:
+                    factor = _f(split_rec.get("factor"), 0.0)
+                    ex_day = str(split_rec.get("ex_date") or ny_day)[:10]
+                    if factor > 0.0 and ex_day <= ny_day and (pdb_day is None or pdb_day < ex_day):
+                        prev_close = prev_close * factor
+                        if pvol > 0.0:
+                            pvol = pvol / factor
+                        split_adjusted = True
+                        split_factor = round(factor, 4)
+
                 daily_pct = ((px / prev_close) - 1.0) * 100.0
                 intra_open_pct = (((px / dopen) - 1.0) * 100.0) if dopen > 0.0 else None
                 vwap_dist_pct = (((px / dvwap) - 1.0) * 100.0) if dvwap > 0.0 else None
-                daily_rvol = (dvol / pvol) if pvol > 0.0 else 0.0
-                tod_rvol = (daily_rvol / elapsed_frac) if daily_rvol > 0.0 else 0.0
                 dollar_vol = px * dvol
-                tv_ex = universe[sym]
-                snap_meta[sym] = {
+                is_qual = (
+                    px >= self.early_mover_min_price
+                    and dvol >= 100_000.0
+                    and dollar_vol >= self.early_mover_min_dollar_vol
+                    and abs(daily_pct) >= 3.0
+                )
+                if is_qual:
+                    adv_targets.add(sym)
+                parsed_all[sym] = {
+                    "px": px,
                     "prev_close": prev_close,
-                    "last_price": px,
-                    "daily_change_pct": round(daily_pct, 2),
-                    "daily_volume": dvol,
-                    "prev_daily_volume": pvol,
-                    "daily_rvol": round(daily_rvol, 2),
-                    "tod_rvol": round(tod_rvol, 2),
-                    "dollar_vol": round(dollar_vol, 2),
-                    "exchange": tv_ex,
+                    "dvol": dvol,
+                    "pvol": pvol,
+                    "daily_pct": daily_pct,
+                    "intra_open_pct": intra_open_pct,
+                    "vwap_dist_pct": vwap_dist_pct,
+                    "dollar_vol": dollar_vol,
+                    "spread_bps": spread_bps,
+                    "split_adjusted": split_adjusted,
+                    "split_factor": split_factor,
+                    "tv_ex": universe[sym],
+                    "is_qual": is_qual,
                 }
-                if (
-                    px < self.early_mover_min_price
-                    or dvol < 100_000.0
-                    or dollar_vol < self.early_mover_min_dollar_vol
-                    or abs(daily_pct) < 3.0
-                ):
-                    continue
-                stage = _classify_mover_stage(daily_pct, tod_rvol)
-                price_tier = (
-                    "INSTITUTIONAL_GE10" if px >= self.min_price else "SMALLCAP_EARLY_1_TO_10"
-                )
-                side = "BUY" if daily_pct > 0.0 else "SELL"
-                capped_rvol = min(tod_rvol, 500.0)
-                whole_score = (
-                    abs(daily_pct) * 1.6
-                    + math.log1p(max(0.0, capped_rvol)) * 7.0
-                    + math.log1p(max(0.0, dollar_vol / 1_000_000.0)) * 3.0
-                )
-                row = {
-                    "symbol": sym,
-                    "exchange": tv_ex,
-                    "tv_symbol": f"{tv_ex}:{sym}",
-                    "stage": stage,
-                    "price_tier": price_tier,
-                    "side": side,
-                    "session": sess,
-                    "last_price": round(px, 4),
-                    "prior_close": round(prev_close, 4),
-                    "daily_change_pct": round(daily_pct, 2),
-                    "session_move_pct": round(daily_pct, 2),
-                    "intraday_from_open_pct": round(intra_open_pct, 2)
-                    if intra_open_pct is not None
-                    else None,
-                    "vwap_dist_pct": round(vwap_dist_pct, 2) if vwap_dist_pct is not None else None,
-                    "daily_volume": round(dvol, 0),
-                    "prev_daily_volume": round(pvol, 0),
-                    "daily_rvol": round(daily_rvol, 2),
-                    "tod_rvol": round(tod_rvol, 2),
-                    "rvol": round(tod_rvol, 2),
-                    "rvol_normalized": round(tod_rvol, 2),
-                    "dollar_vol": round(dollar_vol, 2),
-                    "score": round(whole_score, 2),
-                }
-                qualifying.append(row)
-                vwap_aligned = (
-                    vwap_dist_pct is None
-                    or (daily_pct > 0.0 and vwap_dist_pct >= -2.5)
-                    or (daily_pct < 0.0 and vwap_dist_pct <= 2.5)
-                )
-                if 3.0 <= abs(daily_pct) < 25.0 and tod_rvol >= 2.0 and vwap_aligned:
-                    open_expand = (
-                        3.0
-                        if intra_open_pct is not None
-                        and (
-                            (daily_pct > 0.0 and intra_open_pct > 0.0)
-                            or (daily_pct < 0.0 and intra_open_pct < 0.0)
-                        )
-                        else 0.0
-                    )
-                    early_score = (
-                        abs(daily_pct) * 1.4
-                        + math.log1p(min(tod_rvol, 200.0)) * 9.0
-                        + math.log1p(max(0.0, dollar_vol / 1_000_000.0)) * 2.5
-                        + open_expand
-                    )
-                    early_candidates.append(
-                        row
-                        | {
-                            "stage": "EARLY_STAGE_IGNITION",
-                            "early_stage_score": round(early_score, 2),
-                        }
-                    )
 
-        qualifying.sort(
-            key=lambda r: (-float(r["score"]), -abs(float(r["daily_change_pct"])), r["symbol"])
+        adv20_map = self._load_or_fetch_adv20(sorted(adv_targets), now_utc, feed)
+
+        snap_meta: dict[str, dict[str, Any]] = {}
+        qualifying: list[dict[str, Any]] = []
+        early_candidates: list[dict[str, Any]] = []
+        split_adjusted_count = 0
+        spread_filtered_count = 0
+        adv20_covered_count = 0
+        max_early_spread_bps = 150.0 if sess == "RTH" else 300.0
+
+        for sym, rec in parsed_all.items():
+            px = float(rec["px"])
+            prev_close = float(rec["prev_close"])
+            dvol = float(rec["dvol"])
+            pvol = float(rec["pvol"])
+            daily_pct = float(rec["daily_pct"])
+            intra_open_pct = rec["intra_open_pct"]
+            vwap_dist_pct = rec["vwap_dist_pct"]
+            dollar_vol = float(rec["dollar_vol"])
+            spread_bps = rec["spread_bps"]
+            split_adjusted = bool(rec["split_adjusted"])
+            split_factor = float(rec["split_factor"])
+            tv_ex = str(rec["tv_ex"])
+
+            adv20_val = adv20_map.get(sym)
+            if adv20_val is not None and adv20_val > 0.0:
+                base_vol = adv20_val
+                rvol_baseline_source = "adv_20_median_split_adj"
+            else:
+                base_vol = pvol
+                rvol_baseline_source = "prev_daily_bar"
+
+            daily_rvol = (dvol / base_vol) if base_vol > 0.0 else 0.0
+            tod_rvol = (daily_rvol / elapsed_frac) if daily_rvol > 0.0 else 0.0
+
+            snap_meta[sym] = {
+                "prev_close": prev_close,
+                "last_price": px,
+                "daily_change_pct": round(daily_pct, 2),
+                "daily_volume": dvol,
+                "prev_daily_volume": pvol,
+                "adv_20": round(adv20_val, 0) if adv20_val is not None else None,
+                "rvol_baseline_source": rvol_baseline_source,
+                "daily_rvol": round(daily_rvol, 2),
+                "tod_rvol": round(tod_rvol, 2),
+                "dollar_vol": round(dollar_vol, 2),
+                "spread_bps": spread_bps,
+                "split_adjusted": split_adjusted,
+                "split_factor": split_factor,
+                "exchange": tv_ex,
+            }
+            if split_adjusted:
+                split_adjusted_count += 1
+            if not rec["is_qual"]:
+                continue
+            if adv20_val is not None and adv20_val > 0.0:
+                adv20_covered_count += 1
+
+            stage = _classify_mover_stage(daily_pct, tod_rvol)
+            price_tier = "INSTITUTIONAL_GE10" if px >= self.min_price else "SMALLCAP_EARLY_1_TO_10"
+            side = "BUY" if daily_pct > 0.0 else "SELL"
+            capped_rvol = min(tod_rvol, 500.0)
+            spread_penalty = (
+                min(25.0, max(0.0, (float(spread_bps) - 100.0) * 0.05))
+                if spread_bps is not None
+                else 0.0
+            )
+            whole_score = (
+                min(abs(daily_pct), 150.0) * 1.6
+                + math.log1p(max(0.0, capped_rvol)) * 7.5
+                + math.log1p(max(0.0, dollar_vol / 1_000_000.0)) * 3.0
+                - spread_penalty
+            )
+            low_rvol_demoted = (
+                stage in {"PARABOLIC_CLIMAX_SURGE", "ACTIVE_EXTREME_EXPANSION"} and tod_rvol < 1.0
+            )
+            row = {
+                "symbol": sym,
+                "exchange": tv_ex,
+                "tv_symbol": f"{tv_ex}:{sym}",
+                "stage": stage,
+                "price_tier": price_tier,
+                "side": side,
+                "session": sess,
+                "last_price": round(px, 4),
+                "prior_close": round(prev_close, 4),
+                "daily_change_pct": round(daily_pct, 2),
+                "session_move_pct": round(daily_pct, 2),
+                "intraday_from_open_pct": round(intra_open_pct, 2)
+                if intra_open_pct is not None
+                else None,
+                "vwap_dist_pct": round(vwap_dist_pct, 2) if vwap_dist_pct is not None else None,
+                "daily_volume": round(dvol, 0),
+                "prev_daily_volume": round(pvol, 0),
+                "adv_20": round(adv20_val, 0) if adv20_val is not None else None,
+                "rvol_baseline_source": rvol_baseline_source,
+                "daily_rvol": round(daily_rvol, 2),
+                "tod_rvol": round(tod_rvol, 2),
+                "rvol": round(tod_rvol, 2),
+                "rvol_normalized": round(tod_rvol, 2),
+                "dollar_vol": round(dollar_vol, 2),
+                "spread_bps": spread_bps,
+                "split_adjusted": split_adjusted,
+                "split_factor": split_factor,
+                "low_rvol_demoted": low_rvol_demoted,
+                "score": round(whole_score, 2),
+            }
+            if spread_bps is not None and float(spread_bps) > 500.0:
+                spread_filtered_count += 1
+            qualifying.append(row)
+
+            spread_ok_early = spread_bps is None or float(spread_bps) <= max_early_spread_bps
+            vwap_aligned = (
+                vwap_dist_pct is None
+                or (daily_pct > 0.0 and -2.5 <= vwap_dist_pct <= 12.0)
+                or (daily_pct < 0.0 and -12.0 <= vwap_dist_pct <= 2.5)
+            )
+            if (
+                3.0 <= abs(daily_pct) < 25.0
+                and tod_rvol >= 2.0
+                and vwap_aligned
+                and spread_ok_early
+            ):
+                open_expand = (
+                    3.0
+                    if intra_open_pct is not None
+                    and (
+                        (daily_pct > 0.0 and intra_open_pct > 0.0)
+                        or (daily_pct < 0.0 and intra_open_pct < 0.0)
+                    )
+                    else 0.0
+                )
+                early_score = (
+                    abs(daily_pct) * 1.4
+                    + math.log1p(min(tod_rvol, 200.0)) * 9.0
+                    + math.log1p(max(0.0, dollar_vol / 1_000_000.0)) * 2.5
+                    + open_expand
+                )
+                early_candidates.append(
+                    row
+                    | {
+                        "stage": "EARLY_STAGE_IGNITION",
+                        "early_stage_score": round(early_score, 2),
+                    }
+                )
+
+        top_full_pool = [
+            r for r in qualifying if r["spread_bps"] is None or float(r["spread_bps"]) <= 500.0
+        ]
+        top_full_pool.sort(
+            key=lambda r: (
+                1 if bool(r.get("low_rvol_demoted")) else 0,
+                -float(r["score"]),
+                -abs(float(r["daily_change_pct"])),
+                r["symbol"],
+            )
         )
         early_candidates.sort(
             key=lambda r: (-float(r["early_stage_score"]), -float(r["tod_rvol"]), r["symbol"])
         )
-        top_full = [row | {"rank": idx} for idx, row in enumerate(qualifying[:25], 1)]
+        top_full = [row | {"rank": idx} for idx, row in enumerate(top_full_pool[:25], 1)]
         top_early = [row | {"rank": idx} for idx, row in enumerate(early_candidates[:15], 1)]
         summary = {
             "enabled": True,
@@ -1984,11 +2324,14 @@ class ExtremeMoverScanner:
             "qualifying_movers_count": len(qualifying),
             "early_stage_count": len(early_candidates),
             "extreme_expansion_count": sum(
-                1 for r in qualifying if r["stage"] == "ACTIVE_EXTREME_EXPANSION"
+                1 for r in top_full_pool if r["stage"] == "ACTIVE_EXTREME_EXPANSION"
             ),
             "parabolic_climax_count": sum(
-                1 for r in qualifying if r["stage"] == "PARABOLIC_CLIMAX_SURGE"
+                1 for r in top_full_pool if r["stage"] == "PARABOLIC_CLIMAX_SURGE"
             ),
+            "split_adjusted_count": split_adjusted_count,
+            "spread_filtered_count": spread_filtered_count,
+            "adv20_covered_count": adv20_covered_count,
             "min_price_usd": float(self.early_mover_min_price),
             "min_dollar_vol_usd": float(self.early_mover_min_dollar_vol),
             "tod_rvol_expected_frac": round(elapsed_frac, 5),
@@ -2307,14 +2650,19 @@ class ExtremeMoverScanner:
                 if snap_prev_close is not None and snap_prev_close > 0.0 and px > 0.0
                 else None
             )
-            mv = (
-                meta["move"]
-                if feed == DataFeed.SIP and abs(meta["move"]) > 0.0
-                else (daily_mv if daily_mv is not None else bmv)
-            )
+            sm = sweep_snap_meta.get(sym) or {}
+            is_split_adj = bool(sm.get("split_adjusted", False))
+            if is_split_adj and daily_mv is not None:
+                mv = daily_mv
+            else:
+                mv = (
+                    meta["move"]
+                    if feed == DataFeed.SIP and abs(meta["move"]) > 0.0
+                    else (daily_mv if daily_mv is not None else bmv)
+                )
             vol = max(float(meta["volume"]), sum(_f(_ga(b, "volume")) for b in sb))
             dollar_vol = px * vol
-            snap_rvol = _f((sweep_snap_meta.get(sym) or {}).get("tod_rvol"), 0.0)
+            snap_rvol = _f(sm.get("tod_rvol"), 0.0)
             same_sess_rvol = _compute_same_session_rvol(sb, sess, early_fallback_rvol=self.min_rvol)
             if sess == "RTH" and snap_rvol > 0.0 and 0.0 <= elapsed_rth_mins < 60.0:
                 rvol = snap_rvol
@@ -2645,6 +2993,11 @@ class ExtremeMoverScanner:
                     "change_pct": round(mv, 2),
                     "rvol_normalized": round(rvol, 2),
                     "rvol": round(rvol, 2),
+                    "adv_20": sm.get("adv_20"),
+                    "rvol_baseline_source": sm.get("rvol_baseline_source") or "prev_daily_bar",
+                    "spread_bps": sm.get("spread_bps"),
+                    "split_adjusted": is_split_adj,
+                    "split_factor": _f(sm.get("split_factor"), 1.0),
                     "vol_buildup_ratio": round(vol_buildup_ratio, 2),
                     "vol_ramp_bars": vol_ramp_bars,
                     "unusual_volume_buildup": unusual_volume_buildup,
@@ -2819,6 +3172,10 @@ class ExtremeMoverScanner:
                 ]
                 if r.get("vwap_dist_pct") is not None:
                     parts.append(f"VWAP {_f(r['vwap_dist_pct'], 0.0):+.2f}%")
+                if r.get("spread_bps") is not None:
+                    parts.append(f"Spread {_f(r['spread_bps'], 0.0):.0f}bps")
+                if bool(r.get("split_adjusted")):
+                    parts.append(f"SplitAdj {_f(r.get('split_factor'), 1.0):g}x")
                 parts.append(f"Macro:{regime_substate}")
                 out_rows.append(
                     r
@@ -2831,6 +3188,33 @@ class ExtremeMoverScanner:
 
         full_market_top = _attach_sweep_reasons(full_market_top)
         early_stage_top = _attach_sweep_reasons(early_stage_top)
+
+        vix_proxy_daily_pct: float | None = None
+        vix_meta = sweep_snap_meta.get(VIX_PROXY_SYMBOL) or {}
+        if vix_meta.get("daily_change_pct") is not None:
+            vix_proxy_daily_pct = round(_f(vix_meta["daily_change_pct"], 0.0), 3)
+        elif (
+            self.data_client is not None
+            and hasattr(self.data_client, "get_stock_snapshot")
+            and sess != "CLOSED"
+        ):
+            try:
+                v_snaps = self.data_client.get_stock_snapshot(
+                    StockSnapshotRequest(symbol_or_symbols=[VIX_PROXY_SYMBOL], feed=feed)
+                )
+                v_sn = v_snaps.get(VIX_PROXY_SYMBOL) if isinstance(v_snaps, Mapping) else None
+                if v_sn is not None:
+                    v_lt = _ga(v_sn, "latest_trade")
+                    v_db = _ga(v_sn, "daily_bar")
+                    v_pdb = _ga(v_sn, "previous_daily_bar")
+                    v_px = _f(_ga(v_lt, "price"), 0.0) if v_lt is not None else 0.0
+                    if v_px <= 0.0 and v_db is not None:
+                        v_px = _f(_ga(v_db, "close"), 0.0)
+                    v_pc = _f(_ga(v_pdb, "close"), 0.0) if v_pdb is not None else 0.0
+                    if v_px > 0.0 and v_pc > 0.0:
+                        vix_proxy_daily_pct = round(((v_px / v_pc) - 1.0) * 100.0, 3)
+            except (APIError, ValueError, TypeError, AttributeError, OSError, RuntimeError):
+                vix_proxy_daily_pct = None
 
         feed_sources = (
             (["alpaca_boats", "finra_trf_exchange_d"] if trf_stats else ["alpaca_boats"])
@@ -2878,7 +3262,9 @@ class ExtremeMoverScanner:
                 "fresh_equity_benchmarks": fresh,
                 "core_benchmarks_used": [bm for bm in CORE_REGIME_BENCHMARKS if bm in regime_ready],
                 "regime_basis": regime_basis,
-                "vix_available": False,
+                "vix_proxy_symbol": VIX_PROXY_SYMBOL,
+                "vix_proxy_daily_pct": vix_proxy_daily_pct,
+                "vix_available": vix_proxy_daily_pct is not None,
             },
             "pin_symbols": list(self.pin_symbols),
             "early_mover_tuning": {
