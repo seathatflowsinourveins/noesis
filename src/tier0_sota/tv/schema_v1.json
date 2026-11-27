@@ -37,8 +37,8 @@
       "enum": ["PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT"]
     },
     "order_type": { "type": "string", "enum": ["STOP_MARKET", "STOP_LIMIT"] },
-    "trigger_price": { "type": "number", "exclusiveMinimum": 0 },
-    "stop_price": { "type": "number", "exclusiveMinimum": 0 },
+    "trigger_price": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1000000000 },
+    "stop_price": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1000000000 },
     "stop_distance_pct": { "type": "number", "minimum": 0, "maximum": 0.02 },
     "limit_collar_bps": { "type": "number", "minimum": 0, "maximum": 100 },
     "trailing_schedule": {
@@ -71,10 +71,15 @@
     },
     "macro_regime": { "type": "integer", "enum": [-1, 0, 1] },
     "rvol": { "type": "number", "minimum": 0 },
+    "darkpool_trf_ratio": { "type": "number", "minimum": 0, "maximum": 1.0 },
     "hidden_volume_ratio": { "type": "number", "minimum": 0 },
+    "vol_buildup_ratio": { "type": "number", "minimum": 0 },
+    "unusual_volume_buildup": { "type": "boolean" },
     "peak_confirmed": { "type": "boolean" },
     "is_leveraged_or_inverse": { "type": "boolean" },
     "pair_symbol": { "type": "string", "minLength": 1, "maxLength": 16 },
+    "script_kind": { "type": "string", "enum": ["indicator", "strategy"] },
+    "order_preset_id": { "type": "string", "minLength": 1, "maxLength": 64 },
     "data_source": {
       "type": "string",
       "enum": [

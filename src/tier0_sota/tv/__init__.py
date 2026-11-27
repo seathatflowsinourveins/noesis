@@ -1,29 +1,51 @@
-"""TradingView Pine v6 display-only alert bridge & Half-Auto ticket console."""
+"""TradingView Pine v6 display-only alert bridge, Order Presets & Half-Auto cockpit."""
 
 from tier0_sota.tv.bridge import (
+    TvAlertV1,
     ingest_alerts_file,
+    load_tv_audit_summary,
+    persist_tv_preset_duckdb,
+    persist_tv_presets_duckdb,
     refuse_live_endpoints,
     stage_tv_alert_preset,
+    sync_tv_audit_duckdb_snapshot,
     validate_tv_alert_payload,
 )
 from tier0_sota.tv.tickets import (
+    build_finos_tv_cockpit,
     build_half_auto_tickets,
+    build_tv_compounding_manifest,
+    build_tv_order_presets,
     current_et_session,
     filter_extreme_movers,
     refresh_tickets_from_paths,
+    render_order_preset_cards_markdown,
     render_tickets_markdown,
     render_tv_watchlist,
+    resolve_tv_exchange_symbol,
+    sync_pine_scripts_to_pack,
 )
 
 __all__ = [
+    "TvAlertV1",
+    "build_finos_tv_cockpit",
     "build_half_auto_tickets",
+    "build_tv_compounding_manifest",
+    "build_tv_order_presets",
     "current_et_session",
     "filter_extreme_movers",
     "ingest_alerts_file",
+    "load_tv_audit_summary",
+    "persist_tv_preset_duckdb",
+    "persist_tv_presets_duckdb",
     "refresh_tickets_from_paths",
     "refuse_live_endpoints",
+    "render_order_preset_cards_markdown",
     "render_tickets_markdown",
     "render_tv_watchlist",
+    "resolve_tv_exchange_symbol",
     "stage_tv_alert_preset",
+    "sync_pine_scripts_to_pack",
+    "sync_tv_audit_duckdb_snapshot",
     "validate_tv_alert_payload",
 ]

@@ -14,7 +14,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-DEFAULT_MANIFEST_PATH = Path(r"Z:\sota-data\manifests\orca_account_failover_status.json")
+_DEFAULT_DATA_ROOT = Path(
+    os.environ.get("TIER0_DATA_ROOT", "").strip()
+    or (r"Z:\sota-data" if os.name == "nt" else "/mnt/z/sota-data")
+)
+DEFAULT_MANIFEST_PATH = _DEFAULT_DATA_ROOT / "manifests" / "orca_account_failover_status.json"
 SUPPORTED_AGENTS = ("claude", "codex")
 
 

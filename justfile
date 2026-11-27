@@ -5,6 +5,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set windows-shell := ["pwsh", "-NoProfile", "-Command"]
 
 wsl_venv := env("HOME", "") / "noesis/.venv"
+cache_root := if os_family() == "windows" { "" } else { env("HOME", "/tmp") / ".cache/noesis" }
 uv_prefix := if os_family() == "windows" {
     ""
 } else if path_exists(".venv/bin/python") == "true" {
@@ -14,7 +15,17 @@ uv_prefix := if os_family() == "windows" {
 } else {
     ""
 }
-uv_run := uv_prefix + "uv run --no-sync"
+cache_prefix := if os_family() == "windows" {
+    ""
+} else {
+    "RUFF_CACHE_DIR=" + cache_root + "/ruff HYPOTHESIS_STORAGE_DIRECTORY=" + cache_root + "/hypothesis "
+}
+pytest_cache_flag := if os_family() == "windows" {
+    ""
+} else {
+    "-o cache_dir=" + cache_root + "/pytest"
+}
+uv_run := cache_prefix + uv_prefix + "uv run --no-sync"
 
 # Show available upstream tasks
 default:
@@ -70,7 +81,7 @@ manifest-check:
 
 # Run full pytest suite
 test *args:
-    {{uv_run}} pytest -q {{args}}
+    {{uv_run}} pytest -q {{pytest_cache_flag}} {{args}}
 
 # Refresh Half-Auto extreme-mover TV tickets, watchlists & DuckDB audit table (qty=1, semi_auto_confirmed=false)
 tv-tickets:
@@ -80,7 +91,7 @@ tv-tickets:
 tv-e2e:
     {{uv_run}} ruff check src/tier0_sota/tv tests/test_tv_automation.py
     {{uv_run}} ty check src/tier0_sota/tv tests/test_tv_automation.py
-    {{uv_run}} pytest -q tests/test_tv_automation.py
+    {{uv_run}} pytest -q {{pytest_cache_flag}} tests/test_tv_automation.py
 
 # Build Zensical ADR & architecture documentation site (strict mode)
 docs-build:
@@ -88,7 +99,7 @@ docs-build:
 
 # Verify MADR 4.0 ADR frontmatter, fitness bindings, manifest parity & strict Zensical build
 adr-check: manifest-check docs-build
-    {{uv_run}} pytest -q tests/test_architecture_manifest.py -k "adr or clean_sota_harness"
+    {{uv_run}} pytest -q {{pytest_cache_flag}} tests/test_architecture_manifest.py -k "adr or clean_sota_harness"
 
 # Install prek git hooks
 prek-install:
@@ -112,6 +123,28 @@ trivy:
 
 # Run full supply-chain & workflow security gates (gitleaks + zizmor + trivy)
 security: gitleaks zizmor trivy
+
+# Run guarded offline static MCP & skills supply-chain audit via snyk/agent-scan (L15; telemetry off, zero secrets)
+[unix]
+agent-scan:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unset SNYK_TOKEN ALPACA_PA1_API_KEY ALPACA_PA1_SECRET ALPACA_PA1_SECRET_KEY ALPACA_PA2_API_KEY ALPACA_PA2_SECRET ALPACA_PA2_SECRET_KEY ALPACA_PA3_API_KEY ALPACA_PA3_SECRET ALPACA_PA3_SECRET_KEY APCA_API_KEY_ID APCA_API_SECRET_KEY
+    export SNYK_CFG_TELEMETRY=0
+    export SNYK_DISABLE_ANALYTICS=1
+    targets=(.mcp.json .claude/settings.json .gemini/settings.json opencode.json .codex/config.toml .claude/skills)
+    if command -v agent-scan >/dev/null 2>&1; then
+      agent-scan inspect --opt-out "${targets[@]}"
+    elif command -v uvx >/dev/null 2>&1 && uvx --offline --from snyk-agent-scan agent-scan --help >/dev/null 2>&1; then
+      uvx --offline --from snyk-agent-scan agent-scan inspect --opt-out "${targets[@]}"
+    else
+      echo "[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)"
+    fi
+
+# Run guarded offline static MCP & skills supply-chain audit via snyk/agent-scan (L15; telemetry off, zero secrets)
+[windows]
+agent-scan:
+    $env:SNYK_CFG_TELEMETRY = '0'; $env:SNYK_DISABLE_ANALYTICS = '1'; foreach ($v in @('SNYK_TOKEN','ALPACA_PA1_API_KEY','ALPACA_PA1_SECRET','ALPACA_PA1_SECRET_KEY','ALPACA_PA2_API_KEY','ALPACA_PA2_SECRET','ALPACA_PA2_SECRET_KEY','ALPACA_PA3_API_KEY','ALPACA_PA3_SECRET','ALPACA_PA3_SECRET_KEY','APCA_API_KEY_ID','APCA_API_SECRET_KEY')) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }; $targets = @('.mcp.json','.claude/settings.json','.gemini/settings.json','opencode.json','.codex/config.toml','.claude/skills'); if (Get-Command agent-scan -ErrorAction SilentlyContinue) { agent-scan inspect --opt-out @targets } elseif (Get-Command uvx -ErrorAction SilentlyContinue) { & uvx --offline --from snyk-agent-scan agent-scan --help *> $null; if ($LASTEXITCODE -eq 0) { uvx --offline --from snyk-agent-scan agent-scan inspect --opt-out @targets } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' } } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' }
 
 # Start WSL2/Docker hosted SOTA research stack (-p docker)
 docker-up:
@@ -164,7 +197,7 @@ scan *args:
 # Run whole-market Alpaca SIP extreme-mover scanner via fnox paper profile (graceful CI skip if unauthenticated)
 [unix]
 scan:
-    if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; out = Path('${data_root}') / 'manifests' / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=15, pin_symbols=('SOXL','SOXS'), output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; elif [[ -n "${ALPACA_PA1_API_KEY:-}" || -n "${APCA_API_KEY_ID:-}" ]]; then uv run --no-sync python -c "$py_code"; else echo "[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID"; fi
+    if [[ ! -x .venv/bin/python && -x "$HOME/noesis/.venv/bin/python" ]]; then export UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv"; fi; key_file="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}"; data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"; py_code="from pathlib import Path; from tier0_sota.live.scanner import scan_extreme_movers; out = Path('${data_root}') / 'manifests' / 'live_whole_market_movers_manifest.json'; doc = scan_extreme_movers(top_k=15, output_path=out); print('SCAN_OK', doc['ranked_count'], doc['macro_regime'])"; if command -v fnox >/dev/null 2>&1 && [[ -f "$key_file" ]]; then FNOX_AGE_KEY_FILE="$key_file" fnox exec --profile paper -- uv run --no-sync python -c "$py_code"; elif [[ -n "${ALPACA_PA1_API_KEY:-}" || -n "${APCA_API_KEY_ID:-}" ]]; then uv run --no-sync python -c "$py_code"; else echo "[SKIP] live SIP scan: configure fnox age key (~/.config/fnox/age.txt) or ALPACA_PA1_API_KEY/APCA_API_KEY_ID"; fi
 
 # Authenticate every Paper Farm observation with the encrypted paper profile.
 [windows]
@@ -185,9 +218,9 @@ automate: resume
     just reflect
     pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/grand_reset/verify_grand_reset.ps1
 
-# Run full fail-closed ecosystem automation cycle (reconcile -> scan -> paper-farm -> reflect -> check -> docs-build)
+# Run full fail-closed ecosystem automation cycle (reconcile -> scan -> paper-farm -> reflect -> check)
 [unix]
-automate: resume scan paper-farm reflect check docs-build
+automate: resume scan paper-farm reflect check
 
 # Launch a fresh Antigravity window attached to Z:\noesis (without killing running instances)
 [windows]
@@ -209,5 +242,38 @@ open-agy-wsl:
 open-agy-wsl:
     setsid -f "$HOME/.local/bin/antigravity-desktop" /mnt/z/noesis </dev/null >/tmp/antigravity-wsl.log 2>&1
 
-# Run complete local SOTA verification suite
-check: fmt-check lint typecheck deptry ast adr-check z3 mcp-smoke test gitleaks
+# Run complete local SOTA verification suite (parallel read-only gates -> docs-build -> single full pytest)
+[unix]
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' EXIT
+    gates=(fmt-check lint typecheck deptry ast manifest-check z3 mcp-smoke gitleaks)
+    pids=()
+    for g in "${gates[@]}"; do
+      just "$g" >"$tmp_dir/$g.log" 2>&1 &
+      pids+=("$!")
+    done
+    failed=0
+    for i in "${!gates[@]}"; do
+      g="${gates[$i]}"
+      if ! wait "${pids[$i]}"; then
+        echo "=== FAILED GATE: $g ===" >&2
+        cat "$tmp_dir/$g.log" >&2
+        failed=1
+      fi
+    done
+    if [[ "$failed" -ne 0 ]]; then
+      exit 1
+    fi
+    echo "[OK] parallel static/security/smoke gates (${#gates[@]}/${#gates[@]})"
+    just docs-build
+    just test
+
+# Run complete local SOTA verification suite (parallel read-only gates -> docs-build -> single full pytest)
+[windows]
+check:
+    $ErrorActionPreference = 'Stop'; $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('noesis-just-check-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null; try { $gates = @('fmt-check', 'lint', 'typecheck', 'deptry', 'ast', 'manifest-check', 'z3', 'mcp-smoke', 'gitleaks'); $procs = @(foreach ($g in $gates) { $outF = Join-Path $tmpDir ($g + '.out.log'); $errF = Join-Path $tmpDir ($g + '.err.log'); $p = Start-Process -FilePath 'just' -ArgumentList @($g) -NoNewWindow -PassThru -RedirectStandardOutput $outF -RedirectStandardError $errF; $null = $p.Handle; [pscustomobject]@{ Name = $g; Proc = $p; Out = $outF; Err = $errF } }); $failed = $false; foreach ($item in $procs) { $item.Proc.WaitForExit(); if ($item.Proc.ExitCode -ne 0) { Write-Error ('=== FAILED GATE: ' + $item.Name + ' ===') -ErrorAction Continue; if (Test-Path -LiteralPath $item.Out) { Get-Content -LiteralPath $item.Out }; if (Test-Path -LiteralPath $item.Err) { Get-Content -LiteralPath $item.Err }; $failed = $true } }; if ($failed) { exit 1 }; Write-Host ('[OK] parallel static/security/smoke gates (' + $gates.Count + '/' + $gates.Count + ')') } finally { if (Test-Path -LiteralPath $tmpDir) { Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue } }
+    just docs-build
+    just test

@@ -20,6 +20,7 @@ import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
@@ -88,6 +89,10 @@ def _parse_proc_net_tcp_ports(content: str) -> set[int]:
     return ports
 
 
+def _probe_forbidden_port(port: int) -> bool:
+    return _port_open(port, timeout=0.35)
+
+
 def _active_forbidden_tcp_ports() -> tuple[list[int], str | None]:
     """Return active forbidden local OR remote TCP ports (fail-closed on probe error)."""
     observed: set[int] = set()
@@ -115,9 +120,14 @@ def _active_forbidden_tcp_ports() -> tuple[list[int], str | None]:
             if proc_path.is_file():
                 with contextlib.suppress(OSError):
                     observed |= _parse_proc_net_tcp_ports(proc_path.read_text(encoding="utf-8"))
-    for port in FORBIDDEN_LIVE_PORTS:
-        if _port_open(port, timeout=0.35):
-            observed.add(port)
+    with ThreadPoolExecutor(max_workers=len(FORBIDDEN_LIVE_PORTS)) as pool:
+        for port, is_open in zip(
+            FORBIDDEN_LIVE_PORTS,
+            pool.map(_probe_forbidden_port, FORBIDDEN_LIVE_PORTS),
+            strict=True,
+        ):
+            if is_open:
+                observed.add(port)
     hits = sorted(port for port in FORBIDDEN_LIVE_PORTS if port in observed)
     return hits, None
 
@@ -203,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     mode_group.add_argument("--confirm-paper", action="store_true")
     parser.add_argument("--manifest-dir", required=True)
     parser.add_argument("--top-k", type=int, default=15)
-    parser.add_argument("--pin-symbols", default="SOXL,SOXS")
+    parser.add_argument("--pin-symbols", default="SOXL,SOXS,TQQQ,SQQQ")
     args = parser.parse_args(argv)
 
     repo_root = pathlib.Path(__file__).resolve().parents[1]
@@ -246,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
             err_msg = "missing fnox age identity file"
             return 2
 
-        ibkr_reachable = _port_open(IBKR_PAPER_PORT, timeout=1.5)
+        ibkr_reachable = _port_open(IBKR_PAPER_PORT, timeout=0.5)
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPATH"] = str(repo_root / "src")

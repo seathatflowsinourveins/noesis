@@ -93,46 +93,77 @@ try {
     }
     Write-Host "[OK] LEGACY_MATCHES=0" -ForegroundColor Green
 
-    # 5-9. Static formatting, lint, type check, deptry, AST-grep
-    & (Join-Path $VenvScripts "ruff.exe") format --check src tests scripts evals
-    if ($LASTEXITCODE -ne 0) { throw "ruff format --check failed" }
-    & (Join-Path $VenvScripts "ruff.exe") check .
-    if ($LASTEXITCODE -ne 0) { throw "ruff check failed" }
-    & (Join-Path $VenvScripts "ty.exe") check
-    if ($LASTEXITCODE -ne 0) { throw "ty check failed" }
-    & (Join-Path $VenvScripts "deptry.exe") .
-    if ($LASTEXITCODE -ne 0) { throw "deptry failed" }
-    & (Join-Path $VenvScripts "ast-grep.exe") scan
-    if ($LASTEXITCODE -ne 0) { throw "ast-grep scan failed" }
-    Write-Host "[OK] ruff format --check, ruff check, ty check, deptry, ast-grep scan = 0 issues" -ForegroundColor Green
+    # 5-11 & 13. Parallel read-only static, formal Z3, FastMCP smoke & gitleaks gates
+    $gateLogDir = Join-Path ([System.IO.Path]::GetTempPath()) ("noesis-check-ps1-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $gateLogDir -Force | Out-Null
+    try {
+        $gateSpecs = [System.Collections.Generic.List[hashtable]]::new()
+        $gateSpecs.Add(@{ Name = "ruff-format"; File = (Join-Path $VenvScripts "ruff.exe"); Args = @("format", "--check", "src", "tests", "scripts", "evals") })
+        $gateSpecs.Add(@{ Name = "ruff-check"; File = (Join-Path $VenvScripts "ruff.exe"); Args = @("check", ".") })
+        $gateSpecs.Add(@{ Name = "ty-check"; File = (Join-Path $VenvScripts "ty.exe"); Args = @("check") })
+        $gateSpecs.Add(@{ Name = "deptry"; File = (Join-Path $VenvScripts "deptry.exe"); Args = @(".") })
+        $gateSpecs.Add(@{ Name = "ast-grep"; File = (Join-Path $VenvScripts "ast-grep.exe"); Args = @("scan") })
+        $gateSpecs.Add(@{ Name = "z3"; File = $VenvPy; Args = @((Join-Path $RepoRoot "evals\formal_risk_z3.py")) })
+        $gateSpecs.Add(@{ Name = "mcp-smoke"; File = $VenvPy; Args = @((Join-Path $RepoRoot "scripts\nautilus_mcp_server.py"), "--smoke") })
+        $gitleaksCmd = Get-Command gitleaks -ErrorAction SilentlyContinue
+        if ($gitleaksCmd) {
+            $gateSpecs.Add(@{ Name = "gitleaks"; File = $gitleaksCmd.Source; Args = @("detect", "--no-git", "--source", $RepoRoot, "--config", (Join-Path $RepoRoot ".gitleaks.toml"), "--no-banner") })
+        }
 
-    # 10. Z3 formal risk proof
-    $z3Out = (& $VenvPy (Join-Path $RepoRoot "evals\formal_risk_z3.py") 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $z3Out -notmatch "Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1") {
-        throw "formal_risk_z3.py failed: $z3Out"
-    }
-    Write-Host "[OK] Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1" -ForegroundColor Green
+        $runningGates = [System.Collections.Generic.List[hashtable]]::new()
+        foreach ($spec in $gateSpecs) {
+            $outFile = Join-Path $gateLogDir ($spec.Name + ".out.log")
+            $errFile = Join-Path $gateLogDir ($spec.Name + ".err.log")
+            $proc = Start-Process -FilePath $spec.File -ArgumentList $spec.Args -WorkingDirectory $RepoRoot -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $null = $proc.Handle
+            $runningGates.Add(@{
+                Name    = $spec.Name
+                Proc    = $proc
+                OutFile = $outFile
+                ErrFile = $errFile
+            })
+        }
 
-    # 11. Nautilus FastMCP smoke
-    $mcpRaw = (& $VenvPy (Join-Path $RepoRoot "scripts\nautilus_mcp_server.py") --smoke 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw "nautilus_mcp_server.py --smoke failed: $mcpRaw" }
-    $mcpJson = $mcpRaw | ConvertFrom-Json
-    if (-not $mcpJson.ok -or $mcpJson.tools_count -ne 10) {
-        throw "nautilus_mcp_server.py --smoke unexpected payload: $mcpRaw"
+        $gateFailures = [System.Collections.Generic.List[string]]::new()
+        foreach ($g in $runningGates) {
+            $g.Proc.WaitForExit()
+            $outText = if (Test-Path -LiteralPath $g.OutFile) { (Get-Content -LiteralPath $g.OutFile -Raw -Encoding UTF8) } else { "" }
+            $errText = if (Test-Path -LiteralPath $g.ErrFile) { (Get-Content -LiteralPath $g.ErrFile -Raw -Encoding UTF8) } else { "" }
+            if ($null -eq $outText) { $outText = "" }
+            if ($null -eq $errText) { $errText = "" }
+            $combined = ($outText + "`n" + $errText).Trim()
+            if ($g.Proc.ExitCode -ne 0) {
+                $gateFailures.Add("$($g.Name) failed (exit=$($g.Proc.ExitCode)): $combined")
+                continue
+            }
+            if ($g.Name -eq "z3" -and $combined -notmatch "Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1") {
+                $gateFailures.Add("formal_risk_z3.py missing expected marker: $combined")
+            } elseif ($g.Name -eq "mcp-smoke") {
+                $mcpJson = $outText | ConvertFrom-Json
+                if (-not $mcpJson.ok -or $mcpJson.tools_count -ne 10) {
+                    $gateFailures.Add("nautilus_mcp_server.py --smoke unexpected payload: $combined")
+                }
+            }
+        }
+        if ($gateFailures.Count -gt 0) {
+            throw ($gateFailures -join "`n---`n")
+        }
+        Write-Host "[OK] parallel static/security/smoke gates ($($runningGates.Count)/$($runningGates.Count))" -ForegroundColor Green
+        Write-Host "[OK] Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1" -ForegroundColor Green
+        Write-Host "[OK] nautilus_mcp_server.py --smoke (10/10 tools OK)" -ForegroundColor Green
+        if ($gitleaksCmd) {
+            Write-Host "[OK] gitleaks detect --no-git = 0 leaks" -ForegroundColor Green
+        }
+    } finally {
+        if (Test-Path -LiteralPath $gateLogDir) {
+            Remove-Item -LiteralPath $gateLogDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
-    Write-Host "[OK] nautilus_mcp_server.py --smoke (10/10 tools OK)" -ForegroundColor Green
 
     # 12. Pytest suite
     if (-not $SkipPytest) {
         & (Join-Path $VenvScripts "pytest.exe") -q
         if ($LASTEXITCODE -ne 0) { throw "pytest -q failed" }
-    }
-
-    # 13. Gitleaks (when installed)
-    if (Get-Command gitleaks -ErrorAction SilentlyContinue) {
-        & gitleaks detect --no-git --source $RepoRoot --config (Join-Path $RepoRoot ".gitleaks.toml") --no-banner
-        if ($LASTEXITCODE -ne 0) { throw "gitleaks detect failed" }
-        Write-Host "[OK] gitleaks detect --no-git = 0 leaks" -ForegroundColor Green
     }
 
     Write-Host "[CHECK-PS1 VERDICT: PASS]" -ForegroundColor Green

@@ -17,8 +17,36 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import polars as pl
-from mcp.server.fastmcp import FastMCP
+
+def _apply_mcp_stdio_thread_bounds() -> None:
+    """Cap idle thread pools for long-lived stdio MCP server processes."""
+    if (
+        __name__ != "__main__"
+        or "--smoke" in sys.argv
+        or "--self-check" in sys.argv
+        or os.environ.get("TIER0_UNBOUNDED_THREADS", "").strip() == "1"
+    ):
+        return
+    raw = os.environ.get("TIER0_MCP_THREADS", "2").strip()
+    threads = raw if raw.isdigit() and int(raw) > 0 else "2"
+    for key in (
+        "POLARS_MAX_THREADS",
+        "RAYON_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "TOKIO_WORKER_THREADS",
+    ):
+        os.environ[key] = threads
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+    os.environ.setdefault("GOMP_SPINCOUNT", "0")
+
+
+_apply_mcp_stdio_thread_bounds()
+
+import polars as pl  # noqa: E402
+from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -44,7 +72,6 @@ from tier0_sota.engine import (  # noqa: E402
     select_pooled_trailing_schedule,
     validate_venue_order_capability,
 )
-from tier0_sota.research import evaluate_hftbacktest_queue_markout  # noqa: E402
 from tier0_sota.risk import (  # noqa: E402
     MAX_STOP_LOSS_PCT,
     Side,
@@ -218,13 +245,36 @@ def evaluate_l1_queue_markout(
         return {"ok": False, "error": f"Missing L1 quotes/trades for {sym} on {d.isoformat()}"}
     q_df = pl.scan_parquet([str(p) for p in q_files]).collect()
     t_df = pl.scan_parquet([str(p) for p in t_files]).collect()
+    from tier0_sota.research import evaluate_hftbacktest_queue_markout
+
     res = evaluate_hftbacktest_queue_markout(q_df, t_df, symbol=sym, side=sd)
     return {"ok": True, **res}
 
 
+_ADMITTED_WATCHLIST_SCHEMAS = frozenset(
+    {
+        "tier0.watchlist-manifest.v1",
+        "tier0.whole-market-movers.v2",
+        "tier0.live-half-auto-tickets.v1",
+        "tier0.live-lane-preset-bundle.v1",
+        "tier0.tv-compounding-manifest.v1",
+    }
+)
+
+
+def _read_optional_json_dict(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 @mcp.tool()
 def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, Any]:
-    """Read live watchlist/movers manifest JSON (v1 or v2) fail-closed."""
+    """Read live watchlist, movers, preset bundle, or TV compounding manifest fail-closed."""
     env_p = os.environ.get("TIER0_WATCHLIST_MANIFEST") or os.environ.get(
         "TIER0_LIVE_WATCHLIST_MANIFEST"
     )
@@ -241,14 +291,34 @@ def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, A
     if not isinstance(data, dict):
         return {"ok": False, "error": "Invalid watchlist manifest JSON: expected object"}
     schema = data.get("schema_version")
-    if schema not in {"tier0.watchlist-manifest.v1", "tier0.whole-market-movers.v2"}:
+    if schema not in _ADMITTED_WATCHLIST_SCHEMAS:
         return {"ok": False, "error": f"Unexpected schema_version: {schema!r}"}
-    return {"ok": True, "manifest_path": str(target), **data}
+    res: dict[str, Any] = {"ok": True, "manifest_path": str(target), **data}
+    if schema == "tier0.whole-market-movers.v2":
+        tv_sync: dict[str, Any] = {}
+        bundle = _read_optional_json_dict(target.parent / "live_lane_order_preset_bundle.json")
+        if bundle is not None:
+            tv_sync["preset_bundle_count"] = len(bundle.get("top_potential_symbols") or ())
+            tv_sync["tca_calibration_ok"] = bool(bundle.get("tca_calibration_ok", True))
+        comp = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_compounding_manifest.json"
+        )
+        if comp is not None:
+            tv_sync["tv_compounding"] = comp
+        tickets = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "live_half_auto_tickets.json"
+        )
+        if tickets is not None:
+            tv_sync["tickets_count"] = len(tickets.get("tickets") or ())
+            tv_sync["standby_presets_count"] = len(tickets.get("standby_presets") or ())
+        if tv_sync:
+            res["tv_sync"] = tv_sync
+    return res
 
 
 @mcp.tool()
 def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str, Any]:
-    """Read Paper Farm live performance manifest JSON fail-closed."""
+    """Read Paper Farm live performance manifest JSON fail-closed with sibling TV sync."""
     env_p = os.environ.get("TIER0_PERFORMANCE_MANIFEST") or os.environ.get(
         "TIER0_LIVE_PERFORMANCE_MANIFEST"
     )
@@ -260,7 +330,16 @@ def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str,
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"ok": False, "error": f"Invalid performance manifest JSON: {exc}"}
-    return {"ok": True, **data}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "Invalid performance manifest JSON: expected object"}
+    res: dict[str, Any] = {"ok": True, **data}
+    comp = _read_optional_json_dict(target.parent / "tv_sota_pack" / "tv_compounding_manifest.json")
+    if comp is not None:
+        res["tv_compounding"] = comp
+    exe = _read_optional_json_dict(target.parent / "paper_farm_execution_status.json")
+    if exe is not None:
+        res["execution_status_snapshot"] = exe
+    return res
 
 
 @mcp.tool()
@@ -358,6 +437,28 @@ def _stage_minimal_order_preset(
         "reentry_cooldown_secs": cd,
         "semi_auto_confirmed": False,
     }
+    if src.get("darkpool_trf_ratio") is not None:
+        trf_v = float(src["darkpool_trf_ratio"])
+        if not 0.0 <= trf_v <= 1.0:
+            raise ValueError("darkpool_trf_ratio must be in [0.0, 1.0]")
+        norm_preset["darkpool_trf_ratio"] = round(trf_v, 4)
+    for num_key in ("vol_buildup_ratio", "hidden_volume_ratio"):
+        if src.get(num_key) is not None:
+            nv = float(src[num_key])
+            if nv < 0.0:
+                raise ValueError(f"{num_key} must be >= 0.0")
+            norm_preset[num_key] = round(nv, 4)
+    for bool_key in ("unusual_volume_buildup", "peak_confirmed"):
+        if src.get(bool_key) is not None:
+            norm_preset[bool_key] = bool(src[bool_key])
+    for str_key in ("pair_symbol", "setup_archetype", "order_preset_id"):
+        if val := str(src.get(str_key) or "").strip():
+            norm_preset[str_key] = val.upper() if str_key == "pair_symbol" else val
+    if src.get("script_kind") is not None:
+        sk = str(src["script_kind"]).strip().lower()
+        if sk not in ("indicator", "strategy"):
+            raise ValueError(f"Unsupported script_kind: {src['script_kind']!r}")
+        norm_preset["script_kind"] = sk
     if staged_path is not None:
         _atomic_write_json(
             Path(staged_path),

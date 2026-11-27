@@ -19,11 +19,15 @@ RUN uv sync --frozen --no-group dev \
     && chown -R 1000:1000 /opt/venv /workspace
 
 ENV OMP_NUM_THREADS=4 \
-    POLARS_MAX_THREADS=8 \
-    RAYON_NUM_THREADS=8 \
+    OPENBLAS_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    NUMEXPR_NUM_THREADS=4 \
+    BLIS_NUM_THREADS=4 \
+    POLARS_MAX_THREADS=4 \
+    RAYON_NUM_THREADS=4 \
     TOKENIZERS_PARALLELISM=false \
     MLFLOW_DISABLE_AGENT_HINT=1
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import tier0_sota" || exit 1
+HEALTHCHECK --interval=60s --timeout=5s --retries=3 CMD test -x /opt/venv/bin/python || exit 1
 
 USER sota

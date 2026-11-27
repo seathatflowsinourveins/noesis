@@ -275,6 +275,8 @@
         "Z:\\sota-data\\manifests\\paper_farm_live_performance_manifest.json",
         "Z:\\sota-data\\manifests\\finos_paper_farm_performance.json",
         "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json",
+        "Z:\\sota-data\\manifests\\live_lane_order_preset_bundle.json",
+        "Z:\\sota-data\\manifests\\paper_farm_execution_status.json",
         "Z:\\sota-data\\manifests\\paper_lane_{pa1,pa2,pa3}.duckdb"
       ]
     },
@@ -314,6 +316,11 @@
         "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_tv_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_half_auto_audit.duckdb",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_omni_sota_24x5.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_market_regime.pine",
         "Z:\\sota-data\\manifests\\staged_tv_presets.json"
       ]
     },

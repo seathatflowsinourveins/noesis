@@ -16,8 +16,8 @@
   },
   "core_trading_philosophy": {
     "extreme_movers_early": {
-      "objective": "Focus capital and broker API rate budgets strictly on the highest-potential extreme movers early while filtering out flat, low-RVOL mega-caps.",
-      "default_pins": ["SOXL", "SOXS"],
+      "objective": "Focus capital and broker API rate budgets strictly on the highest-potential extreme movers early (including FINRA TRF Exchange.D institutional darkpool block/carryover and unusual-volume buildup) while filtering out flat, low-RVOL mega-caps.",
+      "default_pins": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
       "excluded_hold_reasons": ["LOW_MOVE_NOT_EXTREME", "LOW_RVOL_NOT_EXTREME"],
       "realization_modules": [
         "src/tier0_sota/live/scanner.py",
@@ -113,6 +113,15 @@
       "broker_sdk": "alpaca-py==0.45.0",
       "schema_validation": "pydantic>=2.10.0",
       "tv_alert_model": "TvAlertV1",
+      "tv_order_preset_contract": "tier0.tv-order-presets.v1",
+      "finos_tv_cockpit_contract": "tier0.finos-openbb-tv-cockpit.v1",
+      "tv_compounding_manifest_contract": "tier0.tv-compounding-manifest.v1",
+      "pine_v6_suite": [
+        "pine/tier0_omni_sota_24x5.pine",
+        "pine/tier0_sota_strategy_24x5.pine",
+        "pine/tier0_market_regime.pine",
+        "pine/tier0_darkpool_uv_buildup.pine"
+      ],
       "modules": [
         "src/tier0_sota/live/scanner.py",
         "src/tier0_sota/live/paper_farm.py",
@@ -201,18 +210,43 @@
       "status": "ungated_continuous_compounding",
       "upstream_stack": [
         "tradingview_pine_v6",
+        "tradingview/lightweight-charts",
+        "finos-workspace",
+        "OpenBB",
+        "perspective",
+        "ag-grid-community",
         "pydantic",
+        "duckdb",
         "nautilus_trader",
         "alpaca-py"
+      ],
+      "pine_v6_suite": [
+        "pine/tier0_omni_sota_24x5.pine",
+        "pine/tier0_sota_strategy_24x5.pine",
+        "pine/tier0_market_regime.pine",
+        "pine/tier0_darkpool_uv_buildup.pine"
       ],
       "compounding_outputs": [
         "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_order_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\TV_ORDER_PRESET_CARDS.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\finos_tv_cockpit.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_scan_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_tv_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_half_auto_audit.duckdb",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_staged_presets.parquet",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_omni_sota_24x5.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_strategy_24x5.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_market_regime.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_darkpool_uv_buildup.pine",
         "Z:\\sota-data\\manifests\\staged_tv_presets.json"
       ],
       "e2e_verification_gates": [
         "just test tests/test_tv_automation.py",
+        "just adr-check",
         "just mcp-smoke",
         "just ast"
       ]

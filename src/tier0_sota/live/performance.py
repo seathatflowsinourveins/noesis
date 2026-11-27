@@ -27,6 +27,7 @@ from tier0_sota.live.paper_farm import (
     IBKR_PAPER_ACCOUNT,
     _duckdb_filename,
     default_manifest_dir,
+    open_bounded_duckdb,
 )
 
 ALL_FARM_ACCOUNTS: tuple[str, ...] = (*ALPACA_LANE_PROFILES.keys(), IBKR_PAPER_ACCOUNT)
@@ -143,6 +144,11 @@ def _populate_duckdb_counts(conn: duckdb.DuckDBPyConnection, out: dict[str, Any]
             "WHERE protective_stop_mode = 'COLLARED_STOP_LIMIT_SUPERVISED'"
         ).fetchone()
         out["ext_protected_db"] = int(sup_row[0]) if sup_row else 0
+    if "paper_daily_fuse" in tables:
+        fuse_row = conn.execute(
+            "SELECT tripped FROM paper_daily_fuse ORDER BY day DESC LIMIT 1"
+        ).fetchone()
+        out["breaker_latched_db"] = bool(fuse_row[0]) if fuse_row else False
 
 
 def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
@@ -160,11 +166,12 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
         "tca_markout_60s_bps": [],
         "ext_orders_db": 0,
         "ext_protected_db": 0,
+        "breaker_latched_db": False,
     }
     if not duck_path.is_file():
         return out
     try:
-        with duckdb.connect(str(duck_path), read_only=True) as conn:
+        with open_bounded_duckdb(duck_path, read_only=True) as conn:
             _populate_duckdb_counts(conn, out)
         return out
     except (OSError, duckdb.Error):
@@ -175,7 +182,7 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
         with tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False) as tf:
             tmp = Path(tf.name)
         shutil.copy2(duck_path, tmp)
-        with duckdb.connect(str(tmp), read_only=True) as conn:
+        with open_bounded_duckdb(tmp, read_only=True) as conn:
             _populate_duckdb_counts(conn, out)
     except (OSError, duckdb.Error):
         pass
@@ -186,16 +193,21 @@ def _read_duckdb_counts(duck_path: Path) -> dict[str, Any]:
 
 
 def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
-    """Read TV Half-Auto pack & DuckDB audit feedback (semi_auto_confirmed=False)."""
+    """Read TV Half-Auto pack, compounding manifest, movers & DuckDB audit (semi_auto=False)."""
     pack_dir = manifest_dir / "tv_sota_pack"
     tickets_doc = _read_json_safe(pack_dir / "live_half_auto_tickets.json")
+    compounding_doc = _read_json_safe(pack_dir / "tv_compounding_manifest.json")
+    movers_doc = _read_json_safe(manifest_dir / "live_whole_market_movers_manifest.json")
+    cockpit_doc = _read_json_safe(pack_dir / "finos_tv_cockpit.json")
     scan_presets_doc = _read_json_safe(pack_dir / "staged_scan_presets.json")
     manual_presets_doc = _read_json_safe(pack_dir / "staged_tv_presets.json") or _read_json_safe(
         manifest_dir / "staged_tv_presets.json"
     )
     tickets_list = tickets_doc.get("tickets")
+    standby_list = tickets_doc.get("standby_presets")
     scan_list = scan_presets_doc.get("presets")
     manual_list = manual_presets_doc.get("presets")
+    movers_entries = movers_doc.get("entries")
 
     audit_ids: set[str] = set()
     for audit_db in (
@@ -204,7 +216,7 @@ def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
     ):
         if audit_db.is_file():
             try:
-                with duckdb.connect(str(audit_db), read_only=True) as conn:
+                with open_bounded_duckdb(audit_db, read_only=True) as conn:
                     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
                     if "tv_staged_presets" in tables:
                         for (aid,) in conn.execute(
@@ -216,22 +228,124 @@ def _collect_tv_half_auto_telemetry(manifest_dir: Path) -> dict[str, Any]:
                 continue
     audit_rows = len(audit_ids)
 
-    tickets_n = len(tickets_list) if isinstance(tickets_list, list) else 0
+    t_items = (
+        [t for t in tickets_list if isinstance(t, dict)] if isinstance(tickets_list, list) else []
+    )
+    s_items = (
+        [s for s in standby_list if isinstance(s, dict)] if isinstance(standby_list, list) else []
+    )
+    m_items = (
+        [m for m in movers_entries if isinstance(m, dict)]
+        if isinstance(movers_entries, list)
+        else []
+    )
+    tickets_n = len(t_items)
+    standby_n = len(s_items)
     scan_n = len(scan_list) if isinstance(scan_list, list) else 0
     manual_n = len(manual_list) if isinstance(manual_list, list) else 0
+
+    ready_n = sum(
+        1 for t in t_items if str(t.get("action_gate") or "").startswith("READY_HALF_AUTO")
+    )
+    combined_rows = m_items or [*t_items, *s_items]
+    comp_uv = int(compounding_doc.get("unusual_vol_count") or 0) + int(
+        compounding_doc.get("standby_unusual_vol_count") or 0
+    )
+    movers_uv = sum(1 for r in combined_rows if r.get("unusual_volume_buildup") is True)
+    unusual_vol_n = max(comp_uv, movers_uv)
+
+    comp_dp = int(compounding_doc.get("darkpool_hits_count") or 0) + int(
+        compounding_doc.get("standby_darkpool_hits_count") or 0
+    )
+    movers_dp = sum(
+        1
+        for r in combined_rows
+        if isinstance(r.get("darkpool_trf_ratio"), (int, float))
+        and float(r["darkpool_trf_ratio"]) >= 0.35
+    )
+    darkpool_hits_n = max(comp_dp, movers_dp)
+
+    movers_cov = sum(
+        1 for r in combined_rows if isinstance(r.get("darkpool_trf_ratio"), (int, float))
+    )
+    darkpool_covered_n = max(
+        int(compounding_doc.get("darkpool_trf_covered_count") or 0),
+        movers_cov,
+    )
+    macro = (
+        movers_doc.get("macro_regime")
+        or tickets_doc.get("macro_regime")
+        or compounding_doc.get("macro_regime")
+        or {}
+    )
+    macro_regime = int(macro.get("regime", 0)) if isinstance(macro, dict) else 0
+    macro_label = (
+        str(macro.get("regime_label") or "NEUTRAL") if isinstance(macro, dict) else "NEUTRAL"
+    )
+    feed_sources = list(movers_doc.get("feed_sources") or tickets_doc.get("feed_sources") or [])
+    pine_shas = (
+        dict(compounding_doc["pine_shas"])
+        if isinstance(compounding_doc.get("pine_shas"), dict)
+        else {}
+    )
+    if compounding_doc.get("pine_omni_sha256") and "tier0_omni_sota_24x5.pine" not in pine_shas:
+        pine_shas["tier0_omni_sota_24x5.pine"] = str(compounding_doc["pine_omni_sha256"])
+    top_symbols = (
+        list(compounding_doc["top_symbols"])[:15]
+        if isinstance(compounding_doc.get("top_symbols"), list) and compounding_doc["top_symbols"]
+        else [
+            {
+                "symbol": r.get("symbol"),
+                "side": r.get("side"),
+                "action_gate": r.get("action_gate") or r.get("watch_tier"),
+                "score": r.get("score"),
+                "rvol": r.get("rvol") if r.get("rvol") is not None else r.get("rvol_normalized"),
+                "darkpool_trf_ratio": r.get("darkpool_trf_ratio"),
+                "hidden_volume_ratio": r.get("hidden_volume_ratio"),
+                "unusual_volume_buildup": bool(r.get("unusual_volume_buildup") is True),
+            }
+            for r in combined_rows[:15]
+        ]
+    )
+    cockpit_rows = (
+        list(cockpit_doc["openbb_rows"])
+        if isinstance(cockpit_doc.get("openbb_rows"), list)
+        else top_symbols
+    )
     return {
         "schema_version": "tier0.tv-half-auto-telemetry.v1",
         "semi_auto_confirmed": False,
         "live_execution_enabled": False,
         "qty": 1,
-        "active_session": str(tickets_doc.get("active_session") or "CLOSED"),
+        "active_session": str(
+            tickets_doc.get("active_session") or compounding_doc.get("active_session") or "CLOSED"
+        ),
         "tickets_count": tickets_n,
+        "ready_tickets_count": ready_n,
+        "standby_presets_count": standby_n,
         "schema_validated_count": int(tickets_doc.get("schema_validated_count") or 0),
         "staged_scan_presets_count": scan_n,
         "staged_manual_presets_count": manual_n,
         "staged_presets_total": scan_n + manual_n,
         "duckdb_audit_rows": audit_rows,
-        "generated_at_et": tickets_doc.get("generated_at_et"),
+        "unusual_vol_count": unusual_vol_n,
+        "darkpool_hits_count": darkpool_hits_n,
+        "darkpool_trf_covered_count": darkpool_covered_n,
+        "scanner_ranked_count": len(m_items),
+        "scanner_extreme_eligible_count": sum(
+            1 for m in m_items if m.get("extreme_mover_eligible") is True
+        ),
+        "macro_regime": macro_regime,
+        "macro_regime_label": macro_label,
+        "feed_sources": feed_sources,
+        "pine_omni_sha256": compounding_doc.get("pine_omni_sha256"),
+        "pine_shas": pine_shas,
+        "order_presets_present": (pack_dir / "tv_order_presets.json").is_file(),
+        "finos_tv_cockpit_present": bool(cockpit_doc),
+        "top_symbols": top_symbols,
+        "tv_openbb_rows": cockpit_rows,
+        "generated_at_et": tickets_doc.get("generated_at_et")
+        or compounding_doc.get("generated_at_et"),
     }
 
 
@@ -295,6 +409,12 @@ class PaperPerformanceAggregator:
             else (1.0 if fills > 0 else 0.0)
         )
 
+        dd_pct = round(float(status.get("daily_drawdown_pct") or 0.0), 6)
+        breaker_latched = bool(
+            duck.get("breaker_latched_db")
+            or status.get("daily_drawdown_breaker_latched")
+            or dd_pct <= -0.015
+        )
         metrics = {
             "worker_fills": duck["worker_fills"],
             "account": account,
@@ -305,7 +425,8 @@ class PaperPerformanceAggregator:
             if status.get("equity") is not None
             else None,
             "open_positions_count": int(status.get("open_positions_count") or 0),
-            "drawdown_pct": round(float(status.get("daily_drawdown_pct") or 0.0), 6),
+            "drawdown_pct": dd_pct,
+            "breaker_latched": breaker_latched,
             "entries": entries,
             "orders_submitted": orders_submitted,
             "fills": fills,
@@ -425,6 +546,7 @@ class PaperPerformanceAggregator:
             ),
             "accounts_with_equity": sum(m["equity"] is not None for m in lanes.values()),
             "max_drawdown_pct": round(max_dd, 6),
+            "any_breaker_latched": any(bool(m.get("breaker_latched")) for m in lanes.values()),
             "entries": int(df["entries"].sum()),
             "orders_submitted": total_submitted,
             "fills": total_fills,
@@ -538,6 +660,7 @@ def build_finos_openbb_export(
             "yaxis": {"title": "USD"},
         },
         "openbb_rows": [per_lane[a] for a in accts],
+        "tv_openbb_rows": list((tv_half_auto or {}).get("tv_openbb_rows") or []),
         "summary": summary,
         "tca_summary": tca_summary or {},
         "tv_half_auto": tv_half_auto or {},
@@ -559,6 +682,12 @@ def export_prometheus_metrics(
     )
     g_dd = Gauge(
         "tier0_paper_farm_drawdown_pct", "Per-lane daily drawdown fraction", labels, registry=reg
+    )
+    g_breaker = Gauge(
+        "tier0_drawdown_breaker_latched",
+        "Per-lane -1.50% session-latched daily drawdown breaker status (1=tripped, 0=clear)",
+        labels,
+        registry=reg,
     )
     g_is_mean = Gauge(
         "tier0_paper_farm_tca_mean_is_bps",
@@ -609,6 +738,7 @@ def export_prometheus_metrics(
         if row.get("equity") is not None:
             g_eq.labels(acct, lane_id).set(float(row["equity"]))
         g_dd.labels(acct, lane_id).set(float(row.get("drawdown_pct") or 0.0))
+        g_breaker.labels(acct, lane_id).set(1.0 if row.get("breaker_latched") else 0.0)
         g_is_mean.labels(acct, lane_id).set(float(row.get("mean_is_bps") or 0.0))
         g_is_p95.labels(acct, lane_id).set(float(row.get("p95_is_bps") or 0.0))
         g_borrow.labels(acct, lane_id).set(float(row.get("total_borrow_fee_usd") or 0.0))
@@ -660,6 +790,16 @@ def export_prometheus_metrics(
         registry=reg,
     ).set(float(tv_doc.get("tickets_count") or 0))
     Gauge(
+        "tier0_tv_half_auto_ready_tickets_count",
+        "TradingView Half-Auto READY_HALF_AUTO actionable tickets count",
+        registry=reg,
+    ).set(float(tv_doc.get("ready_tickets_count") or 0))
+    Gauge(
+        "tier0_tv_half_auto_standby_presets_count",
+        "TradingView Half-Auto MONITOR_ONLY standby ranked presets count",
+        registry=reg,
+    ).set(float(tv_doc.get("standby_presets_count") or 0))
+    Gauge(
         "tier0_tv_half_auto_staged_presets_count",
         "TradingView Half-Auto staged semi-auto presets total",
         registry=reg,
@@ -674,6 +814,36 @@ def export_prometheus_metrics(
         "TradingView Half-Auto DuckDB persisted audit preset count",
         registry=reg,
     ).set(float(tv_doc.get("duckdb_audit_rows") or 0))
+    Gauge(
+        "tier0_tv_half_auto_unusual_vol_count",
+        "TradingView Half-Auto unusual volume buildup symbols count",
+        registry=reg,
+    ).set(float(tv_doc.get("unusual_vol_count") or 0))
+    Gauge(
+        "tier0_tv_half_auto_darkpool_hits_count",
+        "TradingView Half-Auto FINRA TRF darkpool hits (>=35% TRF ratio)",
+        registry=reg,
+    ).set(float(tv_doc.get("darkpool_hits_count") or 0))
+    Gauge(
+        "tier0_tv_half_auto_darkpool_trf_covered_count",
+        "Symbols with non-null FINRA TRF darkpool telemetry coverage",
+        registry=reg,
+    ).set(float(tv_doc.get("darkpool_trf_covered_count") or 0))
+    Gauge(
+        "tier0_scanner_ranked_count",
+        "Whole-market live extreme-mover scanner ranked entries count",
+        registry=reg,
+    ).set(float(tv_doc.get("scanner_ranked_count") or 0))
+    Gauge(
+        "tier0_scanner_extreme_eligible_count",
+        "Whole-market scanner entries passing strict extreme_mover_eligible gate",
+        registry=reg,
+    ).set(float(tv_doc.get("scanner_extreme_eligible_count") or 0))
+    Gauge(
+        "tier0_scanner_macro_regime",
+        "Causal SPY/QQQ/SOXX/RSP market regime (-1 crash, 0 neutral, +1 bull)",
+        registry=reg,
+    ).set(float(tv_doc.get("macro_regime") or 0))
 
     prom_text = generate_latest(reg).decode("utf-8")
     if output_path is not None:
@@ -715,6 +885,8 @@ def record_otel_metrics(
     try:
         meter = provider.get_meter("tier0_sota.live.performance", version="1.0.0")
         g_eq = meter.create_gauge("tier0.paper_farm.equity_usd", unit="USD")
+        g_dd = meter.create_gauge("tier0.paper_farm.drawdown_pct", unit="")
+        g_breaker = meter.create_gauge("tier0.drawdown_breaker.latched", unit="")
         g_is_mean = meter.create_gauge("tier0.paper_farm.tca.mean_is_bps", unit="bps")
         g_is_p95 = meter.create_gauge("tier0.paper_farm.tca.p95_is_bps", unit="bps")
         g_borrow = meter.create_gauge("tier0.paper_farm.tca.borrow_fee_usd", unit="USD")
@@ -727,6 +899,8 @@ def record_otel_metrics(
             attrs = {"account": str(acct), "lane_id": str(row.get("lane_id", acct))}
             if row.get("equity") is not None:
                 g_eq.set(float(row["equity"]), attrs)
+            g_dd.set(float(row.get("drawdown_pct") or 0.0), attrs)
+            g_breaker.set(1.0 if row.get("breaker_latched") else 0.0, attrs)
             g_is_mean.set(float(row.get("mean_is_bps") or 0.0), attrs)
             g_is_p95.set(float(row.get("p95_is_bps") or 0.0), attrs)
             g_borrow.set(float(row.get("total_borrow_fee_usd") or 0.0), attrs)
@@ -740,6 +914,8 @@ def record_otel_metrics(
         summary = manifest.get("summary", {})
         sum_attrs = {"scope": "combined"}
         g_eq.set(float(summary.get("combined_equity_usd") or 0.0), sum_attrs)
+        g_dd.set(float(summary.get("max_drawdown_pct") or 0.0), sum_attrs)
+        g_breaker.set(1.0 if summary.get("any_breaker_latched") else 0.0, sum_attrs)
         g_is_mean.set(float(summary.get("mean_is_bps") or 0.0), sum_attrs)
         g_is_p95.set(float(summary.get("p95_is_bps") or 0.0), sum_attrs)
         g_borrow.set(float(summary.get("total_borrow_fee_usd") or 0.0), sum_attrs)
@@ -748,17 +924,41 @@ def record_otel_metrics(
 
         tv_doc = manifest.get("tv_half_auto", {})
         tv_attrs = {"lane": "half-auto-tv", "semi_auto_confirmed": "false"}
-        meter.create_gauge("tier0.tv_half_auto.tickets_count", unit="1").set(
+        meter.create_gauge("tier0.tv_half_auto.tickets_count", unit="").set(
             float(tv_doc.get("tickets_count") or 0), tv_attrs
         )
-        meter.create_gauge("tier0.tv_half_auto.staged_presets_count", unit="1").set(
+        meter.create_gauge("tier0.tv_half_auto.ready_tickets_count", unit="").set(
+            float(tv_doc.get("ready_tickets_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.standby_presets_count", unit="").set(
+            float(tv_doc.get("standby_presets_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.staged_presets_count", unit="").set(
             float(tv_doc.get("staged_presets_total") or 0), tv_attrs
         )
-        meter.create_gauge("tier0.tv_half_auto.schema_validated_count", unit="1").set(
+        meter.create_gauge("tier0.tv_half_auto.schema_validated_count", unit="").set(
             float(tv_doc.get("schema_validated_count") or 0), tv_attrs
         )
-        meter.create_gauge("tier0.tv_half_auto.duckdb_audit_rows", unit="1").set(
+        meter.create_gauge("tier0.tv_half_auto.duckdb_audit_rows", unit="").set(
             float(tv_doc.get("duckdb_audit_rows") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.unusual_vol_count", unit="").set(
+            float(tv_doc.get("unusual_vol_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.darkpool_hits_count", unit="").set(
+            float(tv_doc.get("darkpool_hits_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.tv_half_auto.darkpool_trf_covered_count", unit="").set(
+            float(tv_doc.get("darkpool_trf_covered_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.scanner.ranked_count", unit="").set(
+            float(tv_doc.get("scanner_ranked_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.scanner.extreme_eligible_count", unit="").set(
+            float(tv_doc.get("scanner_extreme_eligible_count") or 0), tv_attrs
+        )
+        meter.create_gauge("tier0.scanner.macro_regime", unit="").set(
+            float(tv_doc.get("macro_regime") or 0), tv_attrs
         )
 
         recorded_names: list[str] = []

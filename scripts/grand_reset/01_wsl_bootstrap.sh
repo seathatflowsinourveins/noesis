@@ -61,7 +61,13 @@ fi
 "$PY" -c "import sys, nautilus_trader, polars, duckdb, z3; print(f'python={sys.version.split()[0]} nautilus={nautilus_trader.__version__} polars={polars.__version__}')"
 
 STATE_ROOT="${TIER0_STATE_ROOT:-$HOME/tier0-sota-state}"
-mkdir -p "$STATE_ROOT"/{mlflow/mlartifacts,xerj-data,dagster_home,inspect-logs,mlflow-assistant}
+mkdir -p \
+  "$STATE_ROOT"/{mlflow/mlartifacts,xerj-data,dagster_home,inspect-logs,mlflow-assistant,zensical-site,zensical-cache} \
+  "$HOME/.cache/noesis"/{ruff,pytest,hypothesis}
+
+if command -v codebase-memory-mcp >/dev/null 2>&1; then
+  codebase-memory-mcp config set ui_enabled false >/dev/null 2>&1 || true
+fi
 
 "$PY" - "$WSL_VENV" "$REPO_ROOT" "$DATA_ROOT" "$STATE_ROOT" <<'PYEOF'
 import os

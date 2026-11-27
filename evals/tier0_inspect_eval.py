@@ -139,6 +139,8 @@ def _check_zero_arbitrary_loc_caps_and_living_adrs() -> str:
 
 
 def _check_upstream_skills_46_parity() -> str:
+    from scripts.sync_manifest import verify_skills_lock
+
     lock_path = REPO_ROOT / "UPSTREAM_SKILLS_LOCK.json"
     if not lock_path.is_file():
         return "FAIL:missing_lock"
@@ -146,22 +148,19 @@ def _check_upstream_skills_46_parity() -> str:
     skills_entries = lock_doc.get("skills", [])
     if not isinstance(skills_entries, list):
         return "FAIL:skills_lock_not_list"
-    skills_by_name = {
-        str(entry["skill"]): str(entry.get("skill_sha256", ""))
+    skills_names = sorted(
+        str(entry["skill"])
         for entry in skills_entries
         if isinstance(entry, dict) and "skill" in entry
-    }
+    )
     skills_dir = REPO_ROOT / ".claude" / "skills"
     disk_skills = sorted(p.name for p in skills_dir.iterdir() if p.is_dir())
-    if len(disk_skills) != 46 or sorted(skills_by_name.keys()) != disk_skills:
-        return f"FAIL:count_disk={len(disk_skills)}_lock={len(skills_by_name)}"
-    for name, expected_sha in skills_by_name.items():
-        skill_md = skills_dir / name / "SKILL.md"
-        if not skill_md.is_file():
-            return f"FAIL:missing_skill_{name}"
-        digest = hashlib.sha256(skill_md.read_bytes()).hexdigest()
-        if expected_sha != digest:
-            return f"FAIL:sha256_mismatch_{name}"
+    if len(disk_skills) != 46 or skills_names != disk_skills:
+        return f"FAIL:count_disk={len(disk_skills)}_lock={len(skills_names)}"
+    try:
+        verify_skills_lock(REPO_ROOT, lock_doc)
+    except ValueError as exc:
+        return f"FAIL:{exc}"
     return "PASS"
 
 
@@ -169,8 +168,12 @@ def _check_adr_graph_and_clean_sota_harness_integrity() -> str:
     from scripts.sync_manifest import parse_and_validate_adrs, validate_clean_sota_harness
 
     try:
-        harness = validate_clean_sota_harness(REPO_ROOT)
-        adr_graph = parse_and_validate_adrs(REPO_ROOT)
+        upstream_cfg = tomllib.loads((REPO_ROOT / "upstream-map.toml").read_text(encoding="utf-8"))
+        ast_cache: dict[Path, Any] = {}
+        harness = validate_clean_sota_harness(REPO_ROOT, upstream=upstream_cfg, ast_cache=ast_cache)
+        adr_graph = parse_and_validate_adrs(
+            REPO_ROOT, upstream_cfg=upstream_cfg, ast_cache=ast_cache
+        )
     except Exception as exc:  # noqa: BLE001
         return f"FAIL:{type(exc).__name__}:{exc}"
     if not harness.get("ok"):

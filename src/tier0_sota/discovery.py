@@ -8,27 +8,17 @@ import os
 from collections import deque
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Self
 from zoneinfo import ZoneInfo
 
-import exchange_calendars as xcals
-import lightgbm as lgb
 import numpy as np
-import pandera.polars as pa
 import polars as pl
-import ruptures as rpt
-import shap
-import stumpy
-from catboost import CatBoostRegressor
-from fredapi import Fred
-from ml4t.engineer import StandardScaler, compute_features
-from ml4t.engineer.features.regime import market_regime_classifier
 from nautilus_trader import model as nm
 from nautilus_trader.common import DataActor, DataActorConfig
 from nautilus_trader.indicators import SimpleMovingAverage, VolumeWeightedAveragePrice
 from nautilus_trader.persistence import BarDataWrangler
-from river.drift import ADWIN
 
 MAX_PREWALL_DATE: date = date(2026, 10, 15)
 
@@ -68,17 +58,40 @@ BAR_DURATION_NS: int = 60_000_000_000
 WARMUP_BARS: int = 40
 FEATURE_COLS: list[str] = ["roc", "rsi", "natr", "vol_ratio"]
 REGIME_BENCHMARK_SYMBOLS: tuple[str, ...] = ("SPY", "QQQ", "SOXX", "RSP", "VIX")
-_XNYS = xcals.get_calendar("XNYS")
 _NY_TZ = ZoneInfo("America/New_York")
 
 
-_BS: dict[str, pa.Column] = {
-    "symbol": pa.Column(pl.String, nullable=False),
-    "t_ns": pa.Column(pl.Int64, checks=pa.Check.le(DISCOVERY_WALL_UTC_NS), nullable=False),
-    **{c: pa.Column(pl.Float64, checks=pa.Check.gt(0.0), nullable=False) for c in "ohlc"},
-    "v": pa.Column(pl.Float64, checks=pa.Check.ge(0.0), nullable=False),
-}
-BAR_SCHEMA = pa.DataFrameSchema(_BS, strict=False)
+@lru_cache(maxsize=1)
+def get_xnys_calendar() -> Any:
+    """Lazily load and cache the XNYS exchange calendar to avoid import-time overhead."""
+    import exchange_calendars as xcals
+
+    return xcals.get_calendar("XNYS")
+
+
+@lru_cache(maxsize=1)
+def _bar_schema() -> Any:
+    """Lazily build and cache the Pandera Polars bar schema on first validation."""
+    import pandera.polars as pa
+
+    bs: dict[str, Any] = {
+        "symbol": pa.Column(pl.String, nullable=False),
+        "t_ns": pa.Column(pl.Int64, checks=pa.Check.le(DISCOVERY_WALL_UTC_NS), nullable=False),
+        **{c: pa.Column(pl.Float64, checks=pa.Check.gt(0.0), nullable=False) for c in "ohlc"},
+        "v": pa.Column(pl.Float64, checks=pa.Check.ge(0.0), nullable=False),
+    }
+    return pa.DataFrameSchema(bs, strict=False)
+
+
+def _env_positive_int(name: str, default: int, *, max_val: int = 32) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = int(raw)
+        return max(1, min(val, max_val))
+    except ValueError:
+        return default
 
 
 def parse_iso_date(value: date | str) -> date:
@@ -108,7 +121,7 @@ def assert_pre_wall_ns(ts_utc_ns: int) -> int:
 
 def previous_xnys_session(day: date | str) -> date:
     """Return the strictly prior XNYS trading session via exchange_calendars."""
-    return _XNYS.previous_session(assert_pre_wall_date(day)).date()
+    return get_xnys_calendar().previous_session(assert_pre_wall_date(day)).date()
 
 
 def validate_causal_bars(df: pl.DataFrame, *, validate: bool = True) -> pl.DataFrame:
@@ -121,7 +134,7 @@ def validate_causal_bars(df: pl.DataFrame, *, validate: bool = True) -> pl.DataF
         assert_pre_wall_ns(mx)
     out = out.filter(c("t_close_ns") <= DISCOVERY_WALL_UTC_NS)
     if out.height > 0 and validate:
-        BAR_SCHEMA.validate(out)
+        _bar_schema().validate(out)
         fin = pl.all_horizontal(c(k).is_finite() for k in ("o", "h", "l", "c", "v"))
         hi_lo = (c("h") < pl.max_horizontal("o", "c")) | (c("l") > pl.min_horizontal("o", "c"))
         if bad := out.filter(~fin | hi_lo | (c("h") < c("l"))).height:
@@ -207,9 +220,11 @@ def step_rth_5m_bar(
     lo: float,
     c: float,
     vw: float,
+    *,
+    rth_close_hm: int = 960,
 ) -> None:
-    """Update causal RTH (09:30-15:59 ET) 5-min ORL5 / FR5 / VWAP-fail state."""
-    if not (570 <= minute_et < 960):
+    """Update causal RTH (09:30 to XNYS close ET) 5-min ORL5 / FR5 / VWAP-fail state."""
+    if not (570 <= minute_et < rth_close_hm):
         st.clear()
         return
     if st.get("day") not in (None, day):
@@ -330,6 +345,8 @@ def _ny_date_expr(col_name: str, alias: str) -> pl.Expr:
 def _pelt_threshold(vals: np.ndarray) -> float:
     if (n := int(vals.size)) < 15:
         return float(np.quantile(vals, 0.90)) if n > 0 else 1e-4
+    import ruptures as rpt
+
     pts = rpt.Pelt(model="rbf", min_size=5).fit(vals.reshape(-1, 1)).predict(pen=1.5)
     bkps = [b for b in pts if b < n]
     return float(np.median(vals[bkps])) if bkps else float(np.quantile(vals, 0.90))
@@ -337,6 +354,9 @@ def _pelt_threshold(vals: np.ndarray) -> float:
 
 def compute_causal_market_regime(market_bars_df: pl.DataFrame, **o: Any) -> dict[int, int]:
     """Classify causal SPY/QQQ/SOXX/RSP/VIX regime (`+1` bull, `-1` crash/bear, `0` neutral)."""
+    from ml4t.engineer.features.regime import market_regime_classifier
+    from river.drift import ADWIN
+
     if market_bars_df.height == 0:
         raise ValueError("Cannot compute market regime on empty market_bars_df")
     tw = int(o.get("trend_window", 30))
@@ -398,6 +418,10 @@ def compute_causal_market_regime(market_bars_df: pl.DataFrame, **o: Any) -> dict
 
 def generate_upstream_reversal_signals(bars_df: pl.DataFrame, **o: Any) -> dict[int, int]:
     """Causal market-aligned short & peak-reversal signals via ml4t/river/ruptures/stumpy."""
+    import stumpy
+    from ml4t.engineer import StandardScaler, compute_features
+    from river.drift import ADWIN
+
     vol_window, z_thr = int(o.get("vol_window", 15)), float(o.get("z_threshold", 1.5))
     rmap: dict[int, int] = dict(o.get("market_regime_by_ts") or {})
     req_peak = bool(o.get("require_peak_confirmation", True))
@@ -523,12 +547,20 @@ def fit_causal_gbdt_ranker_with_shap(
     x_tr, y_tr = x_all[:split_idx], y_all[:split_idx]
     x_oos, y_oos = x_all[split_idx:], y_all[split_idx:]
 
+    import lightgbm as lgb
+    import shap
+    from catboost import CatBoostRegressor
+
+    lgbm_threads = _env_positive_int("TIER0_LGBM_THREADS", 4)
+    cb_threads = _env_positive_int("TIER0_CATBOOST_THREAD_COUNT", 4)
+
     lgbm_model = lgb.LGBMRegressor(
         n_estimators=24,
         max_depth=3,
         learning_rate=0.05,
         num_leaves=7,
         min_child_samples=5,
+        n_jobs=lgbm_threads,
         random_state=random_state,
         verbosity=-1,
     )
@@ -540,6 +572,7 @@ def fit_causal_gbdt_ranker_with_shap(
         iterations=24,
         depth=3,
         learning_rate=0.05,
+        thread_count=cb_threads,
         random_seed=random_state,
         verbose=False,
         allow_writing_files=False,
@@ -605,6 +638,8 @@ def load_causal_fred_vintages(
         resolved_key = api_key or os.environ.get("FRED_API_KEY", "").strip()
         if not resolved_key:
             raise ValueError("FRED_API_KEY required when allow_network=True")
+        from fredapi import Fred
+
         fred_client = Fred(api_key=resolved_key)
         rows: list[dict[str, Any]] = []
         for sid in want_ids:

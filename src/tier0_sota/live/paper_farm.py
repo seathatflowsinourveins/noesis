@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Generator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -88,6 +90,16 @@ ALPACA_LANE_PROFILES: dict[str, dict[str, Any]] = {
         "profit_lock_mid": 0.60,
         "profit_lock_high": 0.75,
     },
+}
+
+TIGHT_NATR_MAX = Decimal("0.015")
+WIDE_NATR_MIN = Decimal("0.030")
+HIGH_RVOL_MIN = Decimal("3.0")
+
+_LANE_FALLBACK_ORDER: dict[str, tuple[str, ...]] = {
+    "ALPACA_PA1": ("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3"),
+    "ALPACA_PA2": ("ALPACA_PA2", "ALPACA_PA3", "ALPACA_PA1"),
+    "ALPACA_PA3": ("ALPACA_PA3", "ALPACA_PA2", "ALPACA_PA1"),
 }
 
 
@@ -383,6 +395,61 @@ def join_fills_with_quotes_asof(
     return fresh.with_columns(((pl.col("bid_px") + pl.col("ask_px")) / 2).alias("arrival_mid"))
 
 
+def duckdb_connect_config(
+    *,
+    default_threads: int = 4,
+    max_threads: int | None = None,
+    default_memory_limit: str = "2GB",
+) -> dict[str, str]:
+    """Build official DuckDB connection config honoring workstation thread/temp env bounds."""
+    raw_threads = os.environ.get("TIER0_DUCKDB_THREADS", "").strip()
+    threads = default_threads
+    if raw_threads:
+        try:
+            parsed = int(raw_threads)
+            if parsed > 0:
+                threads = min(parsed, 16)
+        except ValueError:
+            threads = default_threads
+    if max_threads is not None:
+        threads = min(threads, max(1, int(max_threads)))
+    mem_limit = os.environ.get("TIER0_DUCKDB_MEMORY_LIMIT", "").strip() or default_memory_limit
+    cfg: dict[str, str] = {
+        "threads": str(threads),
+        "memory_limit": mem_limit,
+    }
+    temp_dir = os.environ.get("DUCKDB_TEMP_DIRECTORY", "").strip()
+    if temp_dir:
+        try:
+            Path(temp_dir).mkdir(parents=True, exist_ok=True)
+            cfg["temp_directory"] = temp_dir
+        except OSError:
+            pass
+    return cfg
+
+
+def open_bounded_duckdb(
+    path: str | Path,
+    *,
+    read_only: bool = False,
+    default_threads: int = 4,
+    max_threads: int | None = 4,
+    default_memory_limit: str = "2GB",
+) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection with bounded worker threads, memory limit, and temp dir."""
+    cfg: dict[str, str | bool | int | float | list[str]] = dict(
+        duckdb_connect_config(
+            default_threads=default_threads,
+            max_threads=max_threads,
+            default_memory_limit=default_memory_limit,
+        )
+    )
+    try:
+        return duckdb.connect(str(path), read_only=read_only, config=cfg)
+    except TypeError:
+        return duckdb.connect(str(path), read_only=read_only)
+
+
 def ensure_wire_table(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS paper_wire_orders ("
@@ -418,7 +485,7 @@ def ensure_tca_table(conn: duckdb.DuckDBPyConnection) -> None:
 def persist_tca_record_duckdb(duckdb_path: Path, record: TcaFillRecord) -> bool:
     """Persist a validated TcaFillRecord into isolated lane DuckDB `paper_tca_fills`."""
     duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(str(duckdb_path)) as conn:
+    with open_bounded_duckdb(duckdb_path) as conn:
         conn.begin()
         ensure_tca_table(conn)
         conn.execute(
@@ -469,38 +536,68 @@ def persist_tca_record_duckdb(duckdb_path: Path, record: TcaFillRecord) -> bool:
         return inserted
 
 
-def persist_supervised_stop_duckdb(duckdb_path: Path, stop: ExtendedHoursStopSupervision) -> None:
+def _ensure_entry_decisions_table(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS paper_entry_decisions ("
+        "client_order_id VARCHAR PRIMARY KEY, symbol VARCHAR, side VARCHAR, "
+        "decision_price DECIMAL(18,6), arrival_price DECIMAL(18,6), session VARCHAR, "
+        "origin VARCHAR, annual_rate DECIMAL(18,10), prior_close DECIMAL(18,6), "
+        "initial_stop DECIMAL(18,6), natr_pct DECIMAL(18,8), closed_at TIMESTAMPTZ, "
+        "active_stop DECIMAL(18,6), exit_triggered BOOLEAN DEFAULT false, "
+        "decided_at TIMESTAMPTZ DEFAULT current_timestamp)"
+    )
+
+
+def _ensure_supervised_stops_table(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS paper_supervised_stops ("
+        "ts_utc VARCHAR, account VARCHAR, lane_id VARCHAR, broker_order_id VARCHAR, "
+        "symbol VARCHAR, side VARCHAR, qty INTEGER, session VARCHAR, "
+        "protective_stop_mode VARCHAR, ref_price DECIMAL(18, 6), "
+        "stop_price DECIMAL(18, 6), stop_limit_price DECIMAL(18, 6), "
+        "collar_bps DECIMAL(18, 6), max_loss_pct DECIMAL(18, 6), status VARCHAR)"
+    )
+
+
+def persist_supervised_stop_duckdb(
+    duckdb_path: Path,
+    stop: ExtendedHoursStopSupervision,
+    *,
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> None:
     """Persist an extended-hours collared STOP_LIMIT supervision record into lane DuckDB."""
-    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(str(duckdb_path)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS paper_supervised_stops ("
-            "ts_utc VARCHAR, account VARCHAR, lane_id VARCHAR, broker_order_id VARCHAR, "
-            "symbol VARCHAR, side VARCHAR, qty INTEGER, session VARCHAR, "
-            "protective_stop_mode VARCHAR, ref_price DECIMAL(18, 6), "
-            "stop_price DECIMAL(18, 6), stop_limit_price DECIMAL(18, 6), "
-            "collar_bps DECIMAL(18, 6), max_loss_pct DECIMAL(18, 6), status VARCHAR)"
-        )
+    params = (
+        stop.ts_utc,
+        stop.account,
+        stop.lane_id,
+        stop.broker_order_id,
+        stop.symbol,
+        stop.side,
+        stop.qty,
+        stop.session,
+        stop.protective_stop_mode,
+        _q6(stop.ref_price),
+        _q6(stop.stop_price),
+        _q6(stop.stop_limit_price),
+        _q6(stop.collar_bps),
+        _q6(stop.max_loss_pct),
+        stop.status,
+    )
+    if conn is not None:
+        _ensure_supervised_stops_table(conn)
         conn.execute(
             "INSERT INTO paper_supervised_stops VALUES ("
             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                stop.ts_utc,
-                stop.account,
-                stop.lane_id,
-                stop.broker_order_id,
-                stop.symbol,
-                stop.side,
-                stop.qty,
-                stop.session,
-                stop.protective_stop_mode,
-                _q6(stop.ref_price),
-                _q6(stop.stop_price),
-                _q6(stop.stop_limit_price),
-                _q6(stop.collar_bps),
-                _q6(stop.max_loss_pct),
-                stop.status,
-            ),
+            params,
+        )
+        return
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    with open_bounded_duckdb(duckdb_path) as owned_conn:
+        _ensure_supervised_stops_table(owned_conn)
+        owned_conn.execute(
+            "INSERT INTO paper_supervised_stops VALUES ("
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params,
         )
 
 
@@ -583,6 +680,82 @@ def select_short_or_inverse_fallback(
     return (symbol.strip().upper(), "LONG", "TREND_ALIGNED_LONG")
 
 
+def _parse_optional_decimal(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return dec if dec.is_finite() else None
+
+
+def preferred_situation_lane_order(
+    *,
+    origin: str = "",
+    natr_pct: Decimal | float | int | str | None = None,
+    rvol_normalized: Decimal | float | int | str | None = None,
+) -> tuple[str, ...]:
+    """Return deterministic ALPACA_LANE_PROFILES preference order for a setup."""
+    natr_d = _parse_optional_decimal(natr_pct)
+    rvol_d = _parse_optional_decimal(rvol_normalized)
+    is_inverse_hedge = origin.strip().upper().startswith("INVERSE_HEDGE_")
+    if is_inverse_hedge or (natr_d is not None and natr_d <= TIGHT_NATR_MAX):
+        preferred = "ALPACA_PA3"
+    elif (rvol_d is not None and rvol_d >= HIGH_RVOL_MIN) or (
+        natr_d is not None and natr_d > WIDE_NATR_MIN
+    ):
+        preferred = "ALPACA_PA1"
+    else:
+        preferred = "ALPACA_PA2"
+    return _LANE_FALLBACK_ORDER[preferred]
+
+
+def select_situation_lane(
+    lanes: dict[str, AlpacaPaperLane],
+    *,
+    origin: str = "",
+    natr_pct: Decimal | float | int | str | None = None,
+    rvol_normalized: Decimal | float | int | str | None = None,
+    fallback_index: int | None = None,
+) -> AlpacaPaperLane | None:
+    """Deterministically route a candidate to the matching ALPACA_LANE_PROFILES lane.
+
+    Precedence:
+    1. ``INVERSE_HEDGE_*`` or ``natr_pct <= 0.015`` (tight_near_lossless / exhaustion)
+       -> prefer ``ALPACA_PA3`` (``L3_AVWAP_TIGHT_LOCK``).
+    2. ``rvol_normalized >= 3.0`` or ``natr_pct > 0.030`` (wide_natr_adaptive / EP burst)
+       -> prefer ``ALPACA_PA1`` (``L1_ORB_BURST``).
+    3. Structural baseline (``0.015 < natr_pct <= 0.030`` / VCP / PEAD)
+       -> prefer ``ALPACA_PA2`` (``L2_STRUCTURAL_TREND``).
+
+    Falls back deterministically to the next configured lane whose daily drawdown
+    breaker allows entry; returns ``None`` if all lanes are unavailable or tripped.
+    """
+    if not lanes:
+        return None
+    natr_d = _parse_optional_decimal(natr_pct)
+    rvol_d = _parse_optional_decimal(rvol_normalized)
+    is_inverse_hedge = origin.strip().upper().startswith("INVERSE_HEDGE_")
+
+    if not is_inverse_hedge and natr_d is None and rvol_d is None and fallback_index is not None:
+        lane_names = list(lanes.keys())
+        start = fallback_index % len(lane_names)
+        order = tuple(lane_names[start:] + lane_names[:start])
+    else:
+        base = preferred_situation_lane_order(
+            origin=origin, natr_pct=natr_d, rvol_normalized=rvol_d
+        )
+        extras = tuple(k for k in lanes if k not in base)
+        order = base + extras
+
+    for acct in order:
+        lane = lanes.get(acct)
+        if lane is not None and lane.breaker.allow_entry():
+            return lane
+    return None
+
+
 @dataclass
 class AlpacaPaperLane:
     """Isolated Alpaca Paper lane with DuckDB ledger, TCA & Rule-612 stop protection."""
@@ -599,6 +772,7 @@ class AlpacaPaperLane:
     )
     breaker: rk.DailyDrawdownBreaker = field(init=False)
     _budget_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _batch_conn: duckdb.DuckDBPyConnection | None = field(default=None, init=False, repr=False)
     _breaker_day_et: date | None = field(default=None, init=False)
     supervised_stops: dict[str, ExtendedHoursStopSupervision] = field(default_factory=dict)
     counters: dict[str, int] = field(
@@ -635,11 +809,42 @@ class AlpacaPaperLane:
     def duckdb_path(self) -> Path:
         return self.manifest_dir / _duckdb_filename(self.account)
 
-    def _record_order(self, row: tuple[Any, ...]) -> None:
+    @contextmanager
+    def batch_ledger_conn(self) -> Generator[duckdb.DuckDBPyConnection]:
+        """Scope a single bounded DuckDB connection across a burst (always closed on exit)."""
+        if self._batch_conn is not None:
+            yield self._batch_conn
+            return
         self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-        with duckdb.connect(str(self.duckdb_path)) as conn:
+        with open_bounded_duckdb(self.duckdb_path) as conn:
+            _ensure_entry_decisions_table(conn)
             ensure_wire_table(conn)
-            conn.execute(
+            _ensure_supervised_stops_table(conn)
+            self._batch_conn = conn
+            try:
+                yield conn
+            finally:
+                self._batch_conn = None
+
+    def _record_order(
+        self,
+        row: tuple[Any, ...],
+        *,
+        conn: duckdb.DuckDBPyConnection | None = None,
+    ) -> None:
+        active_conn = conn if conn is not None else self._batch_conn
+        if active_conn is not None:
+            if active_conn is not self._batch_conn:
+                ensure_wire_table(active_conn)
+            active_conn.execute(
+                "INSERT INTO paper_wire_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                row,
+            )
+            return
+        self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+        with open_bounded_duckdb(self.duckdb_path) as owned_conn:
+            ensure_wire_table(owned_conn)
+            owned_conn.execute(
                 "INSERT INTO paper_wire_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 row,
             )
@@ -735,36 +940,32 @@ class AlpacaPaperLane:
             protective_stop_mode = "COLLARED_STOP_LIMIT_SUPERVISED"
 
         request = LimitOrderRequest(**req_kw)
-        self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-        with duckdb.connect(str(self.duckdb_path)) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS paper_entry_decisions ("
-                "client_order_id VARCHAR PRIMARY KEY, symbol VARCHAR, side VARCHAR, "
-                "decision_price DECIMAL(18,6), arrival_price DECIMAL(18,6), session VARCHAR, "
-                "origin VARCHAR, annual_rate DECIMAL(18,10), prior_close DECIMAL(18,6), "
-                "initial_stop DECIMAL(18,6), natr_pct DECIMAL(18,8), closed_at TIMESTAMPTZ, "
-                "active_stop DECIMAL(18,6), exit_triggered BOOLEAN DEFAULT false, "
-                "decided_at TIMESTAMPTZ DEFAULT current_timestamp)"
-            )
-            conn.execute(
-                "INSERT INTO paper_entry_decisions "
-                "(client_order_id,symbol,side,decision_price,arrival_price,session,origin,"
-                "annual_rate,prior_close,initial_stop,natr_pct) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    client_order_id,
-                    sym,
-                    side,
-                    decision_price if decision_price is not None else ref_price,
-                    arrival_price or ref_price,
-                    session,
-                    origin,
-                    annual_borrow_rate or _DEC_ZERO,
-                    prior_close,
-                    stop_d,
-                    natr_pct,
-                ),
-            )
+        entry_params = (
+            client_order_id,
+            sym,
+            side,
+            decision_price if decision_price is not None else ref_price,
+            arrival_price or ref_price,
+            session,
+            origin,
+            annual_borrow_rate or _DEC_ZERO,
+            prior_close,
+            stop_d,
+            natr_pct,
+        )
+        entry_sql = (
+            "INSERT INTO paper_entry_decisions "
+            "(client_order_id,symbol,side,decision_price,arrival_price,session,origin,"
+            "annual_rate,prior_close,initial_stop,natr_pct) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        if self._batch_conn is not None:
+            self._batch_conn.execute(entry_sql, entry_params)
+        else:
+            self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+            with open_bounded_duckdb(self.duckdb_path) as conn:
+                _ensure_entry_decisions_table(conn)
+                conn.execute(entry_sql, entry_params)
         order = self.trading_client.submit_order(request)
         now_iso = datetime.now(UTC).isoformat()
         broker_order_id = str(getattr(order, "id", ""))
@@ -802,25 +1003,33 @@ class AlpacaPaperLane:
             self.supervised_stops[broker_order_id] = supervision
             self.counters["extended_hours_orders"] += 1
             self.counters["extended_hours_protected"] += 1
-            persist_supervised_stop_duckdb(self.duckdb_path, supervision)
 
-        self._record_order(
-            (
-                now_iso,
-                self.account,
-                self.profile["lane_id"],
-                broker_order_id,
-                sym,
-                side,
-                float(qty),
-                "LIMIT_EXTENDED" if is_ext else "LIMIT",
-                float(lim_d),
-                float(stop_d),
-                session,
-                order_status,
-                0.0,
-            )
+        order_row = (
+            now_iso,
+            self.account,
+            self.profile["lane_id"],
+            broker_order_id,
+            sym,
+            side,
+            float(qty),
+            "LIMIT_EXTENDED" if is_ext else "LIMIT",
+            float(lim_d),
+            float(stop_d),
+            session,
+            order_status,
+            0.0,
         )
+        if self._batch_conn is not None:
+            if supervision is not None:
+                persist_supervised_stop_duckdb(self.duckdb_path, supervision, conn=self._batch_conn)
+            self._record_order(order_row, conn=self._batch_conn)
+        elif supervision is not None:
+            self.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+            with open_bounded_duckdb(self.duckdb_path) as conn:
+                persist_supervised_stop_duckdb(self.duckdb_path, supervision, conn=conn)
+                self._record_order(order_row, conn=conn)
+        else:
+            self._record_order(order_row)
         return {
             "broker_order_id": broker_order_id,
             "status": order_status,
@@ -1017,7 +1226,7 @@ class AlpacaPaperLane:
         if not self.duckdb_path.is_file():
             return set()
         try:
-            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
+            with open_bounded_duckdb(self.duckdb_path, read_only=True) as conn:
                 tables = {str(r[0]).lower() for r in conn.execute("SHOW TABLES").fetchall()}
                 if "paper_tca_fills" not in tables:
                     return set()
@@ -1032,7 +1241,7 @@ class AlpacaPaperLane:
         if not self.duckdb_path.is_file():
             return False
         try:
-            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
+            with open_bounded_duckdb(self.duckdb_path, read_only=True) as conn:
                 tables = {str(r[0]).lower() for r in conn.execute("SHOW TABLES").fetchall()}
                 if "paper_daily_fuse" not in tables:
                     return False
@@ -1567,10 +1776,9 @@ class PaperFarmCoordinator:
     def dispatch_movers(
         self, entries: list[dict[str, Any]], *, macro_regime: int, session: str
     ) -> list[dict[str, Any]]:
-        """Route extreme movers across PA1/PA2/PA3 without symbol overlap."""
+        """Route extreme movers across PA1/PA2/PA3 via situation-aware profile matching."""
         routed: list[dict[str, Any]] = []
-        lane_names = list(self.lanes.keys())
-        if not lane_names:
+        if not self.lanes:
             return routed
         for idx, item in enumerate(entries):
             sym = str(item.get("symbol", "")).strip().upper()
@@ -1589,13 +1797,29 @@ class PaperFarmCoordinator:
                 px = Decimal(str(target.get("last_price") or "0"))
                 if px <= 0:
                     continue
-            lane = self.lanes[lane_names[idx % len(lane_names)]]
+            rvol = (
+                target.get("rvol_normalized")
+                if target.get("rvol_normalized") is not None
+                else target.get("rvol")
+            )
+            lane = select_situation_lane(
+                self.lanes,
+                origin=origin,
+                natr_pct=target.get("natr_pct"),
+                rvol_normalized=rvol,
+                fallback_index=idx,
+            )
+            if lane is None:
+                continue
+            natr_d = _parse_optional_decimal(target.get("natr_pct"))
             res = lane.submit_guarded_entry(
                 symbol=target_sym,
                 side=side,
                 ref_price=px,
+                natr_pct=natr_d if natr_d is not None and natr_d >= _DEC_ZERO else Decimal("0.015"),
                 session=session,
                 origin=origin,
+                overnight_tradable=target.get("overnight_tradable") is True,
                 prior_close=Decimal(str(target["prior_close"]))
                 if target.get("prior_close")
                 else None,
@@ -1624,60 +1848,50 @@ class PaperFarmCoordinator:
         lane_names = list(self.lanes.keys())
         base_ts = now_s if now_s is not None else datetime.now(UTC).timestamp()
 
-        for idx, item in enumerate(entries):
-            sym = str(item.get("symbol", "")).strip().upper()
-            try:
-                px = _to_finite_decimal(item.get("last_price") or "0", "last_price")
-            except (InvalidOperation, ValueError):
-                rejected += 1
-                continue
-            if not sym or px <= _DEC_ZERO or item.get("extreme_mover_eligible") is False:
-                rejected += 1
-                continue
-            choice = select_short_or_inverse_fallback(
-                sym, market_regime=macro_regime, borrow_meta=item, session=session
-            )
-            if choice is None:
-                rejected += 1
-                continue
-            target_sym, side, origin = choice
-            target = item
-            if target_sym != sym:
-                target = next((e for e in entries if e.get("symbol") == target_sym), {})
+        with ExitStack() as stack:
+            opened_lanes: set[str] = set()
+            for idx, item in enumerate(entries):
+                sym = str(item.get("symbol", "")).strip().upper()
                 try:
-                    px = _to_finite_decimal(target.get("last_price") or "0", "last_price")
+                    px = _to_finite_decimal(item.get("last_price") or "0", "last_price")
                 except (InvalidOperation, ValueError):
                     rejected += 1
                     continue
-                if px <= _DEC_ZERO:
+                if not sym or px <= _DEC_ZERO or item.get("extreme_mover_eligible") is False:
                     rejected += 1
                     continue
-            try:
-                natr_d = (
-                    _to_finite_decimal(target["natr_pct"], "natr_pct")
-                    if target.get("natr_pct") is not None
-                    else Decimal("0.015")
+                choice = select_short_or_inverse_fallback(
+                    sym, market_regime=macro_regime, borrow_meta=item, session=session
                 )
-            except (InvalidOperation, ValueError):
-                natr_d = Decimal("0.015")
-            if natr_d < _DEC_ZERO:
-                natr_d = Decimal("0.015")
-            ts_i = base_ts + idx * 1e-4
-            res: dict[str, Any] | None = None
-            if include_ibkr:
-                res = self.ibkr.plan_guarded_order(
-                    symbol=target_sym,
-                    side=side,
-                    ref_price=px,
-                    natr_pct=natr_d,
-                    session=session,
-                    origin=origin,
-                    now_s=ts_i,
-                )
-            if res is None and lane_names:
-                for offset in range(len(lane_names)):
-                    lane = self.lanes[lane_names[(idx + offset) % len(lane_names)]]
-                    alp_res = lane.submit_guarded_entry(
+                if choice is None:
+                    rejected += 1
+                    continue
+                target_sym, side, origin = choice
+                target = item
+                if target_sym != sym:
+                    target = next((e for e in entries if e.get("symbol") == target_sym), {})
+                    try:
+                        px = _to_finite_decimal(target.get("last_price") or "0", "last_price")
+                    except (InvalidOperation, ValueError):
+                        rejected += 1
+                        continue
+                    if px <= _DEC_ZERO:
+                        rejected += 1
+                        continue
+                try:
+                    natr_d = (
+                        _to_finite_decimal(target["natr_pct"], "natr_pct")
+                        if target.get("natr_pct") is not None
+                        else Decimal("0.015")
+                    )
+                except (InvalidOperation, ValueError):
+                    natr_d = Decimal("0.015")
+                if natr_d < _DEC_ZERO:
+                    natr_d = Decimal("0.015")
+                ts_i = base_ts + idx * 1e-4
+                res: dict[str, Any] | None = None
+                if include_ibkr:
+                    res = self.ibkr.plan_guarded_order(
                         symbol=target_sym,
                         side=side,
                         ref_price=px,
@@ -1685,25 +1899,41 @@ class PaperFarmCoordinator:
                         session=session,
                         origin=origin,
                         now_s=ts_i,
-                        prior_close=Decimal(str(target["prior_close"]))
-                        if target.get("prior_close")
-                        else None,
-                        annual_borrow_rate=(
-                            Decimal(str(target["annual_borrow_rate"]))
-                            if target.get("annual_borrow_rate") is not None
-                            else None
-                        ),
                     )
-                    if alp_res is not None:
-                        res = alp_res | {
-                            "account": lane.account,
-                            "lane_id": lane.profile["lane_id"],
-                        }
-                        break
-            if res is not None:
-                admitted.append(res)
-            else:
-                rejected += 1
+                if res is None and lane_names:
+                    for offset in range(len(lane_names)):
+                        acct_name = lane_names[(idx + offset) % len(lane_names)]
+                        lane = self.lanes[acct_name]
+                        if acct_name not in opened_lanes:
+                            stack.enter_context(lane.batch_ledger_conn())
+                            opened_lanes.add(acct_name)
+                        alp_res = lane.submit_guarded_entry(
+                            symbol=target_sym,
+                            side=side,
+                            ref_price=px,
+                            natr_pct=natr_d,
+                            session=session,
+                            origin=origin,
+                            now_s=ts_i,
+                            prior_close=Decimal(str(target["prior_close"]))
+                            if target.get("prior_close")
+                            else None,
+                            annual_borrow_rate=(
+                                Decimal(str(target["annual_borrow_rate"]))
+                                if target.get("annual_borrow_rate") is not None
+                                else None
+                            ),
+                        )
+                        if alp_res is not None:
+                            res = alp_res | {
+                                "account": lane.account,
+                                "lane_id": lane.profile["lane_id"],
+                            }
+                            break
+                if res is not None:
+                    admitted.append(res)
+                else:
+                    rejected += 1
 
         by_account: dict[str, int] = {}
         for rec in admitted:

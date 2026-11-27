@@ -1,0 +1,7 @@
+# Official Dagster OSS workspace pointing both dagster-webserver and dagster-daemon
+# at a single persistent gRPC user-code server (eliminates ephemeral 68s respawn churn).
+load_from:
+  - grpc_server:
+      host: dagster-code-server
+      port: 4266
+      location_name: tier0_sota.definitions

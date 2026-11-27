@@ -66,6 +66,10 @@ def _apply_tier0_runtime_defaults() -> None:
             ("MKL_NUM_THREADS", "32" if _burst else "8"),
             ("NUMEXPR_NUM_THREADS", "32" if _burst else "8"),
             ("TOKIO_WORKER_THREADS", "32" if _burst else "8"),
+            ("NUMBA_NUM_THREADS", "24" if _burst else "8"),
+            ("TIER0_DUCKDB_THREADS", "16" if _burst else "8"),
+            ("TIER0_LGBM_THREADS", "16" if _burst else "8"),
+            ("TIER0_CATBOOST_THREAD_COUNT", "16" if _burst else "8"),
             ("OMP_WAIT_POLICY", "PASSIVE"),
             ("GOMP_SPINCOUNT", "0"),
         ):

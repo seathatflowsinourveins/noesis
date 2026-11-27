@@ -6,7 +6,7 @@ param(
   [ValidateSet("ALL", "ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3", "IBKR_DU_4002")]
   [string]$Account = "ALL",
 
-  [string[]]$PinSymbols = @("SOXL", "SOXS"),
+  [string[]]$PinSymbols = @("SOXL", "SOXS", "TQQQ", "SQQQ"),
 
   [int]$TopK = 15,
 
@@ -39,7 +39,7 @@ $CleanPins = @(
     Select-Object -Unique
 )
 if ($CleanPins.Count -eq 0) {
-  $CleanPins = @("SOXL", "SOXS")
+  $CleanPins = @("SOXL", "SOXS", "TQQQ", "SQQQ")
 }
 foreach ($sym in $CleanPins) {
   if ($sym -notmatch "^[A-Z][A-Z0-9.-]{0,6}$") {

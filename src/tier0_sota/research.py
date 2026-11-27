@@ -5,29 +5,27 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from decimal import Decimal
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from statistics import NormalDist
 from typing import Any, Literal
 
-import hftbacktest as hft
-import mlflow
 import numpy as np
 import polars as pl
-import statsmodels.api as sm
-from arch.bootstrap import SPA
-from ml4t.diagnostic.evaluation import stats as mstats
-from scipy.stats import kurtosis, skew
-from skfolio import RiskMeasure
-from skfolio.model_selection import CombinatorialPurgedCV
-from skfolio.optimization import HierarchicalRiskParity, MeanRisk
 
 from tier0_sota.discovery import assert_pre_wall_ns
 from tier0_sota.engine import run_nautilus_signal_backtest
 
 MIN_CPCV_SAMPLES: int = 16
 FEED_LATENCY_NS: int = 50_000
-_CPCV = CombinatorialPurgedCV(n_folds=4, n_test_folds=2, purged_size=1, embargo_size=1)
+
+
+@lru_cache(maxsize=1)
+def _cpcv() -> Any:
+    from skfolio.model_selection import CombinatorialPurgedCV
+
+    return CombinatorialPurgedCV(n_folds=4, n_test_folds=2, purged_size=1, embargo_size=1)
 
 
 def evaluate_hftbacktest_queue_markout(
@@ -43,6 +41,8 @@ def evaluate_hftbacktest_queue_markout(
     taker_fee_rate: float = 0.0004,
 ) -> dict[str, Any]:
     """Run Rust hftbacktest RiskAdverseQueueModel passive GTX limit markout on pre-wall L1."""
+    import hftbacktest as hft
+
     if side not in ("BUY", "SELL"):
         raise ValueError(f"Unsupported side {side!r}; expected 'BUY' or 'SELL'")
     if quotes_df.is_empty() or trades_df.is_empty():
@@ -144,12 +144,15 @@ def _compute_cpcv_pbo(trial_returns: Sequence[np.ndarray]) -> float | None:
         return None
     m_len = min(r.size for r in elig)
     mat = np.column_stack([r[:m_len] for r in elig])
+    cpcv = _cpcv()
     is_r, oos_r = [], []
-    for tri, tei in _CPCV.split(mat):
+    for tri, tei in cpcv.split(mat):
         tr = np.concatenate(tri) if isinstance(tri, (list, tuple)) else tri
         te = np.concatenate(tei) if isinstance(tei, (list, tuple)) else tei
         is_r.append(np.mean(mat[tr], axis=0))
         oos_r.append(np.mean(mat[te], axis=0))
+    from ml4t.diagnostic.evaluation import stats as mstats
+
     return float(mstats.compute_pbo(np.vstack(is_r), np.vstack(oos_r)).pbo)
 
 
@@ -195,7 +198,7 @@ def falsify_trade_returns(
             "promoted": False,
             "verdict": "DISCARD_INSUFFICIENT_TRADES",
         }
-    splits = list(_CPCV.split(tr_r.reshape(-1, 1)))
+    splits = list(_cpcv().split(tr_r.reshape(-1, 1)))
     te_idx = [np.concatenate(te) if isinstance(te, (list, tuple)) else te for _, te in splits]
     cpcv_oos_m = float(np.mean([float(np.mean(tr_r[idx])) for idx in te_idx]))
     mean_r, std_r = float(np.mean(tr_r)), float(np.std(tr_r, ddof=1))
@@ -207,6 +210,9 @@ def falsify_trade_returns(
         vt = 0.25
     dsr_val, min_trl = 0.0, None
     if std_r > 1e-12:
+        from ml4t.diagnostic.evaluation import stats as mstats
+        from scipy.stats import kurtosis, skew
+
         dsr_res = mstats.deflated_sharpe_ratio_from_statistics(
             mean_r / std_r,
             n_s,
@@ -221,6 +227,9 @@ def falsify_trade_returns(
         min_trl = float(mt_res.min_trl) if np.isfinite(mt_res.min_trl) else None
     hac_t, spa_p, spa_pu = 0.0, 1.0, 1.0
     if std_r > 1e-12:
+        import statsmodels.api as sm
+        from arch.bootstrap import SPA
+
         nw = max(1, int(4 * (n_s / 100.0) ** (2.0 / 9.0)))
         ols = sm.OLS(tr_r, np.ones((n_s, 1))).fit(cov_type="HAC", cov_kwds={"maxlags": nw})
         hac_t = float(ols.tvalues[0])
@@ -265,6 +274,8 @@ def log_falsification_to_mlflow(
     run_name: str | None = None,
 ) -> str:
     """Log 6-gate falsification summary & verdict into official MLflow tracking store."""
+    import mlflow
+
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(run_name=run_name) as run:
@@ -281,11 +292,15 @@ def compute_skfolio_portfolio_weights(
     *,
     asset_names: Sequence[str] | None = None,
     method: Literal["mean_risk_clarabel", "hrp"] = "mean_risk_clarabel",
-    risk_measure: RiskMeasure = RiskMeasure.VARIANCE,
+    risk_measure: Any = None,
     min_weights: float = 0.0,
     max_weights: float = 1.0,
 ) -> dict[str, Any]:
     """Optimize long-only sleeve weights via upstream skfolio + Clarabel.rs conic solver."""
+    from skfolio import RiskMeasure
+    from skfolio.optimization import HierarchicalRiskParity, MeanRisk
+
+    resolved_rm = RiskMeasure.VARIANCE if risk_measure is None else risk_measure
     if isinstance(returns, pl.DataFrame):
         names = list(asset_names) if asset_names is not None else list(returns.columns)
         arr = returns.to_numpy().astype(float)
@@ -309,7 +324,7 @@ def compute_skfolio_portfolio_weights(
 
     if method == "mean_risk_clarabel":
         model: Any = MeanRisk(
-            risk_measure=risk_measure,
+            risk_measure=resolved_rm,
             min_weights=min_weights,
             max_weights=max_weights,
             solver="CLARABEL",
@@ -317,7 +332,7 @@ def compute_skfolio_portfolio_weights(
         solver_name = "clarabel"
     elif method == "hrp":
         model = HierarchicalRiskParity(
-            risk_measure=risk_measure,
+            risk_measure=resolved_rm,
             min_weights=min_weights,
             max_weights=max_weights,
         )
@@ -346,7 +361,7 @@ def compute_skfolio_portfolio_weights(
         "method": method,
         "solver": solver_name,
         "clarabel_version": clarabel_ver,
-        "risk_measure": str(risk_measure.value),
+        "risk_measure": str(resolved_rm.value),
         "assets": names,
         "weights": {name: round(float(w), 6) for name, w in zip(names, norm_w, strict=True)},
         "weights_sum": round(float(np.sum(norm_w)), 6),
@@ -372,14 +387,25 @@ def evaluate_six_gate_falsification(
     run_name: str | None = None,
     pbo: float | None = None,
     trial_returns: Sequence[np.ndarray] | None = None,
+    precomputed_bt_1x: Any | None = None,
+    precomputed_bt_2x: Any | None = None,
+    precomputed_l1_markout: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute full 6-gate falsification (hftbacktest L1, 1x/2x, CPCV, DSR/PBO, SPA, HAC)."""
     bt_extra = dict(backtest_kwargs or {})
-    bt1 = run_nautilus_signal_backtest(
-        bars_df, signals_by_ts, cost_bps_per_side=cost_bps_1x, **bt_extra
+    bt1 = (
+        precomputed_bt_1x
+        if precomputed_bt_1x is not None
+        else run_nautilus_signal_backtest(
+            bars_df, signals_by_ts, cost_bps_per_side=cost_bps_1x, **bt_extra
+        )
     )
-    bt2 = run_nautilus_signal_backtest(
-        bars_df, signals_by_ts, cost_bps_per_side=cost_bps_2x, **bt_extra
+    bt2 = (
+        precomputed_bt_2x
+        if precomputed_bt_2x is not None
+        else run_nautilus_signal_backtest(
+            bars_df, signals_by_ts, cost_bps_per_side=cost_bps_2x, **bt_extra
+        )
     )
     kw: dict[str, Any] = {
         "n_trials_total": n_trials_total,
@@ -389,7 +415,9 @@ def evaluate_six_gate_falsification(
     f1 = falsify_trade_returns(np.asarray(bt1.trade_returns, float), **kw)
     f2 = falsify_trade_returns(np.asarray(bt2.trade_returns, float), **kw)
     l1: dict[str, Any] | None = None
-    if l1_quotes_df is not None and l1_trades_df is not None:
+    if precomputed_l1_markout is not None:
+        l1 = dict(precomputed_l1_markout)
+    elif l1_quotes_df is not None and l1_trades_df is not None:
         sym = str(bars_df["symbol"][0] if "symbol" in bars_df.columns else "TEST").upper()
         l1 = evaluate_hftbacktest_queue_markout(
             l1_quotes_df, l1_trades_df, symbol=sym, side=l1_side

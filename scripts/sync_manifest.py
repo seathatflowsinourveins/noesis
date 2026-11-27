@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Literal
 
@@ -105,7 +106,10 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "docker/compose.sota.yml",
         "docker/otel-collector-config.yaml",
         "docker/prometheus.yml",
+        "docker/prometheus_rules.yml",
+        "docker/alertmanager.yml",
         "docker/dagster.yaml",
+        "docker/workspace.yaml",
     ],
     "L7": [
         ".github/workflows/ci.yml",
@@ -412,8 +416,25 @@ def _parse_ast_grep_rule_ids(repo_root: Path) -> set[str]:
     return set(re.findall(r"(?m)^id:\s*(\S+)", rules_text))
 
 
-def _resolve_python_symbol(path: Path, symbol_spec: str) -> bool:
+def _parse_python_ast(
+    path: Path,
+    ast_cache: dict[Path, ast.Module] | None = None,
+) -> ast.Module:
+    if ast_cache is not None and path in ast_cache:
+        return ast_cache[path]
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    if ast_cache is not None:
+        ast_cache[path] = tree
+    return tree
+
+
+def _resolve_python_symbol(
+    path: Path,
+    symbol_spec: str,
+    *,
+    ast_cache: dict[Path, ast.Module] | None = None,
+) -> bool:
+    tree = _parse_python_ast(path, ast_cache)
     parts = [p for p in symbol_spec.split("::") if p]
     if not parts:
         return True
@@ -438,22 +459,32 @@ def _resolve_python_symbol(path: Path, symbol_spec: str) -> bool:
     return False
 
 
-def _resolve_eval_target(path: Path, target_spec: str) -> bool:
-    if _resolve_python_symbol(path, target_spec):
+def _resolve_eval_target(
+    path: Path,
+    target_spec: str,
+    *,
+    ast_cache: dict[Path, ast.Module] | None = None,
+) -> bool:
+    if _resolve_python_symbol(path, target_spec, ast_cache=ast_cache):
         return True
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = _parse_python_ast(path, ast_cache)
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and node.value == target_spec:
             return True
     return False
 
 
-def validate_adr_frontmatter_and_sections(
+def _load_adrs_with_sha(
     repo_root: Path = REPO_ROOT,
-) -> dict[str, tuple[AdrFrontmatter, str]]:
-    """Validate MADR 4.0 kebab-case YAML frontmatter, canonical headings, and OSI upstreams."""
-    upstream_cfg = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
-    forbidden_tokens = _build_forbidden_upstream_tokens(upstream_cfg)
+    *,
+    upstream_cfg: dict[str, Any] | None = None,
+) -> tuple[dict[str, tuple[AdrFrontmatter, str]], dict[str, str]]:
+    cfg = (
+        upstream_cfg
+        if upstream_cfg is not None
+        else tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    )
+    forbidden_tokens = _build_forbidden_upstream_tokens(cfg)
 
     adr_dir = repo_root / "docs" / "adr"
     adr_paths = sorted(adr_dir.glob("ADR-*.md"))
@@ -461,8 +492,23 @@ def validate_adr_frontmatter_and_sections(
         raise ValueError(f"Expected >= 24 living ADRs under docs/adr/, found {len(adr_paths)}")
 
     adrs: dict[str, tuple[AdrFrontmatter, str]] = {}
+    file_shas: dict[str, str] = {}
     for adr_path in adr_paths:
-        raw_meta, body = extract_adr_frontmatter(adr_path)
+        normalized = adr_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+        if not normalized.startswith("---\n"):
+            raise ValueError(f"{adr_path.name}: missing leading MADR 4.0 YAML frontmatter (`---`)")
+        end_idx = normalized.find("\n---\n", 4)
+        if end_idx == -1:
+            if normalized.endswith("\n---"):
+                end_idx = len(normalized) - 4
+            else:
+                raise ValueError(f"{adr_path.name}: unterminated YAML frontmatter block")
+        yaml_text = normalized[4:end_idx]
+        body = normalized[end_idx + 5 :] if normalized[end_idx : end_idx + 5] == "\n---\n" else ""
+        raw_meta = yaml.safe_load(yaml_text)
+        if not isinstance(raw_meta, dict):
+            raise ValueError(f"{adr_path.name}: YAML frontmatter must be a mapping")
+
         fm = AdrFrontmatter.model_validate(raw_meta)
         if fm.id != adr_path.stem:
             raise ValueError(f"{adr_path.name}: frontmatter id {fm.id!r} != {adr_path.stem!r}")
@@ -487,6 +533,15 @@ def validate_adr_frontmatter_and_sections(
                 )
 
         adrs[fm.id] = (fm, body)
+        file_shas[fm.id] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return adrs, file_shas
+
+
+def validate_adr_frontmatter_and_sections(
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, tuple[AdrFrontmatter, str]]:
+    """Validate MADR 4.0 kebab-case YAML frontmatter, canonical headings, and OSI upstreams."""
+    adrs, _ = _load_adrs_with_sha(repo_root)
     return adrs
 
 
@@ -578,10 +633,19 @@ def validate_adr_supersession_dag_and_related(
 def validate_adr_anchors_and_fitness_bindings(
     repo_root: Path,
     adrs: dict[str, tuple[AdrFrontmatter, str]],
+    *,
+    ast_cache: dict[Path, ast.Module] | None = None,
 ) -> dict[str, Any]:
     """Verify every accepted/proposed ADR's code-anchors and executable fitness-checks resolve."""
     ast_rule_ids = _parse_ast_grep_rule_ids(repo_root)
     just_recipes = _parse_just_recipes(repo_root)
+    cache: dict[Path, ast.Module] = ast_cache if ast_cache is not None else {}
+    exists_cache: dict[str, bool] = {}
+
+    def _path_exists(rel_path: str) -> bool:
+        if rel_path not in exists_cache:
+            exists_cache[rel_path] = (repo_root / rel_path).exists()
+        return exists_cache[rel_path]
 
     accepted_count = 0
     fitness_bound = 0
@@ -599,15 +663,15 @@ def validate_adr_anchors_and_fitness_bindings(
             continue
 
         for rel in fm.code_anchors:
-            if not (repo_root / rel).exists():
+            if not _path_exists(rel):
                 raise ValueError(f"{aid}: missing code-anchor path `{rel}`")
 
         for py_ref in fm.fitness_checks.pytest:
             rel_file, _, sym = py_ref.partition("::")
             target_path = repo_root / rel_file
-            if not target_path.is_file():
+            if target_path not in cache and not target_path.is_file():
                 raise ValueError(f"{aid}: pytest fitness binding missing file `{rel_file}`")
-            if sym and not _resolve_python_symbol(target_path, sym):
+            if sym and not _resolve_python_symbol(target_path, sym, ast_cache=cache):
                 raise ValueError(f"{aid}: pytest fitness symbol `{py_ref}` not found in AST")
 
         for rule_id in fm.fitness_checks.ast_grep:
@@ -626,7 +690,7 @@ def validate_adr_anchors_and_fitness_bindings(
             else:
                 for pmatch in _CLI_PATH_TOKEN_RE.finditer(cmd):
                     ref_p = pmatch.group(0).rstrip(".,;:")
-                    if not (repo_root / ref_p).exists():
+                    if not _path_exists(ref_p):
                         raise ValueError(
                             f"{aid}: command `{cmd}` references non-existent path `{ref_p}`"
                         )
@@ -634,9 +698,9 @@ def validate_adr_anchors_and_fitness_bindings(
         for eval_ref in fm.fitness_checks.evals:
             rel_file, _, target = eval_ref.partition("::")
             target_path = repo_root / rel_file
-            if not target_path.is_file():
+            if target_path not in cache and not target_path.is_file():
                 raise ValueError(f"{aid}: eval fitness binding missing file `{rel_file}`")
-            if target and not _resolve_eval_target(target_path, target):
+            if target and not _resolve_eval_target(target_path, target, ast_cache=cache):
                 raise ValueError(f"{aid}: eval target `{eval_ref}` not found in {rel_file}")
 
     return {
@@ -738,11 +802,18 @@ def validate_adr_catalog_and_zensical_sync(
     }
 
 
-def parse_and_validate_adrs(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+def parse_and_validate_adrs(
+    repo_root: Path = REPO_ROOT,
+    *,
+    upstream_cfg: dict[str, Any] | None = None,
+    ast_cache: dict[Path, ast.Module] | None = None,
+) -> dict[str, Any]:
     """Run all 5 ADR governance validators and build deterministic `adr_graph` metadata."""
-    adrs = validate_adr_frontmatter_and_sections(repo_root)
+    adrs, file_shas = _load_adrs_with_sha(repo_root, upstream_cfg=upstream_cfg)
     supersession_edges = validate_adr_supersession_dag_and_related(adrs)
-    fitness_summary = validate_adr_anchors_and_fitness_bindings(repo_root, adrs)
+    fitness_summary = validate_adr_anchors_and_fitness_bindings(
+        repo_root, adrs, ast_cache=ast_cache
+    )
     sync_summary = validate_adr_catalog_and_zensical_sync(repo_root, adrs)
 
     counts_by_status: dict[str, int] = {}
@@ -753,11 +824,7 @@ def parse_and_validate_adrs(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         counts_by_status[fm.status] = counts_by_status.get(fm.status, 0) + 1
         for layer in fm.layers:
             layer_coverage.setdefault(layer, []).append(aid)
-        adr_path = repo_root / "docs" / "adr" / f"{aid}.md"
-        normalized_bytes = (
-            adr_path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
-        )
-        file_sha = hashlib.sha256(normalized_bytes).hexdigest()
+        file_sha = file_shas[aid]
         corpus_digest.update(f"{aid}.md\0{file_sha}\n".encode())
 
     return {
@@ -801,17 +868,38 @@ _DIST_TO_IMPORT_OVERRIDES: dict[str, str] = {
 }
 
 
-def _collect_ast_imported_modules(repo_root: Path) -> set[str]:
+def _scan_python_files(base_dir: Path) -> list[Path]:
+    found: list[Path] = []
+    stack: list[Path] = [base_dir]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name != "__pycache__":
+                            stack.append(Path(entry.path))
+                    elif entry.name.endswith(".py") and entry.is_file(follow_symlinks=True):
+                        found.append(Path(entry.path))
+        except OSError:
+            continue
+    found.sort()
+    return found
+
+
+def _collect_ast_imported_modules(
+    repo_root: Path,
+    *,
+    ast_cache: dict[Path, ast.Module] | None = None,
+) -> set[str]:
     """Collect every top-level Python module imported across src, scripts, evals, and tests."""
     imported: set[str] = set()
     for base_name in ("src", "scripts", "evals", "tests"):
         base_dir = repo_root / base_name
         if not base_dir.is_dir():
             continue
-        for py_path in sorted(base_dir.rglob("*.py")):
-            if "__pycache__" in py_path.parts:
-                continue
-            tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+        for py_path in _scan_python_files(base_dir):
+            tree = _parse_python_ast(py_path, ast_cache)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -824,9 +912,11 @@ def _collect_ast_imported_modules(repo_root: Path) -> set[str]:
 def audit_zero_paper_winners(
     repo_root: Path,
     pyproject: dict[str, Any],
+    *,
+    ast_cache: dict[Path, ast.Module] | None = None,
 ) -> dict[str, Any]:
     """Verify every default-installed Python winner is AST-imported or CLI/MCP/portal anchored."""
-    imported_modules = _collect_ast_imported_modules(repo_root)
+    imported_modules = _collect_ast_imported_modules(repo_root, ast_cache=ast_cache)
     pkg_map = {
         k.lower().replace("_", "-"): str(v)
         for k, v in pyproject.get("tool", {})
@@ -878,18 +968,38 @@ def audit_zero_paper_winners(
     }
 
 
-def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+def validate_clean_sota_harness(
+    repo_root: Path = REPO_ROOT,
+    *,
+    upstream: dict[str, Any] | None = None,
+    uv_lock_text: str | None = None,
+    risk_sha: str | None = None,
+    ast_cache: dict[Path, ast.Module] | None = None,
+) -> dict[str, Any]:
     """Enforce zero-overlap single-winner discipline, SPDX OSI firewall, and 100% src mapping."""
-    upstream = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    upstream_doc = (
+        upstream
+        if upstream is not None
+        else tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    )
     starred = json.loads(
         (repo_root / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
     )
     pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
-    lock_doc = tomllib.loads((repo_root / "uv.lock").read_text(encoding="utf-8"))
+    lock_raw = (
+        uv_lock_text
+        if uv_lock_text is not None
+        else (repo_root / "uv.lock").read_text(encoding="utf-8")
+    )
+    lock_doc = tomllib.loads(lock_raw)
 
-    risk_sha = hashlib.sha256((repo_root / RISK_REL_PATH).read_bytes()).hexdigest()
-    if risk_sha != EXPECTED_RISK_SHA256:
-        raise ValueError(f"risk.py SHA-256 mismatch: {risk_sha} != {EXPECTED_RISK_SHA256}")
+    resolved_risk_sha = (
+        risk_sha
+        if risk_sha is not None
+        else hashlib.sha256((repo_root / RISK_REL_PATH).read_bytes()).hexdigest()
+    )
+    if resolved_risk_sha != EXPECTED_RISK_SHA256:
+        raise ValueError(f"risk.py SHA-256 mismatch: {resolved_risk_sha} != {EXPECTED_RISK_SHA256}")
 
     # Check pyproject has zero pre-commit dependency
     all_declared_specs: list[str] = list(pyproject.get("project", {}).get("dependencies", []))
@@ -909,7 +1019,7 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "Overlap violation: `pre-commit` declared in pyproject.toml alongside prek"
         )
 
-    forbidden_tokens = _build_forbidden_upstream_tokens(upstream)
+    forbidden_tokens = _build_forbidden_upstream_tokens(upstream_doc)
     lock_pkgs = {
         str(pkg.get("name", "")).lower().replace("_", "-")
         for pkg in lock_doc.get("package", [])
@@ -923,7 +1033,7 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     all_winners: set[str] = set()
     all_rejected: set[str] = set()
     for idx in range(11):
-        layer = upstream["layers"][f"L{idx}"]
+        layer = upstream_doc["layers"][f"L{idx}"]
         for w in layer["winners"]:
             norm_w = _normalize_pkg_token(str(w))
             if norm_w in forbidden_tokens or str(w).strip().lower() in forbidden_tokens:
@@ -937,7 +1047,7 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         raise ValueError(f"Winners overlap with rejected_overlaps: {winner_rejected_overlap}")
 
     # Verify SPDX firewall parity & absence from active/frontier lists in SOTA_STARRED manifest
-    up_fw = {entry["repo"] for entry in upstream["rules"]["spdx_license_firewall"]}
+    up_fw = {entry["repo"] for entry in upstream_doc["rules"]["spdx_license_firewall"]}
     st_fw = {entry["repo"] for entry in starred["spdx_license_firewall"]}
     if up_fw != st_fw:
         raise ValueError(
@@ -959,10 +1069,10 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 raise ValueError(f"SOTA_STARRED frontier {layer_key} includes firewalled {slug!r}")
 
     # Verify 100% of src/tier0_sota/**/*.py is mapped in upstream-map.toml [files.*]
-    mapped_files = set(upstream.get("files", {}).keys())
+    mapped_files = set(upstream_doc.get("files", {}).keys())
     src_py_files = sorted(
         p.relative_to(repo_root).as_posix()
-        for p in (repo_root / "src" / "tier0_sota").rglob("*.py")
+        for p in _scan_python_files(repo_root / "src" / "tier0_sota")
     )
     unmapped_src = [rel for rel in src_py_files if rel not in mapped_files]
     if unmapped_src:
@@ -970,7 +1080,7 @@ def validate_clean_sota_harness(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             f"Unmapped src/tier0_sota Python files in upstream-map.toml: {unmapped_src}"
         )
 
-    paper_winners_audit = audit_zero_paper_winners(repo_root, pyproject)
+    paper_winners_audit = audit_zero_paper_winners(repo_root, pyproject, ast_cache=ast_cache)
     if not paper_winners_audit["ok"]:
         raise ValueError(
             "Zero-paper-winners violation — default-group packages with 0 Python imports and "
@@ -1005,16 +1115,16 @@ def _run_git(repo_root: Path, *args: str) -> str | None:
 
 
 def _detect_branch(repo_root: Path) -> str:
-    out = _run_git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
-    if out:
-        branch = out.strip()
-        if branch and branch != "HEAD":
-            return branch
     head_file = repo_root / ".git" / "HEAD"
     if head_file.is_file():
         content = head_file.read_text(encoding="utf-8").strip()
         if content.startswith("ref: refs/heads/"):
             return content.removeprefix("ref: refs/heads/")
+    out = _run_git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+    if out:
+        branch = out.strip()
+        if branch and branch != "HEAD":
+            return branch
     return "main"
 
 
@@ -1061,16 +1171,34 @@ def _check_zero_hooks(repo_root: Path) -> bool:
     return True
 
 
-def compute_skill_dir_sha256(skill_dir: Path) -> str:
-    """Compute deterministic SHA-256 over all files in `skill_dir` sorted by POSIX path."""
-    files = sorted(
-        (p.relative_to(skill_dir).as_posix(), p) for p in skill_dir.rglob("*") if p.is_file()
-    )
+def _compute_skill_digests(skill_dir: Path) -> tuple[str, str | None]:
+    """Compute (dir_sha256, skill_md_sha256) in a single scandir pass over `skill_dir`."""
+    files: list[tuple[str, Path]] = []
+    stack: list[tuple[str, Path]] = [("", skill_dir)]
+    while stack:
+        rel_prefix, cur_dir = stack.pop()
+        with os.scandir(cur_dir) as it:
+            for entry in it:
+                rel_posix = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append((rel_posix, Path(entry.path)))
+                elif entry.is_file(follow_symlinks=True):
+                    files.append((rel_posix, Path(entry.path)))
+    files.sort(key=lambda item: item[0])
     digest = hashlib.sha256()
+    skill_md_sha: str | None = None
     for rel_posix, file_path in files:
         file_sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        if rel_posix == "SKILL.md":
+            skill_md_sha = file_sha
         digest.update(f"{rel_posix}\0{file_sha}\n".encode())
-    return digest.hexdigest()
+    return digest.hexdigest(), skill_md_sha
+
+
+def compute_skill_dir_sha256(skill_dir: Path) -> str:
+    """Compute deterministic SHA-256 over all files in `skill_dir` sorted by POSIX path."""
+    dir_sha, _ = _compute_skill_digests(skill_dir)
+    return dir_sha
 
 
 def compute_skills_lock_sha256(skills: list[dict[str, Any]]) -> str:
@@ -1085,18 +1213,30 @@ def verify_skills_lock(repo_root: Path, skills_lock: dict[str, Any]) -> None:
     if not isinstance(skills, list) or len(skills) != int(skills_lock.get("skills_count", -1)):
         raise ValueError("UPSTREAM_SKILLS_LOCK.json skills list length mismatch")
     skills_dir = repo_root / ".claude" / "skills"
-    for entry in skills:
+
+    def _verify_one(entry: dict[str, Any]) -> None:
         name = str(entry["skill"])
         skill_dir = skills_dir / name
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.is_file():
+        if not skill_dir.is_dir():
             raise ValueError(f"Missing SKILL.md for locked skill: {name}")
-        actual_skill_sha = hashlib.sha256(skill_md.read_bytes()).hexdigest()
+        actual_dir_sha, actual_skill_sha = _compute_skill_digests(skill_dir)
+        if actual_skill_sha is None:
+            raise ValueError(f"Missing SKILL.md for locked skill: {name}")
         if entry.get("skill_sha256") != actual_skill_sha:
             raise ValueError(f"skill_sha256 mismatch for {name}")
-        actual_dir_sha = compute_skill_dir_sha256(skill_dir)
         if entry.get("dir_sha256") != actual_dir_sha:
             raise ValueError(f"dir_sha256 mismatch for {name}")
+
+    workers = min(8, max(1, len(skills)))
+    if workers == 1:
+        for entry in skills:
+            _verify_one(entry)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_verify_one, entry) for entry in skills]
+            for fut in futures:
+                fut.result()
+
     expected_lock_sha = compute_skills_lock_sha256(skills)
     if skills_lock.get("lock_sha256") != expected_lock_sha:
         raise ValueError(
@@ -1104,24 +1244,46 @@ def verify_skills_lock(repo_root: Path, skills_lock: dict[str, Any]) -> None:
         )
 
 
-def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+def build_manifest(
+    repo_root: Path = REPO_ROOT,
+    *,
+    _shared: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Derive ARCHITECTURE_MANIFEST.json deterministically from repository SSOT inputs."""
-    upstream = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
-    skills_lock = json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
+    shared = _shared if _shared is not None else {}
+    upstream = shared.setdefault(
+        "upstream", tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    )
+    skills_lock = shared.setdefault(
+        "skills_lock",
+        json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8")),
+    )
     verify_skills_lock(repo_root, skills_lock)
-    mcp_root = json.loads((repo_root / ".mcp.json").read_text(encoding="utf-8"))
+    mcp_root = shared.setdefault(
+        "mcp_root", json.loads((repo_root / ".mcp.json").read_text(encoding="utf-8"))
+    )
     uv_lock_text = (repo_root / "uv.lock").read_text(encoding="utf-8")
-    phil_doc = json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    phil_doc = shared.setdefault(
+        "phil_doc", json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    )
 
     risk_path = repo_root / RISK_REL_PATH
     risk_sha = hashlib.sha256(risk_path.read_bytes()).hexdigest()
     if risk_sha != EXPECTED_RISK_SHA256:
         raise ValueError(f"risk.py SHA-256 mismatch: {risk_sha} != {EXPECTED_RISK_SHA256}")
 
-    clean_sota_harness = validate_clean_sota_harness(repo_root)
-    adr_graph = parse_and_validate_adrs(repo_root)
+    ast_cache: dict[Path, ast.Module] = {}
+    clean_sota_harness = validate_clean_sota_harness(
+        repo_root,
+        upstream=upstream,
+        uv_lock_text=uv_lock_text,
+        risk_sha=risk_sha,
+        ast_cache=ast_cache,
+    )
+    adr_graph = parse_and_validate_adrs(repo_root, upstream_cfg=upstream, ast_cache=ast_cache)
 
-    branch = _detect_branch(repo_root)
+    branch = shared.setdefault("branch", _detect_branch(repo_root))
+    zero_hooks = shared.setdefault("zero_hooks", _check_zero_hooks(repo_root))
     py_ver_path = repo_root / ".python-version"
     python_version = (
         py_ver_path.read_text(encoding="utf-8").strip() if py_ver_path.is_file() else "3.13"
@@ -1191,7 +1353,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "safety_invariants": {
             "live_execution_enabled": False,
             "paper_only": True,
-            "zero_self_invented_hooks": _check_zero_hooks(repo_root),
+            "zero_self_invented_hooks": zero_hooks,
             "zero_yfinance_in_uv_lock": "yfinance" not in uv_lock_text.lower(),
             "zero_arbitrary_loc_caps": True,
             "prewall_pit_cutoff": "2026-10-15",
@@ -1276,19 +1438,34 @@ def _load_lane_mcp_servers(repo_root: Path, lane_rel_path: str) -> list[str]:
     return sorted(lane_doc["mcpServers"].keys())
 
 
-def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+def build_llm_harness_manifest(
+    repo_root: Path = REPO_ROOT,
+    *,
+    _shared: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Derive LLM_HARNESS_MANIFEST.json deterministically from live repo harness configs."""
-    skills_lock = json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8"))
-    root_mcp = json.loads((repo_root / ".mcp.json").read_text(encoding="utf-8"))
+    shared = _shared if _shared is not None else {}
+    skills_lock = shared.setdefault(
+        "skills_lock",
+        json.loads((repo_root / "UPSTREAM_SKILLS_LOCK.json").read_text(encoding="utf-8")),
+    )
+    root_mcp = shared.setdefault(
+        "mcp_root", json.loads((repo_root / ".mcp.json").read_text(encoding="utf-8"))
+    )
     claude_cfg = json.loads((repo_root / ".claude" / "settings.json").read_text(encoding="utf-8"))
     gemini_cfg = json.loads((repo_root / ".gemini" / "settings.json").read_text(encoding="utf-8"))
     opencode_cfg = json.loads((repo_root / "opencode.json").read_text(encoding="utf-8"))
     codex_cfg = tomllib.loads((repo_root / ".codex" / "config.toml").read_text(encoding="utf-8"))
-    phil_doc = json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    phil_doc = shared.setdefault(
+        "phil_doc", json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    )
     claude_md_text = (repo_root / "CLAUDE.md").read_text(encoding="utf-8").strip()
-    upstream_cfg = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    upstream_cfg = shared.setdefault(
+        "upstream", tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+    )
     orca_cfg = _parse_orca_yaml(repo_root)
-    zero_hooks = _check_zero_hooks(repo_root)
+    zero_hooks = shared.setdefault("zero_hooks", _check_zero_hooks(repo_root))
+    branch = shared.setdefault("branch", _detect_branch(repo_root))
 
     agent_skills = _parse_agent_skills(repo_root)
     agent_roles = sorted(agent_skills.keys())
@@ -1341,6 +1518,8 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "Z:\\sota-data\\manifests\\paper_farm_live_performance_manifest.json",
                 "Z:\\sota-data\\manifests\\finos_paper_farm_performance.json",
                 "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json",
+                "Z:\\sota-data\\manifests\\live_lane_order_preset_bundle.json",
+                "Z:\\sota-data\\manifests\\paper_farm_execution_status.json",
                 "Z:\\sota-data\\manifests\\paper_lane_{pa1,pa2,pa3}.duckdb",
             ],
         },
@@ -1363,6 +1542,11 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
                 "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
                 "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+                "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
+                "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_tv_presets.json",
+                "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_half_auto_audit.duckdb",
+                "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_omni_sota_24x5.pine",
+                "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_market_regime.pine",
                 "Z:\\sota-data\\manifests\\staged_tv_presets.json",
             ],
         },
@@ -1438,7 +1622,7 @@ def build_llm_harness_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "schema_version": "tier0.llm-harness-manifest.v1",
         "repo_name": "noesis",
         "future_flagship_name": "noesis",
-        "branch": _detect_branch(repo_root),
+        "branch": branch,
         "ssot_entrypoints": {
             "canonical_agents_md": "AGENTS.md",
             "claude_md_pointer": claude_md_text,
@@ -1597,9 +1781,13 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="Verify SSOT JSON manifests match repo")
     args = parser.parse_args(argv)
 
+    shared: dict[str, Any] = {}
     targets = [
-        (MANIFEST_PATH, render_manifest_json(build_manifest(REPO_ROOT))),
-        (LLM_HARNESS_MANIFEST_PATH, render_manifest_json(build_llm_harness_manifest(REPO_ROOT))),
+        (MANIFEST_PATH, render_manifest_json(build_manifest(REPO_ROOT, _shared=shared))),
+        (
+            LLM_HARNESS_MANIFEST_PATH,
+            render_manifest_json(build_llm_harness_manifest(REPO_ROOT, _shared=shared)),
+        ),
     ]
     all_ok = True
     for target_path, expected_text in targets:

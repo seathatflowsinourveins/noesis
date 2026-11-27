@@ -12,6 +12,8 @@ banned_libraries = [
   "vollib",
   "abides",
   "tradingview_ta",
+  "tradingview_screener",
+  "tvdatafeed",
   "pandas_datareader",
   "talib",
 ]
@@ -27,6 +29,9 @@ banned_packages = [
   "py-vollib",
   "vollib",
   "tradingview-ta",
+  "tradingview-screener",
+  "tvdatafeed",
+  "tradingview-scraper",
   "pandas-datareader",
   "pyportfolioopt",
   "riskfolio-lib",
@@ -60,6 +65,19 @@ spdx_license_firewall = [
   { repo = "semgrep/semgrep", license = "Semgrep-Rules-v1.0-Non-OSI", reason = "Non-OSI Semgrep Rules License v1.0 and proprietary cross-file SAST (use opengrep LGPL-2.1 or CodeQL + ast-grep)" },
   { repo = "peernagy/LOBS5", license = "NOASSERTION", reason = "No root OSI LICENSE (all-rights-reserved) and commercial LOBSTER data dependency (use microsoft/MarS MIT)" },
   { repo = "PriorLabs/TabPFN", license = "Non-Commercial-Weights", reason = "Apache-2.0 code but non-commercial pretrained weights v2.5/v3 (use soda-inria/tabicl TabICLv2 BSD-3-Clause)" },
+]
+tv_ecosystem_firewall = [
+  { repo = "tradingview/charting_library", license = "Proprietary-Commercial", reason = "Proprietary TradingView Advanced Charts license (non-OSI; examples repo MIT glue only); use tradingview/lightweight-charts Apache-2.0" },
+  { repo = "revanthpobala/pinescript-vscode-extension", license = "Modified-MIT-Non-OSI", reason = "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; track pure MIT folknor/pine-tools or trugurpala/pinescriptv6" },
+  { repo = "tradingview-pine-seeds/docs", license = "Platform-ToU-Deprecated", reason = "Suspended by TradingView for new repos and EOD daily-only; unsuitable for 24/5 intraday extreme movers" },
+  { repo = "brian-the-dev/python-tradingview-ta", license = "MIT", reason = "Unofficial TradingView scanner scraping violating ToU; use alpacahq/alpaca-py" },
+  { repo = "shner-elmo/TradingView-Screener", license = "MIT", reason = "Unofficial TradingView scanner API scraping violating ToU; use alpacahq/alpaca-py" },
+  { repo = "rongardF/tvdatafeed", license = "MIT", reason = "Unofficial TradingView WebSocket scraping violating ToU; use alpacahq/alpaca-py" },
+  { repo = "Mathieu2301/TradingView-API", license = "ISC", reason = "Undocumented TradingView WebSocket/page scraping violating ToU" },
+  { repo = "mnwato/tradingview-scraper", license = "MIT", reason = "Undocumented TradingView web scraping violating ToU" },
+  { repo = "atilaahmettaner/tradingview-mcp", license = "MIT", reason = "Unofficial TradingView MCP relying on banned CDP (:9223) or undocumented scraping" },
+  { repo = "louisnw01/lightweight-charts-python", license = "MIT", reason = "Desktop WebView/PyQt wrapper overlapping hosted L10 FINOS/OpenBB + tradingview/lightweight-charts v5" },
+  { repo = "proprietary-tv-webhook-relays", license = "Proprietary-SaaS", reason = "External cloud relays (TradersPost/3Commas/CrossTrade/PickMyTrade/Autoview) violate SPDX OSI, loopback-only & semi_auto_confirmed=false" },
 ]
 forbidden_live_ports = [4001, 7496, 8798, 8796]
 forbidden_live_hosts = ["api.alpaca.markets"]
@@ -119,7 +137,7 @@ rejected_overlaps = ["backtrader", "backtesting", "zipline-reloaded", "vectorbt"
 [layers.L4]
 name = "Paper Broker Adapters & Market Data Feeds"
 winners = ["alpaca-py", "tradermonty/claude-trading-skills"]
-rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "nautilus-alpaca"]
+rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "nautilus-alpaca", "tradingview-screener", "tvdatafeed", "tradingview-scraper", "tradingview-api", "tradingview-pine-seeds", "proprietary-tv-webhook-relays"]
 
 [layers.L5]
 name = "Statistical Falsification & Portfolio Construction"
@@ -144,13 +162,13 @@ rejected_overlaps = ["deepeval"]
 [layers.L9]
 name = "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs"
 winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
-rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"]
+rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses", "cdp-tradingview-mcp", "revanthpobala/pinescript-vscode-extension"]
 
 [layers.L10]
 name = "Institutional UI & Visual Analytics"
 winners = ["finos-workspace", "OpenBB", "perspective", "lightweight-charts", "ag-grid-community"]
 watches = ["rerun", "mosaic", "FDC3", "evidence"]
-rejected_overlaps = ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter"]
+rejected_overlaps = ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter", "tradingview/charting_library", "louisnw01/lightweight-charts-python"]
 
 [files."src/tier0_sota/__init__.py"]
 how = "install"
@@ -202,7 +220,7 @@ why = "Exposes fail-closed Paper Farm, extreme-mover scanner, and performance ad
 how = "integrate"
 upstream = "alpaca-py"
 secondary_upstreams = ["polars"]
-feature = "Whole-market extreme-mover live scanner (Alpaca SIP + FINRA TRF) & post-selection ETB borrow lookup"
+feature = "Whole-market 24/5 extreme-mover scanner (Alpaca SIP/BOATS + FINRA TRF Exchange.D block/carryover + UV buildup) & post-selection exchange/ETB lookup"
 why = "Uses official alpaca-py data/trading clients with zero banned libraries"
 
 [files."src/tier0_sota/live/paper_farm.py"]
@@ -243,13 +261,13 @@ why = "Re-exports Pydantic v2 validated TvAlertV1 bridge and staged ticket helpe
 [files."src/tier0_sota/tv/bridge.py"]
 how = "integrate"
 upstream = "pydantic"
-secondary_upstreams = ["nautilus_trader"]
-feature = "Fail-closed TradingView Pine v6 alert contract (TvAlertV1, semi_auto_confirmed=False) & live endpoint refusal"
+secondary_upstreams = ["nautilus_trader", "duckdb"]
+feature = "Fail-closed TradingView Pine v6 alert contract (TvAlertV1, semi_auto_confirmed=False), DuckDB+Parquet audit persistence & live endpoint refusal"
 why = "Delegates schema validation directly to Pydantic v2 instead of hand-patched validators"
 
 [files."src/tier0_sota/tv/tickets.py"]
 how = "integrate"
 upstream = "pydantic"
 secondary_upstreams = ["nautilus_trader"]
-feature = "Extreme-mover Half-Auto staged ticket & TradingView watchlist generator (DIRECT_SHORT_ETB vs INVERSE_HEDGE)"
-why = "Generates validated display-only order tickets and watchlists without CDP automation"
+feature = "Extreme-mover Half-Auto staged ticket, Order Preset Pack, exchange-qualified TV watchlist, FINOS/LWC cockpit JSON & Pine-synced compounding manifest generator"
+why = "Generates validated display-only order tickets, presets, watchlists & L10 cockpit contracts without CDP automation"

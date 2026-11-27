@@ -26,11 +26,14 @@ from alpaca.trading.requests import GetOrderByIdRequest, LimitOrderRequest, Repl
 from tier0_sota import engine, risk
 from tier0_sota.live.paper_farm import (
     ALPACA_LANE_PROFILES,
+    RTH_ENTRY_COLLAR_PCT,
     AlpacaPaperLane,
     PaperFarmCoordinator,
     _atomic_write_json,
     _duckdb_filename,
+    open_bounded_duckdb,
     select_short_or_inverse_fallback,
+    select_situation_lane,
 )
 from tier0_sota.live.runner import refresh_accounts, verify_paper_environment
 from tier0_sota.live.scanner import (
@@ -44,6 +47,7 @@ TERMINAL = {"filled", "expired", "canceled", "rejected"}
 MIN_LIQUID_ENTRY_PRICE = Decimal("10.00")
 MAX_RTH_QUOTED_SPREAD_BPS = Decimal("12")
 MAX_EXT_QUOTED_SPREAD_BPS = Decimal("35")
+_INVERSE_HEDGE_SYMBOLS = frozenset({"SOXS", "SQQQ", "SPXS", "SDOW"})
 
 
 def quote_microstructure_allows_entry(bid: Decimal, ask: Decimal, session: str) -> bool:
@@ -65,20 +69,41 @@ def cost_calibration_allows_entry(manifest_dir: Path) -> bool:
         for account in ALPACA_LANE_PROFILES:
             ledger = manifest_dir / _duckdb_filename(account)
             if ledger.is_file():
-                with duckdb.connect(str(ledger), read_only=True) as db:
+                with open_bounded_duckdb(ledger, read_only=True) as db:
                     if ("paper_tca_fills",) in db.execute("SHOW TABLES").fetchall() and db.execute(
                         "SELECT 1 FROM paper_tca_fills LIMIT 1"
                     ).fetchone():
                         return False
         return True
     receipt = json.loads(path.read_text("utf-8"))
+    if not isinstance(receipt, dict):
+        return False
+    if (
+        receipt.get("schema_version") != "tier0.tca-calibration-manifest.v1"
+        or receipt.get("paper_only") is not True
+        or receipt.get("live_execution_enabled") is not False
+        or receipt.get("duckdb_errors") != []
+        or receipt.get("liquid_ge10_within_2x_envelope") is False
+    ):
+        return False
+    if receipt.get("parity_within_2x_envelope") is True:
+        return True
+    liquid_rows = receipt.get("liquid_ge10_tca_rows")
+    min_liquid_px = receipt.get("min_liquid_entry_price_usd")
     return (
-        receipt.get("schema_version") == "tier0.tca-calibration-manifest.v1"
-        and receipt.get("paper_only") is True
-        and receipt.get("live_execution_enabled") is False
-        and receipt.get("parity_within_2x_envelope") is True
-        and receipt.get("duckdb_errors") == []
+        receipt.get("liquid_ge10_within_2x_envelope") is True
+        and not isinstance(liquid_rows, bool)
+        and isinstance(liquid_rows, int)
+        and liquid_rows > 0
+        and not isinstance(min_liquid_px, bool)
+        and isinstance(min_liquid_px, (int, float))
+        and Decimal(str(min_liquid_px)).is_finite()
+        and Decimal(str(min_liquid_px)) >= MIN_LIQUID_ENTRY_PRICE
     )
+
+
+def _row_rvol(row: dict[str, Any]) -> Any:
+    return row.get("rvol_normalized") if row.get("rvol_normalized") is not None else row.get("rvol")
 
 
 @dataclass
@@ -96,9 +121,10 @@ class Guard:
     child: Any = None
     checked: float = 0
     last_exit_check: float = 0
+    reverse_flatten: bool = False
 
     def save(self) -> None:
-        with duckdb.connect(str(self.lane.duckdb_path)) as db:
+        with open_bounded_duckdb(self.lane.duckdb_path) as db:
             db.execute(
                 "UPDATE paper_entry_decisions SET active_stop=?,exit_triggered=? "
                 "WHERE client_order_id=?",
@@ -137,13 +163,14 @@ class Guard:
         ):
             self.fetch()
         breached = price <= self.stop if long else price >= self.stop
+        force_exit = self.reverse_flatten
         filled = Decimal(self.parent.filled_qty or "0")
         native = session == "RTH" and self.child and self.child.status.value in {"new", "accepted"}
-        if not filled and not breached:
+        if not filled and not breached and not force_exit:
             return
         _, schedule = engine.select_pooled_trailing_schedule(self.natr)
         profile = engine.get_session_protection_profile(session, schedule)
-        if not breached and not self.triggered:
+        if not breached and not self.triggered and not force_exit:
             if not self.parent.filled_avg_price:
                 return
             desired, _, _ = engine.compute_progressive_trailing_stop(
@@ -180,10 +207,14 @@ class Guard:
             self.save()
             return
 
-        if native and (
-            Decimal(self.child.stop_price) >= self.stop
-            if long
-            else Decimal(self.child.stop_price) <= self.stop
+        if (
+            not force_exit
+            and native
+            and (
+                Decimal(self.child.stop_price) >= self.stop
+                if long
+                else Decimal(self.child.stop_price) <= self.stop
+            )
         ):
             return  # The broker owns this trigger.
         if not self.triggered:
@@ -201,6 +232,7 @@ class Guard:
             if order and order.status.value not in TERMINAL:
                 if (
                     order is self.child
+                    and not force_exit
                     and session == "RTH"
                     and order.status.value in {"pending_replace", "pending_new"}
                 ):
@@ -247,7 +279,8 @@ class Guard:
         )
         if qty <= 0:
             return
-        limit = engine.compute_collared_limit_price(price, self.side, profile.limit_collar_pct)
+        exit_collar = profile.limit_collar_pct if session != "RTH" else RTH_ENTRY_COLLAR_PCT
+        limit = engine.compute_collared_limit_price(price, self.side, exit_collar)
         broker.submit_order(
             LimitOrderRequest(
                 symbol=self.symbol,
@@ -259,6 +292,41 @@ class Guard:
                 client_order_id=exit_client_id,
             )
         )
+        if force_exit:
+            self.lane.counters["reverses"] += 1
+
+
+def guard_should_flatten_for_flip(
+    guard: Guard,
+    *,
+    market_regime: int,
+    rows: dict[str, dict[str, Any]],
+    session: str,
+) -> bool:
+    """Return True when live macro regime or scan route flips opposite an open managed guard."""
+    if session == "CLOSED" or market_regime not in (-1, 0, 1):
+        return False
+    sym = guard.symbol.strip().upper()
+    is_inverse = sym in _INVERSE_HEDGE_SYMBOLS
+    if market_regime == -1 and guard.side == "LONG" and not is_inverse:
+        return True
+    if market_regime == 1 and (guard.side == "SHORT" or (guard.side == "LONG" and is_inverse)):
+        return True
+    row = rows.get(sym)
+    if not row or not row.get("extreme_mover_eligible") or row.get("session") != session:
+        return False
+    route = select_short_or_inverse_fallback(
+        sym,
+        market_regime=market_regime,
+        borrow_meta=row,
+        session=session,
+    )
+    if not route:
+        return False
+    target_sym, target_side, origin = route
+    if target_sym == sym and target_side != guard.side:
+        return True
+    return target_sym != sym and guard.side == "LONG" and origin.startswith("INVERSE_HEDGE_")
 
 
 def restore_guards(
@@ -266,7 +334,7 @@ def restore_guards(
 ) -> dict[str, Guard]:
     guards = {}
     for acct, lane in farm.lanes.items():
-        with duckdb.connect(str(lane.duckdb_path)) as db:
+        with open_bounded_duckdb(lane.duckdb_path) as db:
             if ("paper_entry_decisions",) not in db.execute("SHOW TABLES").fetchall():
                 continue
             rows = db.execute(
@@ -289,7 +357,7 @@ def restore_guards(
                 and sym not in positions[acct]
                 and (not guard.child or guard.child.status.value in TERMINAL)
             ):
-                with duckdb.connect(str(lane.duckdb_path)) as db:
+                with open_bounded_duckdb(lane.duckdb_path) as db:
                     db.execute(
                         "UPDATE paper_entry_decisions SET closed_at=current_timestamp "
                         "WHERE client_order_id=?",
@@ -326,6 +394,7 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
         raise RuntimeError("Missing market data client")
     farm = PaperFarmCoordinator(manifest_dir)
     scan_path = manifest_dir / "live_whole_market_movers_manifest.json"
+    tca_path = manifest_dir / "tca_calibration_manifest.json"
     state_path = manifest_dir / "paper_farm_execution_status.json"
     lock = threading.Lock()
     watching = {"SPY", "QQQ"}
@@ -336,11 +405,23 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
     previous_status = ""
     last_report = 0.0
     scan_generation = ""
+    cached_scan_sig: tuple[int, int, int] | None = None
+    cached_scan_doc: dict[str, Any] | None = None
+    cached_scan_ts: datetime | None = None
+    cached_tca_sig: tuple[object, ...] | None = None
+    cached_tca_ok: bool | None = None
     entry_fault = (
         json.loads(state_path.read_text("utf-8")).get("entry_fault") is True
         if state_path.exists()
         else False
     )
+
+    def _file_stat_sig(path: Path) -> tuple[int, int, int] | None:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
 
     def report(status: str) -> None:
         nonlocal previous_status, last_report
@@ -364,33 +445,74 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
         )
 
     def refresh() -> None:
-        nonlocal scan_generation, guards
-        doc = json.loads(scan_path.read_text("utf-8"))
+        nonlocal cached_scan_doc, cached_scan_sig, cached_scan_ts
+        nonlocal cached_tca_ok, cached_tca_sig, guards, scan_generation
+        try:
+            scan_st = scan_path.stat()
+        except FileNotFoundError:
+            cached_scan_sig = None
+            cached_scan_doc = None
+            cached_scan_ts = None
+            raise
+        scan_sig = (scan_st.st_mtime_ns, scan_st.st_size, scan_st.st_ino)
+        if scan_sig != cached_scan_sig or cached_scan_doc is None or cached_scan_ts is None:
+            doc = json.loads(scan_path.read_text("utf-8"))
+            scan_ts = datetime.fromisoformat(doc["generated_at_utc"])
+            cached_scan_sig = scan_sig
+            cached_scan_doc = doc
+            cached_scan_ts = scan_ts
+        else:
+            doc = cached_scan_doc
+            scan_ts = cached_scan_ts
         now = datetime.now(UTC)
-        session = engine.classify_us_equity_session_et(time.time_ns())
-        if not 0 <= (now - datetime.fromisoformat(doc["generated_at_utc"])).total_seconds() < 90:
+        if not 0 <= (now - scan_ts).total_seconds() < 90:
             candidates.clear()
             report("STALE_SCAN")
             return
-        calibration_ok = cost_calibration_allows_entry(manifest_dir)
+        tca_file_sig = _file_stat_sig(tca_path)
+        if tca_file_sig is not None:
+            tca_sig: tuple[object, ...] = ("file", tca_file_sig)
+        else:
+            tca_sig = (
+                "ledgers",
+                *(
+                    (
+                        _file_stat_sig(ledger),
+                        _file_stat_sig(Path(f"{ledger}.wal")),
+                    )
+                    for ledger in (
+                        manifest_dir / _duckdb_filename(acct) for acct in ALPACA_LANE_PROFILES
+                    )
+                ),
+            )
+        if tca_sig != cached_tca_sig or cached_tca_ok is None:
+            cached_tca_ok = cost_calibration_allows_entry(manifest_dir)
+            cached_tca_sig = tca_sig
+        calibration_ok = cached_tca_ok
         if doc["generated_at_utc"] == scan_generation:
             if not calibration_ok:
                 candidates.clear()
                 report("TCA_RECALIBRATION_REQUIRED")
             return
+        session = engine.classify_us_equity_session_et(time.time_ns())
         candidates.clear()
         # Serialize ledger reconciliation with the scheduled observation.
-        with duckdb.connect(str(manifest_dir / "paper_farm_runner.duckdb")):
+        with open_bounded_duckdb(manifest_dir / "paper_farm_runner.duckdb"):
             positions = refresh_accounts(farm, now, session, publish=False)
             guards = restore_guards(farm, positions)
         scan_generation = doc["generated_at_utc"]
         attempts.clear()
+        rows = {r["symbol"]: r for r in doc["entries"]}
+        macro_regime = doc["macro_regime"]["regime"]
+        for guard in guards.values():
+            if guard_should_flatten_for_flip(
+                guard, market_regime=macro_regime, rows=rows, session=session
+            ):
+                guard.reverse_flatten = True
         if not calibration_ok:
             report("TCA_RECALIBRATION_REQUIRED")
             return
-        rows = {r["symbol"]: r for r in doc["entries"]}
-        lanes = list(farm.lanes.values())
-        for i, row in enumerate(doc["entries"]):
+        for row in doc["entries"]:
             if not row.get("extreme_mover_eligible") or row["session"] != session:
                 continue
             route = select_short_or_inverse_fallback(
@@ -401,16 +523,24 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
             )
             if route:
                 sym, side, origin = route
+                target = rows.get(sym)
                 if (
-                    sym in rows
-                    and rows[sym].get("natr_pct")
+                    target is not None
+                    and target.get("natr_pct")
                     and (
                         sym != row["symbol"]
                         or (side == "LONG") == (row["side"] == "BUY")
                         or row.get("peak_confirmed") is True
                     )
                 ):
-                    candidates.setdefault(sym, (lanes[i % len(lanes)], rows[sym], side, origin))
+                    lane = select_situation_lane(
+                        farm.lanes,
+                        origin=origin,
+                        natr_pct=target.get("natr_pct"),
+                        rvol_normalized=_row_rvol(target),
+                    )
+                    if lane is not None:
+                        candidates.setdefault(sym, (lane, target, side, origin))
         active_feed = DataFeed.BOATS if session == "OVERNIGHT" else DataFeed.SIP
         last = last_feed_trade.get(active_feed)
         report(
@@ -446,8 +576,18 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
             return
         if session != row["session"] or not 0 <= (now - trade.timestamp).total_seconds() <= 5:
             return
-        if sym in farm.symbol_lock.snapshot() or not lane.breaker.allow_entry():
+        if sym in farm.symbol_lock.snapshot():
             return
+        if not lane.breaker.allow_entry():
+            fallback = select_situation_lane(
+                farm.lanes,
+                origin=origin,
+                natr_pct=row.get("natr_pct"),
+                rvol_normalized=_row_rvol(row),
+            )
+            if fallback is None:
+                return
+            lane = fallback
         attempts.add(sym)
         for other in farm.lanes.values():
             if other.status_path.exists():
@@ -456,8 +596,18 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
                     return  # The existing external farm has execution ownership.
         # Recheck all three account inventories immediately before admission.
         refresh_accounts(farm, now, session, publish=False)
-        if sym in farm.symbol_lock.snapshot() or not lane.breaker.allow_entry():
+        if sym in farm.symbol_lock.snapshot():
             return
+        if not lane.breaker.allow_entry():
+            fallback = select_situation_lane(
+                farm.lanes,
+                origin=origin,
+                natr_pct=row.get("natr_pct"),
+                rvol_normalized=_row_rvol(row),
+            )
+            if fallback is None:
+                return
+            lane = fallback
         broker = lane.trading_client
         if session == "RTH" and not broker.get_clock().is_open:
             return
@@ -486,7 +636,7 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
             + hashlib.sha256(f"{sym}:{row['bar_close_utc']}:{side}".encode()).hexdigest()[:32]
         )
         for other in farm.lanes.values():
-            with duckdb.connect(str(other.duckdb_path)) as db:
+            with open_bounded_duckdb(other.duckdb_path) as db:
                 if ("paper_entry_decisions",) in db.execute(
                     "SHOW TABLES"
                 ).fetchall() and db.execute(
@@ -515,9 +665,15 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
             client_order_id=cid,
             overnight_tradable=overnight,
             annual_borrow_rate=(
-                Decimal(str(row["annual_borrow_rate"])) if "annual_borrow_rate" in row else None
+                Decimal(str(row["annual_borrow_rate"]))
+                if row.get("annual_borrow_rate") is not None
+                else None
             ),
-            prior_close=(Decimal(str(row["prior_close"])) if row.get("prior_close") else None),
+            prior_close=(
+                Decimal(str(row["prior_close"]))
+                if row.get("prior_close") is not None and float(row["prior_close"]) > 0
+                else None
+            ),
         )
         if res:
             parent = broker.get_order_by_id(
@@ -573,7 +729,7 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
             stream.subscribe_trades(callbacks[feed], *sorted(symbols))
         watching.update(symbols)
 
-    with duckdb.connect(str(manifest_dir / "paper_farm_execution.duckdb")):
+    with open_bounded_duckdb(manifest_dir / "paper_farm_execution.duckdb"):
         with lock:
             positions = refresh_accounts(
                 farm,

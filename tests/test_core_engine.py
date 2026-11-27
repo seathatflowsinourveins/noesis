@@ -64,6 +64,7 @@ from tier0_sota.engine import (
     is_sip_dark_boats_overnight_window_et,
     run_nautilus_signal_backtest,
     select_pooled_trailing_schedule,
+    step_rth_5m_bar,
     validate_trailing_offset_type,
     validate_venue_order_capability,
 )
@@ -540,3 +541,211 @@ def test_position_changed_reanchors_stop_and_unfilled_l1_fails_gate1(
     assert rep["l1_markout"] is not None
     assert rep["l1_markout"]["passive_filled"] is False
     assert rep["gates"]["1_hftbacktest_l1_markout"] is False
+
+
+def test_thanksgiving_overnight_to_black_friday_early_close_24x5_parity() -> None:
+    # Exact 2026 Thanksgiving -> 20:00 ET OVERNIGHT BOATS -> Black Friday 13:00 ET early close.
+    calendar_checks = (
+        ((2026, 11, 26, 19, 59), "CLOSED"),
+        ((2026, 11, 26, 20, 0), "OVERNIGHT"),
+        ((2026, 11, 26, 23, 59), "OVERNIGHT"),
+        ((2026, 11, 27, 0, 0), "OVERNIGHT"),
+        ((2026, 11, 27, 3, 59), "OVERNIGHT"),
+        ((2026, 11, 27, 4, 0), "PRE_MARKET"),
+        ((2026, 11, 27, 9, 29), "PRE_MARKET"),
+        ((2026, 11, 27, 9, 30), "RTH"),
+        ((2026, 11, 27, 12, 59), "RTH"),
+        ((2026, 11, 27, 13, 0), "AFTER_HOURS"),
+        ((2026, 11, 27, 15, 59), "AFTER_HOURS"),
+        ((2026, 11, 27, 19, 59), "AFTER_HOURS"),
+        ((2026, 11, 27, 20, 0), "CLOSED"),
+    )
+    for (y, m, d, hh, mm), expected_session in calendar_checks:
+        assert classify_us_equity_session_et(_et_ns(y, m, d, hh, mm)) == expected_session
+
+    # Pre-SIP-23x5 cutover (2026-12-06): 2026-11-26 20:00 ET is not in the dark-BOATS window.
+    assert not is_sip_dark_boats_overnight_window_et(_et_ns(2026, 11, 26, 20, 0))
+
+    closed_p = get_session_protection_profile("CLOSED")
+    ovn_p = get_session_protection_profile("OVERNIGHT")
+    pre_p = get_session_protection_profile("PRE_MARKET")
+    rth_p = get_session_protection_profile("RTH")
+    aft_p = get_session_protection_profile("AFTER_HOURS")
+    assert closed_p.max_notional_scale == Decimal("0.00") and closed_p.outside_rth is True
+    assert ovn_p.order_mode == "STOP_LIMIT" and ovn_p.outside_rth is True
+    assert ovn_p.limit_collar_bps == Decimal("50")
+    assert ovn_p.initial_max_loss_pct == Decimal("0.0100")
+    assert ovn_p.max_notional_scale == Decimal("0.35")
+    assert pre_p.order_mode == "STOP_LIMIT" and pre_p.limit_collar_bps == Decimal("35")
+    assert rth_p.order_mode == "STOP_MARKET" and rth_p.outside_rth is False
+    assert aft_p.order_mode == "STOP_LIMIT" and aft_p.limit_collar_bps == Decimal("35")
+
+    # 4-tier progressive lossless trailing parity in OVERNIGHT (1.00% cap -> 1R = $1.00 on $100).
+    entry = Decimal("100.00")
+    long_init = compute_capped_stop_price(entry, "LONG", max_loss_pct=ovn_p.initial_max_loss_pct)
+    short_init = compute_capped_stop_price(entry, "SHORT", max_loss_pct=ovn_p.initial_max_loss_pct)
+    assert long_init == Decimal("99.00") and short_init == Decimal("101.00")
+
+    l_stops: list[Decimal] = [long_init]
+    l_tiers: list[int] = []
+    for fav in (Decimal("100.35"), Decimal("101.05"), Decimal("102.05"), Decimal("103.05")):
+        nxt, tier, _ = compute_progressive_trailing_stop(
+            entry_price=entry,
+            side="LONG",
+            favorable_extreme=fav,
+            current_stop=l_stops[-1],
+            profile=ovn_p,
+            initial_stop=long_init,
+        )
+        l_stops.append(nxt)
+        l_tiers.append(tier)
+    assert l_tiers == [1, 2, 3, 4]
+    assert l_stops[0] < l_stops[1] < l_stops[2] < l_stops[3] < l_stops[4]
+    assert l_stops[1] >= Decimal("100.10")
+    assert l_stops[2] >= Decimal("100.45")
+    assert l_stops[3] >= Decimal("101.35")
+    assert l_stops[4] >= Decimal("102.35")
+
+    s_stops: list[Decimal] = [short_init]
+    s_tiers: list[int] = []
+    for fav in (Decimal("99.65"), Decimal("98.95"), Decimal("97.95"), Decimal("96.95")):
+        nxt, tier, _ = compute_progressive_trailing_stop(
+            entry_price=entry,
+            side="SHORT",
+            favorable_extreme=fav,
+            current_stop=s_stops[-1],
+            profile=ovn_p,
+            initial_stop=short_init,
+        )
+        s_stops.append(nxt)
+        s_tiers.append(tier)
+    assert s_tiers == [1, 2, 3, 4]
+    assert s_stops[0] > s_stops[1] > s_stops[2] > s_stops[3] > s_stops[4]
+    assert s_stops[1] <= Decimal("99.90")
+    assert s_stops[2] <= Decimal("99.55")
+    assert s_stops[3] <= Decimal("98.65")
+    assert s_stops[4] <= Decimal("97.65")
+
+    # Early-close 5m RTH state clears cleanly at Black Friday 13:00 ET (780 min).
+    rth5_state: dict[str, object] = {}
+    step_rth_5m_bar(
+        rth5_state, date(2026, 11, 27), 775, 100.0, 100.5, 99.8, 100.2, 100.1, rth_close_hm=780
+    )
+    assert "orl" in rth5_state
+    step_rth_5m_bar(
+        rth5_state, date(2026, 11, 27), 780, 100.2, 100.3, 100.0, 100.1, 100.1, rth_close_hm=780
+    )
+    assert rth5_state == {}
+
+    # Pre-wall Thanksgiving (2025-11-27) -> Black Friday early close (2025-11-28) BacktestEngine
+    # parity: CLOSED entry blocked, OVERNIGHT 50bps collared LIMIT + 0.35x scale + 1.00% STOP_LIMIT
+    # + 4-tier ratchet + monotonic OVERNIGHT->PRE_MARKET->RTH->AFTER_HOURS(13:00 ET) + CLOSED hold.
+    bar_points = (
+        ((2025, 11, 27, 19, 58), 100.0),  # t_close 19:59 ET -> CLOSED (entry must be refused)
+        ((2025, 11, 27, 19, 59), 100.0),  # t_close 20:00 ET -> OVERNIGHT (entry allowed)
+        ((2025, 11, 27, 20, 0), 100.0),  # t_close 20:01 ET -> OVERNIGHT fill bar
+        ((2025, 11, 27, 20, 1), 100.4),  # Tier 1 BE+fee
+        ((2025, 11, 27, 20, 2), 101.2),  # Tier 2 +1R
+        ((2025, 11, 27, 20, 3), 102.2),  # Tier 3 +2R
+        ((2025, 11, 27, 20, 4), 103.5),  # Tier 4 +3R
+        ((2025, 11, 28, 4, 4), 103.6),  # PRE_MARKET transition #1 (STOP_LIMIT 35bps)
+        ((2025, 11, 28, 9, 34), 103.7),  # RTH transition #2 (STOP_MARKET)
+        ((2025, 11, 28, 12, 54), 103.8),  # still Black Friday RTH (no transition)
+        ((2025, 11, 28, 12, 59), 103.9),  # t_close 13:00 ET -> AFTER_HOURS transition #3
+        ((2025, 11, 28, 19, 59), 104.0),  # t_close 20:00 ET -> CLOSED (must keep GTC stop)
+    )
+    rows = []
+    prev_c = 100.0
+    for (y, m, d, hh, mm), c_px in bar_points:
+        t_ns = _et_ns(y, m, d, hh, mm)
+        rows.append(
+            {
+                "symbol": "NVDA",
+                "t_ns": t_ns,
+                "t_close_ns": t_ns + BAR_DURATION_NS,
+                "o": prev_c,
+                "h": max(prev_c, c_px),
+                "l": min(prev_c, c_px),
+                "c": c_px,
+                "v": 25_000.0,
+            }
+        )
+        prev_c = c_px
+    bt_df = pl.DataFrame(rows)
+    ts_close = bt_df["t_close_ns"].to_list()
+    # Signal at 19:59 ET CLOSED (must refuse), then signal at 20:00 ET OVERNIGHT (must enter).
+    sigs = {ts_close[0]: 1, ts_close[1]: 1}
+
+    usd = Currency.from_str("USD")
+    inst, btype, bars, prec = df_to_equity_and_bars(bt_df, "NVDA", usd)
+    re_cfg = build_venue_risk_engine_config("IBKR_PAPER_4002")
+    ql = LoggerConfig(stdout_level=LogLevel.OFF, bypass_logging=True)
+    bt_engine = BacktestEngine(
+        BacktestEngineConfig(logging=ql, risk_engine=re_cfg, run_analysis=False)
+    )
+    try:
+        bt_engine.add_venue(
+            VENUE_XNAS,
+            OmsType.NETTING,
+            AccountType.MARGIN,
+            [Money(100_000.0, usd)],
+            usd,
+            fee_model=MakerTakerFeeModel(Decimal("0.0004"), Decimal("0.0004")),
+            use_reduce_only=False,
+        )
+        bt_engine.add_instrument(inst)
+        bt_engine.add_data(bars, client_id=ClientId("SIM"))
+        strat = SignalExecutionStrategy(
+            SignalExecutionConfig(
+                btype,
+                sigs,
+                Decimal("100000"),
+                prec,
+                venue_profile="IBKR_PAPER_4002",
+                enable_24x5_trailing=True,
+            )
+        )
+        bt_engine.add_strategy(strat)
+        bt_engine.run()
+
+        orders = bt_engine.cache.orders()
+        entries = [o for o in orders if EXIT_TAG not in tuple(o.tags or ())]
+        exits = [o for o in orders if EXIT_TAG in tuple(o.tags or ())]
+        assert len(entries) == 1
+        assert entries[0].order_type == OrderType.LIMIT
+        assert entries[0].price == Price.from_str("100.50")
+        assert int(entries[0].quantity.as_double()) == 70  # 0.35x of 200-share RTH notional cap
+        assert "SESSION=OVERNIGHT" in tuple(entries[0].tags or ())
+        assert IBKR_OUTSIDE_RTH_TAG in tuple(entries[0].tags or ())
+
+        assert strat.max_lock_tier == 4
+        # OVERNIGHT -> PRE_MARKET -> RTH -> AFTER_HOURS (must not transition into CLOSED).
+        assert strat.session_transitions == 3
+        assert [
+            next(t for t in tuple(o.tags or ()) if t.startswith("SESSION=")) for o in exits
+        ] == ["SESSION=OVERNIGHT", "SESSION=PRE_MARKET", "SESSION=RTH", "SESSION=AFTER_HOURS"]
+        assert [o.order_type for o in exits] == [
+            OrderType.STOP_LIMIT,
+            OrderType.STOP_LIMIT,
+            OrderType.STOP_MARKET,
+            OrderType.STOP_LIMIT,
+        ]
+        # Monotonic protective stop triggers across all 4 sessions & resting GTC stop on CLOSED.
+        trigs = [Decimal(str(o.trigger_price)) for o in exits]
+        assert trigs == sorted(trigs) and trigs[-1] >= Decimal("102.35")
+        assert IBKR_OUTSIDE_RTH_TAG in tuple(exits[-1].tags or ())
+        assert not exits[-1].is_closed
+    finally:
+        bt_engine.dispose()
+
+    # Venue overnight SHORT parity: ALPACA_PAPER_200 blocks OVERNIGHT SHORT; IBKR allows it.
+    ovn_short_df = bt_df.slice(1, 3)
+    ovn_ts = ovn_short_df["t_close_ns"].to_list()
+    alp_res = run_nautilus_signal_backtest(
+        ovn_short_df, {ovn_ts[0]: -1}, venue_profile="ALPACA_PAPER_200", fixed_qty=10
+    )
+    ib_res = run_nautilus_signal_backtest(
+        ovn_short_df, {ovn_ts[0]: -1}, venue_profile="IBKR_PAPER_4002", fixed_qty=10
+    )
+    assert alp_res.orders_total == 0 and alp_res.fills_total == 0
+    assert ib_res.outside_rth_limit_entries == 1 and ib_res.fills_total >= 1

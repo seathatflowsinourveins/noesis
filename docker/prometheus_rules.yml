@@ -1,0 +1,43 @@
+groups:
+  - name: tier0_sota_24x5_paper_alerts
+    interval: 30s
+    rules:
+      - alert: Tier0DailyDrawdownBreakerTripped
+        expr: max(tier0_drawdown_breaker_latched) > 0 or min(tier0_paper_farm_drawdown_pct) <= -0.015
+        for: 1m
+        labels:
+          severity: critical
+          lane: paper
+        annotations:
+          summary: "Tier-0 -1.50% session-latched daily drawdown breaker tripped"
+          description: "A Paper Farm lane latched or breached the -1.50% daily drawdown fuse (K2)."
+
+      - alert: Tier0PaperTelemetryOrExecutionDown
+        expr: up{job="tier0_sota_telemetry"} == 0 or absent(tier0_paper_farm_equity_usd_USD{scope="combined"})
+        for: 2m
+        labels:
+          severity: critical
+          lane: paper
+        annotations:
+          summary: "Tier-0 paper telemetry exporter unreachable or equity heartbeat missing"
+          description: "OTel telemetry scrape is down or combined Paper Farm equity metric is absent for >2m (possible execution fault or stop)."
+
+      - alert: Tier0PaperTcaEnvelopeBreach
+        expr: max(tier0_paper_farm_tca_mean_is_bps{scope="combined"}) > 8 or max(tier0_paper_farm_combined_tca_mean_is_bps) > 8
+        for: 5m
+        labels:
+          severity: warning
+          lane: paper
+        annotations:
+          summary: "Tier-0 Paper Farm TCA IS exceeds 8.0 bps (2x sim cost envelope)"
+          description: "Combined Paper Farm mean implementation shortfall exceeded the 8.0 bps 2x simulation cost calibration envelope."
+
+      - alert: Tier0ExtendedHoursProtectionDrop
+        expr: min(tier0_paper_farm_extended_hours_protected_ratio) < 1
+        for: 1m
+        labels:
+          severity: critical
+          lane: paper
+        annotations:
+          summary: "Tier-0 24/5 extended-hours protective stop coverage dropped below 100%"
+          description: "At least one managed Paper Farm position lacks active extended-hours protective stop coverage."

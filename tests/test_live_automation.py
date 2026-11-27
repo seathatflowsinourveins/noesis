@@ -42,9 +42,22 @@ from tier0_sota.live.paper_farm import (
     compute_tca_record,
     join_fills_with_quotes_asof,
     round_lot_up,
+    select_situation_lane,
 )
 from tier0_sota.live.performance import _read_duckdb_counts, record_paper_farm_telemetry
-from tier0_sota.live.runner import exit_context, reconcile_fills
+from tier0_sota.live.runner import (
+    _resolve_pin_symbols,
+    exit_context,
+    reconcile_fills,
+)
+from tier0_sota.live.runner import (
+    build_live_lane_preset_bundle as runner_build_bundle,
+)
+from tier0_sota.live.scanner import (
+    INVERSE_ETF_ANNUAL_EXPENSE_RATES,
+    OVERNIGHT_SEED_SYMBOLS,
+    build_live_lane_preset_bundle,
+)
 from tier0_sota.risk import MAX_STOP_LOSS_PCT
 
 
@@ -130,7 +143,7 @@ class _FakeTradingClient:
 
 
 def test_scanner_filters_flat_megacaps_and_enriches_trf_and_borrow(tmp_path: Path) -> None:
-    assert DEFAULT_PIN_SYMBOLS == ("SOXL", "SOXS")
+    assert DEFAULT_PIN_SYMBOLS == ("SOXL", "SOXS", "TQQQ", "SQQQ")
     scanner = ExtremeMoverScanner(
         screener_client=_FakeScreener(),
         data_client=_FakeDataClient(),
@@ -327,7 +340,7 @@ def test_worker_admits_one_paper_oto_from_fresh_sip_trades(tmp_path: Path, monke
     assert isinstance(entry, LimitOrderRequest) and entry.order_class == OrderClass.OTO
     assert entry.stop_loss is not None and entry.limit_price is not None
     assert entry.stop_loss.stop_price < entry.limit_price
-    with duckdb.connect(str(farm.lanes["ALPACA_PA1"].duckdb_path)) as db:
+    with duckdb.connect(str(farm.lanes["ALPACA_PA3"].duckdb_path)) as db:
         assert db.execute("SELECT count(*) FROM paper_entry_decisions").fetchone() == (1,)
         assert db.execute("SELECT count(*) FROM paper_tca_fills").fetchone() == (0,)
 
@@ -1554,3 +1567,1434 @@ def test_high_throughput_order_handle_3600_rpm_burst_and_24x5_parity(tmp_path: P
         now_s=9002.0,
     )
     assert bad_res["admitted_count"] == 0 and bad_res["rejected_count"] == 1
+
+
+def test_cost_calibration_allows_liquid_ge10_and_fails_closed_on_adverse(tmp_path: Path) -> None:
+    path = tmp_path / "tca_calibration_manifest.json"
+    live_style_liquid_ok = {
+        "schema_version": "tier0.tca-calibration-manifest.v1",
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "duckdb_errors": [],
+        "duckdb_tca_rows": 149,
+        "realized_mean_is_bps": 9.3403,
+        "parity_within_2x_envelope": False,
+        "liquid_ge10_tca_rows": 85,
+        "liquid_ge10_mean_is_bps": 7.2479,
+        "liquid_ge10_within_2x_envelope": True,
+        "min_liquid_entry_price_usd": 10.0,
+    }
+    path.write_text(json.dumps(live_style_liquid_ok), encoding="utf-8")
+    assert execution.cost_calibration_allows_entry(tmp_path) is True
+
+    # Fail-closed cases: adverse liquid TCA (even if all-fills parity is True), 0 liquid rows,
+    # sub-$10 threshold, bool spoofing, non-paper flags, duckdb_errors, or wrong schema.
+    fail_cases = [
+        live_style_liquid_ok | {"liquid_ge10_within_2x_envelope": False},
+        live_style_liquid_ok
+        | {"parity_within_2x_envelope": True, "liquid_ge10_within_2x_envelope": False},
+        live_style_liquid_ok | {"liquid_ge10_tca_rows": 0},
+        live_style_liquid_ok | {"liquid_ge10_tca_rows": True},
+        live_style_liquid_ok | {"min_liquid_entry_price_usd": 9.99},
+        live_style_liquid_ok | {"min_liquid_entry_price_usd": None},
+        live_style_liquid_ok | {"paper_only": False},
+        live_style_liquid_ok | {"live_execution_enabled": True},
+        live_style_liquid_ok | {"duckdb_errors": ["paper_lane_pa1.duckdb:IOException"]},
+        live_style_liquid_ok | {"schema_version": "tier0.tca-calibration-manifest.v0"},
+    ]
+    for bad_receipt in fail_cases:
+        path.write_text(json.dumps(bad_receipt), encoding="utf-8")
+        assert execution.cost_calibration_allows_entry(tmp_path) is False
+
+
+def test_situation_aware_lane_routing_and_breaker_fallback(tmp_path: Path, monkeypatch) -> None:
+    clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
+
+    # 1. Preferred profile mapping across all 3 situations + boundaries.
+    pa3_inv = select_situation_lane(
+        coord.lanes, origin="INVERSE_HEDGE_SOXS", natr_pct=0.045, rvol_normalized=5.0
+    )
+    assert pa3_inv is not None and pa3_inv.account == "ALPACA_PA3"
+
+    pa3_tight = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.015, rvol_normalized=2.0
+    )
+    assert pa3_tight is not None and pa3_tight.account == "ALPACA_PA3"
+
+    pa1_rvol = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.022, rvol_normalized=3.0
+    )
+    assert pa1_rvol is not None and pa1_rvol.account == "ALPACA_PA1"
+
+    pa1_wide = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.031, rvol_normalized=1.6
+    )
+    assert pa1_wide is not None and pa1_wide.account == "ALPACA_PA1"
+
+    pa2_struct = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.030, rvol_normalized=2.5
+    )
+    assert pa2_struct is not None and pa2_struct.account == "ALPACA_PA2"
+
+    # 2. Deterministic fallback when preferred lane is tripped or missing.
+    coord.lanes["ALPACA_PA1"].breaker.tripped = True
+    fb1 = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.040, rvol_normalized=4.0
+    )
+    assert fb1 is not None and fb1.account == "ALPACA_PA2"
+
+    coord.lanes["ALPACA_PA2"].breaker.tripped = True
+    fb2 = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.040, rvol_normalized=4.0
+    )
+    assert fb2 is not None and fb2.account == "ALPACA_PA3"
+
+    coord.lanes["ALPACA_PA3"].breaker.tripped = True
+    assert (
+        select_situation_lane(
+            coord.lanes, origin="INVERSE_HEDGE_SQQQ", natr_pct=0.020, rvol_normalized=2.0
+        )
+        is None
+    )
+
+    # Reset breakers and check PA3 -> PA2 and PA2 -> PA3 fallback directions.
+    for lane in coord.lanes.values():
+        lane.breaker.tripped = False
+    coord.lanes["ALPACA_PA3"].breaker.tripped = True
+    fb_inv = select_situation_lane(coord.lanes, origin="INVERSE_HEDGE_SOXS", natr_pct=0.012)
+    assert fb_inv is not None and fb_inv.account == "ALPACA_PA2"
+    coord.lanes["ALPACA_PA3"].breaker.tripped = False
+    coord.lanes["ALPACA_PA2"].breaker.tripped = True
+    fb_struct = select_situation_lane(
+        coord.lanes, origin="TREND_ALIGNED_LONG", natr_pct=0.022, rvol_normalized=2.0
+    )
+    assert fb_struct is not None and fb_struct.account == "ALPACA_PA3"
+    coord.lanes["ALPACA_PA2"].breaker.tripped = False
+
+    # 3. Coordinator dispatch_movers routes by situation & preserves CrossLaneSymbolLock.
+    etb = {"shortable": True, "easy_to_borrow": True, "borrow_source": "alpaca_paper_asset"}
+    routed = coord.dispatch_movers(
+        [
+            {
+                "symbol": "NVDA",
+                "last_price": 120.0,
+                "natr_pct": 0.038,
+                "rvol_normalized": 4.2,
+                **etb,
+            },
+            {
+                "symbol": "AMD",
+                "last_price": 140.0,
+                "natr_pct": 0.022,
+                "rvol_normalized": 2.0,
+                **etb,
+            },
+            {
+                "symbol": "MSFT",
+                "last_price": 410.0,
+                "natr_pct": 0.012,
+                "rvol_normalized": 1.8,
+                **etb,
+            },
+            {
+                "symbol": "NVDA",
+                "last_price": 120.0,
+                "natr_pct": 0.038,
+                "rvol_normalized": 4.2,
+                **etb,
+            },
+        ],
+        macro_regime=1,
+        session="RTH",
+    )
+    assert {(r["symbol"], r["account"]) for r in routed} == {
+        ("NVDA", "ALPACA_PA1"),
+        ("AMD", "ALPACA_PA2"),
+        ("MSFT", "ALPACA_PA3"),
+    }
+
+    # 4. Execution worker honors liquid_ge10 TCA pass & falls back from tripped PA1 -> PA2.
+    exec_dir = tmp_path / "exec_route"
+    exec_dir.mkdir()
+    stop = threading.Event()
+
+    class _RoutedBroker(_FakeTradingClient):
+        def __init__(self, equity: str) -> None:
+            super().__init__()
+            self.identity = uuid4()
+            self.equity = equity
+
+        def get_account(self):
+            return SimpleNamespace(
+                id=self.identity,
+                status=SimpleNamespace(value="ACTIVE"),
+                account_blocked=False,
+                trading_blocked=False,
+                trade_suspended_by_user=False,
+                equity=self.equity,
+                last_equity="100000",
+            )
+
+        def get_all_positions(self):
+            return []
+
+        def get_orders(self, request):
+            return []
+
+        def get_clock(self):
+            return SimpleNamespace(is_open=True)
+
+        def get_asset(self, symbol):
+            return SimpleNamespace(tradable=True, attributes=[])
+
+        def get_order_by_id(self, order_id, *args):
+            request = self.orders[0]
+            assert isinstance(request, LimitOrderRequest) and request.stop_loss is not None
+            child = SimpleNamespace(
+                id="child",
+                status=SimpleNamespace(value="held"),
+                replaced_by=None,
+                symbol=request.symbol,
+                side=SimpleNamespace(value="sell"),
+                stop_price=str(request.stop_loss.stop_price),
+            )
+            return SimpleNamespace(
+                id=order_id,
+                legs=[child],
+                status=SimpleNamespace(value="new"),
+                filled_qty="0",
+                filled_avg_price=None,
+            )
+
+    # PA1 tripped (-2% drawdown), PA2 & PA3 healthy.
+    brokers = {
+        "ALPACA_PA1": _RoutedBroker("98000"),
+        "ALPACA_PA2": _RoutedBroker("100000"),
+        "ALPACA_PA3": _RoutedBroker("100000"),
+    }
+    farm = PaperFarmCoordinator(exec_dir, alpaca_clients=brokers)
+
+    class _Quotes:
+        def get_stock_latest_quote(self, request):
+            return {
+                "SMCI": SimpleNamespace(
+                    bid_price=50.00, ask_price=50.02, timestamp=datetime.now(UTC)
+                )
+            }
+
+    class _Stream:
+        def __init__(self, *args, feed) -> None:
+            self.feed = feed
+            self.subscribed = threading.Event()
+
+        def subscribe_trades(self, callback, *symbols) -> None:
+            self.callback = callback
+            if "SMCI" in symbols:
+                self.subscribed.set()
+
+        def run(self) -> None:
+            assert self.subscribed.wait(15)
+            if self.feed.value == "sip":
+                asyncio.run(
+                    self.callback(
+                        SimpleNamespace(symbol="SMCI", price=50.01, timestamp=datetime.now(UTC))
+                    )
+                )
+                stop.set()
+            assert stop.wait(15)
+
+        def stop(self) -> None:
+            stop.set()
+
+    now = datetime.now(UTC).isoformat()
+    (exec_dir / "tca_calibration_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tca-calibration-manifest.v1",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "duckdb_errors": [],
+                "parity_within_2x_envelope": False,
+                "liquid_ge10_tca_rows": 85,
+                "liquid_ge10_within_2x_envelope": True,
+                "min_liquid_entry_price_usd": 10.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (exec_dir / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "macro_regime": {"regime": 1},
+                "entries": [
+                    {
+                        "symbol": "SMCI",
+                        "extreme_mover_eligible": True,
+                        "side": "BUY",
+                        "session": "RTH",
+                        "bar_close_utc": now,
+                        "natr_pct": 0.036,
+                        "rvol_normalized": 4.5,
+                        "last_price": 50.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(execution, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(execution, "resolve_alpaca_env_creds", lambda: ("", ""))
+    monkeypatch.setattr(execution, "PaperFarmCoordinator", lambda _: farm)
+    monkeypatch.setattr(execution, "StockDataStream", _Stream)
+    monkeypatch.setattr(
+        execution.ExtremeMoverScanner, "from_env", lambda: SimpleNamespace(data_client=_Quotes())
+    )
+    monkeypatch.setattr(execution.engine, "classify_us_equity_session_et", lambda _: "RTH")
+    execution.run_execution(exec_dir, stop=stop)
+    assert len(brokers["ALPACA_PA1"].orders) == 0
+    assert len(brokers["ALPACA_PA2"].orders) == 1
+    assert len(brokers["ALPACA_PA3"].orders) == 0
+
+
+def test_guard_flatten_first_regime_flip_and_auto_reverse(tmp_path: Path) -> None:
+    class _FlattenBroker(_FakeTradingClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.canceled: list[str] = []
+            self.child_status = "new"
+
+        def get_order_by_id(self, order_id, *args):
+            child = SimpleNamespace(
+                id="child-oto",
+                status=SimpleNamespace(value=self.child_status),
+                replaced_by=None,
+                symbol="NVDA",
+                side=SimpleNamespace(value="sell"),
+                stop_price="98.50",
+                filled_qty="0",
+            )
+            return SimpleNamespace(
+                id=order_id,
+                legs=[child],
+                status=SimpleNamespace(value="filled"),
+                filled_qty="10",
+                filled_avg_price="100.00",
+            )
+
+        def cancel_order_by_id(self, order_id: str) -> None:
+            self.canceled.append(order_id)
+            if order_id == "child-oto":
+                self.child_status = "canceled"
+
+        def get_order_by_client_id(self, client_order_id: str):
+            raise APIError(
+                "missing", http_error=SimpleNamespace(response=SimpleNamespace(status_code=404))
+            )
+
+        def get_open_position(self, symbol: str):
+            return SimpleNamespace(symbol=symbol, qty="10", qty_available="10")
+
+    broker = _FlattenBroker()
+    lane = AlpacaPaperLane("ALPACA_PA1", tmp_path, broker, CrossLaneSymbolLock())
+    entry = lane.submit_guarded_entry(
+        symbol="NVDA", side="LONG", ref_price=Decimal("100.00"), client_order_id="rev-parent"
+    )
+    assert entry is not None
+    child = SimpleNamespace(
+        id="child-oto",
+        stop_price="98.50",
+        status=SimpleNamespace(value="new"),
+        replaced_by=None,
+        symbol="NVDA",
+        side=SimpleNamespace(value="sell"),
+        filled_qty="0",
+    )
+    parent = SimpleNamespace(
+        id=entry["broker_order_id"],
+        status=SimpleNamespace(value="filled"),
+        filled_qty="10",
+        filled_avg_price="100.00",
+        legs=[child],
+    )
+    guard = Guard(
+        lane,
+        "rev-parent",
+        "NVDA",
+        "LONG",
+        Decimal("98.50"),
+        Decimal("98.50"),
+        Decimal("0.015"),
+        "RTH",
+        False,
+        parent,
+        child,
+    )
+
+    # Regime/scan flip detector: BULL keeps LONG, CRASH/peak flips LONG, BULL flips SOXS/SHORT.
+    assert not execution.guard_should_flatten_for_flip(
+        guard, market_regime=1, rows={}, session="RTH"
+    )
+    assert execution.guard_should_flatten_for_flip(guard, market_regime=-1, rows={}, session="RTH")
+    assert execution.guard_should_flatten_for_flip(
+        guard,
+        market_regime=0,
+        rows={
+            "NVDA": {
+                "symbol": "NVDA",
+                "extreme_mover_eligible": True,
+                "session": "OVERNIGHT",
+                "peak_confirmed": True,
+            }
+        },
+        session="OVERNIGHT",
+    )
+    soxs_guard = Guard(
+        lane,
+        "soxs-parent",
+        "SOXS",
+        "LONG",
+        Decimal("20.00"),
+        Decimal("20.00"),
+        Decimal("0.015"),
+        "OVERNIGHT",
+        False,
+        parent,
+    )
+    assert not execution.guard_should_flatten_for_flip(
+        soxs_guard, market_regime=-1, rows={}, session="OVERNIGHT"
+    )
+    assert execution.guard_should_flatten_for_flip(
+        soxs_guard, market_regime=1, rows={}, session="OVERNIGHT"
+    )
+
+    # Flatten-first in RTH: tick 1 cancels resting OTO child; tick 2 submits collared exit.
+    guard.reverse_flatten = True
+    guard.on_price(Decimal("101.00"), "RTH")
+    assert guard.triggered is True
+    assert broker.canceled == ["child-oto"]
+    assert len(broker.orders) == 1  # only the original entry so far
+
+    guard.last_exit_check = 0
+    guard.on_price(Decimal("101.00"), "RTH")
+    assert len(broker.orders) == 2
+    exit_ord = broker.orders[-1]
+    assert isinstance(exit_ord, LimitOrderRequest)
+    assert exit_ord.client_order_id == f"exit-{entry['broker_order_id']}"
+    # 101.00 * (1 - 0.0005) = 100.9495 -> Rule-612 conservative floor = 100.94.
+    assert exit_ord.limit_price == pytest.approx(100.94)
+    assert lane.counters["reverses"] == 1
+
+
+def _make_ts_bar(ts: datetime, open_px: float, close_px: float, vol: float) -> SimpleNamespace:
+    return SimpleNamespace(
+        timestamp=ts,
+        open=open_px,
+        high=max(open_px, close_px) * 1.002,
+        low=min(open_px, close_px) * 0.998,
+        close=close_px,
+        volume=vol,
+    )
+
+
+def test_scanner_same_session_overnight_rvol_without_rth_dilution(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    # 2026-10-15 20:30 ET == 2026-10-16 00:30 UTC (EDT = UTC-4, OVERNIGHT session).
+    now_utc = datetime(2026, 10, 16, 0, 30, tzinfo=UTC)
+    ah_end = datetime(2026, 10, 15, 23, 55, tzinfo=UTC)  # 19:55 ET AFTER_HOURS
+    on_start = datetime(2026, 10, 16, 0, 10, tzinfo=UTC)  # 20:10 ET OVERNIGHT
+
+    # Heavy prior RTH/AH bars (500k vol) would crush RVOL to ~0.01 if mixed with BOATS bars.
+    ah_heavy = [
+        _make_ts_bar(ah_end - timedelta(minutes=10 - i), 52.0, 52.20, 500_000.0) for i in range(10)
+    ]
+    # 20 same-session OVERNIGHT bars: 15 quiet (1k vol) + 5 surging (3k vol) -> rvol = 3.0.
+    soxs_on = [
+        _make_ts_bar(
+            on_start + timedelta(minutes=i),
+            52.20 + i * 0.25,
+            52.45 + i * 0.25,
+            3_000.0 if i >= 15 else 1_000.0,
+        )
+        for i in range(20)
+    ]
+    # Early-session (< 6 same-session bars): 3 OVERNIGHT bars (1k, 1k -> 3k) -> rvol = 3.0.
+    sqqq_on = [
+        _make_ts_bar(now_utc - timedelta(minutes=3), 18.0, 18.30, 1_000.0),
+        _make_ts_bar(now_utc - timedelta(minutes=2), 18.30, 18.60, 1_000.0),
+        _make_ts_bar(now_utc - timedelta(minutes=1), 18.60, 19.00, 3_000.0),
+    ]
+    # Single opening OVERNIGHT bar (0 prior same-session bars): clean early fallback = 1.5.
+    tqqq_on = [_make_ts_bar(now_utc - timedelta(minutes=1), 70.0, 74.0, 2_000.0)]
+
+    class _OvernightBarsData:
+        def get_stock_bars(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "SOXS": [*ah_heavy, *soxs_on],
+                    "SQQQ": [*ah_heavy[:2], *sqqq_on],
+                    "TQQQ": [*ah_heavy[:2], *tqqq_on],
+                }
+            )
+
+    scanner = ExtremeMoverScanner(
+        screener_client=None,
+        data_client=_OvernightBarsData(),
+        trading_client=_FakeTradingClient(shortable=True, etb=True),
+    )
+    doc = scanner.scan(top_k=10, now_utc=now_utc)
+    by_sym = {e["symbol"]: e for e in doc["entries"]}
+
+    assert by_sym["SOXS"]["session"] == "OVERNIGHT"
+    assert by_sym["SOXS"]["rvol_normalized"] == pytest.approx(3.0)
+    assert by_sym["SOXS"]["extreme_mover_eligible"] is True
+    assert by_sym["SOXS"]["prior_close"] == pytest.approx(52.20)
+    assert by_sym["SOXS"]["annual_borrow_rate"] == pytest.approx(
+        INVERSE_ETF_ANNUAL_EXPENSE_RATES["SOXS"]
+    )
+
+    assert by_sym["SQQQ"]["rvol_normalized"] == pytest.approx(3.0)
+    assert by_sym["SQQQ"]["annual_borrow_rate"] == pytest.approx(
+        INVERSE_ETF_ANNUAL_EXPENSE_RATES["SQQQ"]
+    )
+    assert by_sym["SQQQ"]["prior_close"] == pytest.approx(52.20)
+
+    assert by_sym["TQQQ"]["rvol_normalized"] == pytest.approx(1.5)
+    assert by_sym["TQQQ"]["annual_borrow_rate"] == 0.0
+
+
+def test_overnight_universe_seeding_discovers_boats_leaders() -> None:
+    from datetime import timedelta
+
+    # 2026-11-26 20:30 ET == 2026-11-27 01:30 UTC (EST = UTC-5, OVERNIGHT BOATS open).
+    now_utc = datetime(2026, 11, 27, 1, 30, tzinfo=UTC)
+    on_start = now_utc - timedelta(minutes=20)
+    requested_symbols: list[str] = []
+
+    class _EmptyScreener:
+        def get_most_actives(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(most_actives=[])
+
+        def get_market_movers(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(gainers=[], losers=[])
+
+    class _SeedData:
+        def get_stock_bars(self, req: object) -> SimpleNamespace:
+            requested_symbols.extend(getattr(req, "symbol_or_symbols", ()))
+            nvda_bars = [
+                _make_ts_bar(
+                    on_start + timedelta(minutes=i),
+                    130.0 + i * 0.35,
+                    130.35 + i * 0.35,
+                    10_000.0 if i >= 15 else 2_500.0,
+                )
+                for i in range(20)
+            ]
+            meta_flat = [
+                _make_ts_bar(on_start + timedelta(minutes=i), 580.0, 580.1, 100.0)
+                for i in range(20)
+            ]
+            return SimpleNamespace(data={"NVDA": nvda_bars, "META": meta_flat})
+
+    scanner = ExtremeMoverScanner(
+        screener_client=_EmptyScreener(),
+        data_client=_SeedData(),
+        trading_client=_FakeTradingClient(shortable=True, etb=True),
+    )
+    doc = scanner.scan(top_k=15, now_utc=now_utc)
+    assert doc["feed_sources"] == ["alpaca_boats"]
+    assert set(OVERNIGHT_SEED_SYMBOLS) <= set(requested_symbols)
+    assert set(DEFAULT_PIN_SYMBOLS) <= set(requested_symbols)
+
+    by_sym = {e["symbol"]: e for e in doc["entries"]}
+    assert "NVDA" in by_sym
+    assert by_sym["NVDA"]["extreme_mover_eligible"] is True
+    assert "overnight_seed" in by_sym["NVDA"]["screen_buckets"]
+    assert by_sym["NVDA"]["prior_close"] == pytest.approx(130.0)
+    assert by_sym["NVDA"]["annual_borrow_rate"] == 0.0
+    assert "META" not in by_sym
+    assert set(DEFAULT_PIN_SYMBOLS) <= set(by_sym)
+
+
+def test_inverse_hedge_soxs_sqqq_carries_prior_close_and_borrow_rate_through_execution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # 1. Verify coordinator dispatch_movers admits INVERSE_HEDGE_SQQQ with scanner fields on PA3.
+    coord = PaperFarmCoordinator(
+        tmp_path / "coord", alpaca_clients={a: _FakeTradingClient() for a in ALPACA_LANE_PROFILES}
+    )
+    routed = coord.dispatch_movers(
+        [
+            {
+                "symbol": "SQQQ",
+                "last_price": 22.50,
+                "prior_close": 21.00,
+                "annual_borrow_rate": INVERSE_ETF_ANNUAL_EXPENSE_RATES["SQQQ"],
+                "natr_pct": 0.025,
+                "extreme_mover_eligible": True,
+                "overnight_tradable": True,
+            }
+        ],
+        macro_regime=-1,
+        session="OVERNIGHT",
+    )
+    assert len(routed) == 1
+    assert routed[0]["symbol"] == "SQQQ"
+    assert routed[0]["account"] == "ALPACA_PA3"
+
+    # 2. Verify full execution.run_execution path preserves SOXS prior_close & annual_borrow_rate.
+    exec_dir = tmp_path / "exec_inv"
+    exec_dir.mkdir()
+    stop = threading.Event()
+
+    class _OvernightBroker(_FakeTradingClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.identity = uuid4()
+
+        def get_account(self):
+            return SimpleNamespace(
+                id=self.identity,
+                status=SimpleNamespace(value="ACTIVE"),
+                account_blocked=False,
+                trading_blocked=False,
+                trade_suspended_by_user=False,
+                equity="100000",
+                last_equity="100000",
+            )
+
+        def get_all_positions(self):
+            return []
+
+        def get_orders(self, request):
+            return []
+
+        def get_asset(self, symbol):
+            return SimpleNamespace(tradable=True, attributes=["overnight_tradable"])
+
+        def get_order_by_id(self, order_id, *args):
+            return SimpleNamespace(
+                id=order_id,
+                legs=[],
+                status=SimpleNamespace(value="new"),
+                filled_qty="0",
+                filled_avg_price=None,
+            )
+
+    brokers = {acct: _OvernightBroker() for acct in ALPACA_LANE_PROFILES}
+    farm = PaperFarmCoordinator(exec_dir, alpaca_clients=brokers)
+
+    class _Quotes:
+        def get_stock_latest_quote(self, request):
+            return {
+                "SOXS": SimpleNamespace(
+                    bid_price=57.10, ask_price=57.18, timestamp=datetime.now(UTC)
+                )
+            }
+
+    class _Stream:
+        def __init__(self, *args, feed) -> None:
+            self.feed = feed
+            self.subscribed = threading.Event()
+
+        def subscribe_trades(self, callback, *symbols) -> None:
+            self.callback = callback
+            if "SOXS" in symbols:
+                self.subscribed.set()
+
+        def run(self) -> None:
+            assert self.subscribed.wait(15)
+            if self.feed.value == "boats":
+                asyncio.run(
+                    self.callback(
+                        SimpleNamespace(symbol="SOXS", price=57.15, timestamp=datetime.now(UTC))
+                    )
+                )
+                stop.set()
+            assert stop.wait(15)
+
+        def stop(self) -> None:
+            stop.set()
+
+    now = datetime.now(UTC).isoformat()
+    (exec_dir / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "macro_regime": {"regime": -1},
+                "entries": [
+                    {
+                        "symbol": "SOXS",
+                        "extreme_mover_eligible": True,
+                        "side": "BUY",
+                        "session": "OVERNIGHT",
+                        "bar_close_utc": now,
+                        "natr_pct": 0.024,
+                        "rvol_normalized": 3.5,
+                        "last_price": 57.15,
+                        "prior_close": 52.20,
+                        "annual_borrow_rate": INVERSE_ETF_ANNUAL_EXPENSE_RATES["SOXS"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(execution, "verify_paper_environment", lambda: None)
+    monkeypatch.setattr(execution, "resolve_alpaca_env_creds", lambda: ("", ""))
+    monkeypatch.setattr(execution, "PaperFarmCoordinator", lambda _: farm)
+    monkeypatch.setattr(execution, "StockDataStream", _Stream)
+    monkeypatch.setattr(
+        execution.ExtremeMoverScanner, "from_env", lambda: SimpleNamespace(data_client=_Quotes())
+    )
+    monkeypatch.setattr(execution.engine, "classify_us_equity_session_et", lambda _: "OVERNIGHT")
+    execution.run_execution(exec_dir, stop=stop)
+
+    assert len(brokers["ALPACA_PA3"].orders) == 1
+    assert len(brokers["ALPACA_PA1"].orders) == 0
+    assert len(brokers["ALPACA_PA2"].orders) == 0
+    with duckdb.connect(str(farm.lanes["ALPACA_PA3"].duckdb_path), read_only=True) as db:
+        row = db.execute(
+            "SELECT origin, annual_rate, prior_close FROM paper_entry_decisions"
+        ).fetchone()
+    assert row == ("INVERSE_HEDGE_SOXS", Decimal("0.0099000000"), Decimal("52.200000"))
+
+
+def test_scanner_unusual_volume_buildup_absorption_and_causal_peak_confirmed() -> None:
+    from datetime import timedelta
+
+    # 2026-10-15 11:00 ET == 2026-10-15 15:00 UTC (RTH).
+    now_utc = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
+    start_ts = now_utc - timedelta(minutes=20)
+
+    # 18 quiet base bars around $100 (low range, vol=100k), then bar 18 spikes to $106
+    # (>= 2*NATR above ~$100 VWAP), then bar 19 closes red below prior low with ramping volume.
+    peak_bars = [
+        SimpleNamespace(
+            timestamp=start_ts + timedelta(minutes=i),
+            open=100.0,
+            high=100.40,
+            low=99.60,
+            close=100.10,
+            volume=100_000.0,
+        )
+        for i in range(17)
+    ]
+    peak_bars.extend(
+        [
+            SimpleNamespace(
+                timestamp=start_ts + timedelta(minutes=17),
+                open=101.0,
+                high=103.0,
+                low=100.8,
+                close=102.8,
+                volume=220_000.0,
+            ),
+            SimpleNamespace(
+                timestamp=start_ts + timedelta(minutes=18),
+                open=102.8,
+                high=107.0,
+                low=104.5,
+                close=106.5,
+                volume=320_000.0,
+            ),
+            SimpleNamespace(
+                timestamp=start_ts + timedelta(minutes=19),
+                open=106.2,
+                high=106.4,
+                low=103.5,
+                close=103.8,
+                volume=450_000.0,
+            ),
+        ]
+    )
+
+    # Absorption symbol: high RVOL + tight final bar range -> high hidden_volume_ratio, no peak.
+    abs_bars = [
+        SimpleNamespace(
+            timestamp=start_ts + timedelta(minutes=i),
+            open=50.0,
+            high=50.8,
+            low=49.2,
+            close=50.2,
+            volume=100_000.0,
+        )
+        for i in range(17)
+    ]
+    abs_bars.extend(
+        [
+            SimpleNamespace(
+                timestamp=start_ts + timedelta(minutes=17),
+                open=51.0,
+                high=51.8,
+                low=50.8,
+                close=51.6,
+                volume=200_000.0,
+            ),
+            SimpleNamespace(
+                timestamp=start_ts + timedelta(minutes=18),
+                open=51.6,
+                high=52.2,
+                low=51.5,
+                close=52.1,
+                volume=260_000.0,
+            ),
+            SimpleNamespace(
+                timestamp=start_ts + timedelta(minutes=19),
+                open=52.1,
+                high=52.25,
+                low=52.05,
+                close=52.20,
+                volume=340_000.0,
+            ),
+        ]
+    )
+
+    class _UvScreener:
+        def get_most_actives(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(most_actives=[])
+
+        def get_market_movers(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                gainers=[
+                    SimpleNamespace(
+                        symbol="SMCI", price=103.8, volume=5_000_000, percent_change=6.5
+                    ),
+                    SimpleNamespace(
+                        symbol="NVDA", price=52.2, volume=5_000_000, percent_change=4.4
+                    ),
+                ],
+                losers=[],
+            )
+
+    class _UvData:
+        def get_stock_bars(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(data={"SMCI": peak_bars, "NVDA": abs_bars})
+
+        def get_stock_trades(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "SMCI": [SimpleNamespace(symbol="SMCI", size=450, exchange="D")],
+                    "NVDA": [
+                        SimpleNamespace(symbol="NVDA", size=500, exchange="D"),
+                        SimpleNamespace(symbol="NVDA", size=500, exchange="Q"),
+                    ],
+                }
+            )
+
+    scanner = ExtremeMoverScanner(
+        screener_client=_UvScreener(),
+        data_client=_UvData(),
+        trading_client=_FakeTradingClient(shortable=True, etb=True),
+    )
+    doc = scanner.scan(top_k=10, now_utc=now_utc)
+    by_sym = {e["symbol"]: e for e in doc["entries"]}
+
+    smci = by_sym["SMCI"]
+    assert smci["vol_buildup_ratio"] >= 3.0
+    assert smci["vol_ramp_bars"] == 3
+    assert smci["unusual_volume_buildup"] is True
+    assert smci["hidden_volume_ratio"] > 0.0
+    assert smci["peak_confirmed"] is True
+
+    nvda = by_sym["NVDA"]
+    assert nvda["vol_buildup_ratio"] >= 2.5
+    assert nvda["vol_ramp_bars"] == 3
+    assert nvda["unusual_volume_buildup"] is True
+    assert nvda["darkpool_trf_ratio"] == 0.5
+    # Tight final bar range (0.20) vs ATR (~1.5) -> strong absorption proxy (> rvol).
+    assert nvda["hidden_volume_ratio"] > nvda["rvol_normalized"]
+    assert nvda["peak_confirmed"] is False
+
+
+def test_live_lane_preset_bundle_roundtrip_with_runner_and_tv_tickets(tmp_path: Path) -> None:
+    from tier0_sota.tv.tickets import refresh_tickets_from_paths
+
+    assert runner_build_bundle is build_live_lane_preset_bundle
+    now_utc = datetime(2026, 10, 15, 15, 0, 20, tzinfo=UTC)
+    bar_close_iso = datetime(2026, 10, 15, 15, 0, 0, tzinfo=UTC).isoformat()
+
+    scan_doc = {
+        "schema_version": "tier0.whole-market-movers.v2",
+        "generated_at_utc": now_utc.isoformat(),
+        "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+        "macro_regime": {"regime": 1, "regime_label": "BULL"},
+        "pin_symbols": list(DEFAULT_PIN_SYMBOLS),
+        "ranked_count": 3,
+        "entries": [
+            {
+                "rank": 1,
+                "symbol": "NVDA",
+                "score": 48.0,
+                "last_price": 135.0,
+                "prior_close": 128.0,
+                "annual_borrow_rate": 0.0,
+                "session_move_pct": 5.47,
+                "rvol_normalized": 3.8,
+                "vol_buildup_ratio": 2.4,
+                "vol_ramp_bars": 3,
+                "unusual_volume_buildup": True,
+                "hidden_volume_ratio": 4.2,
+                "peak_confirmed": False,
+                "dollar_vol": 25_000_000.0,
+                "darkpool_trf_ratio": 0.44,
+                "side": "BUY",
+                "session": "RTH",
+                "bar_close_utc": bar_close_iso,
+                "trailing_schedule": "wide_natr_adaptive",
+                "natr_pct": 0.035,
+                "initial_stop_px": 132.30,
+                "extreme_mover_eligible": True,
+                "pinned": False,
+                "shortable": True,
+                "easy_to_borrow": True,
+            },
+            {
+                "rank": 2,
+                "symbol": "AMD",
+                "score": 32.0,
+                "last_price": 150.0,
+                "prior_close": 144.0,
+                "annual_borrow_rate": 0.0,
+                "session_move_pct": 4.17,
+                "rvol_normalized": 1.9,
+                "vol_buildup_ratio": 1.4,
+                "vol_ramp_bars": 1,
+                "unusual_volume_buildup": False,
+                "hidden_volume_ratio": 1.2,
+                "peak_confirmed": False,
+                "dollar_vol": 15_000_000.0,
+                "darkpool_trf_ratio": 0.22,
+                "side": "BUY",
+                "session": "RTH",
+                "bar_close_utc": bar_close_iso,
+                "trailing_schedule": "baseline",
+                "natr_pct": 0.022,
+                "initial_stop_px": 147.00,
+                "extreme_mover_eligible": True,
+                "pinned": False,
+                "shortable": True,
+                "easy_to_borrow": True,
+            },
+            {
+                "rank": 3,
+                "symbol": "SOXS",
+                "score": 21.0,
+                "last_price": 24.0,
+                "prior_close": 24.2,
+                "annual_borrow_rate": INVERSE_ETF_ANNUAL_EXPENSE_RATES["SOXS"],
+                "session_move_pct": -0.83,
+                "rvol_normalized": 0.7,
+                "vol_buildup_ratio": 0.9,
+                "vol_ramp_bars": 0,
+                "unusual_volume_buildup": False,
+                "hidden_volume_ratio": 0.5,
+                "peak_confirmed": False,
+                "dollar_vol": 2_000_000.0,
+                "darkpool_trf_ratio": 0.15,
+                "side": "BUY",
+                "session": "RTH",
+                "bar_close_utc": bar_close_iso,
+                "trailing_schedule": "tight_near_lossless",
+                "natr_pct": 0.012,
+                "initial_stop_px": 23.64,
+                "extreme_mover_eligible": False,
+                "pinned": True,
+                "shortable": False,
+                "easy_to_borrow": False,
+            },
+        ],
+    }
+
+    movers_path = tmp_path / "live_whole_market_movers_manifest.json"
+    bundle_path = tmp_path / "live_lane_order_preset_bundle.json"
+    movers_path.write_text(json.dumps(scan_doc), encoding="utf-8")
+
+    bundle = build_live_lane_preset_bundle(scan_doc, output_path=bundle_path)
+    assert bundle_path.is_file()
+    assert bundle["schema_version"] == "tier0.live-lane-preset-bundle.v1"
+    assert bundle["paper_only"] is True
+    assert bundle["live_execution_enabled"] is False
+
+    rows = {r["symbol"]: r for r in bundle["top_potential_symbols"]}
+    assert rows["NVDA"]["lane_account"] == "ALPACA_PA1"
+    assert rows["NVDA"]["lane_id"] == "L1_ORB_BURST"
+    assert rows["NVDA"]["entry_eligible"] is True
+    assert rows["NVDA"]["entry_hold_reason"] is None
+    assert rows["NVDA"]["order_mode"] == "STOP_MARKET"
+    assert rows["NVDA"]["unusual_volume_buildup"] is True
+    assert rows["NVDA"]["darkpool_trf_ratio"] == 0.44
+
+    assert rows["AMD"]["lane_account"] == "ALPACA_PA2"
+    assert rows["AMD"]["lane_id"] == "L2_STRUCTURAL_TREND"
+    assert rows["AMD"]["entry_eligible"] is True
+
+    assert rows["SOXS"]["lane_account"] == "ALPACA_PA3"
+    assert rows["SOXS"]["entry_eligible"] is False
+    assert rows["SOXS"]["entry_hold_reason"] == "LOW_MOVE_NOT_EXTREME"
+
+    # Fail-closed when TCA calibration blocks new entries.
+    held = build_live_lane_preset_bundle(scan_doc, tca_allows_entry=False)
+    assert all(
+        r["entry_eligible"] is False and r["entry_hold_reason"] == "TCA_RECALIBRATION_REQUIRED"
+        for r in held["top_potential_symbols"]
+    )
+
+    # Round-trip into TV Half-Auto tickets confirms READY_HALF_AUTO wiring.
+    tv_doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        bundle_path=bundle_path,
+        out_dir=tmp_path / "tv_sota_pack",
+        venue="ALPACA",
+        now_utc=now_utc,
+    )
+    tv_by_sym = {t["symbol"]: t for t in tv_doc["tickets"]}
+    assert tv_by_sym["NVDA"]["action_gate"] == "READY_HALF_AUTO"
+    assert tv_by_sym["AMD"]["action_gate"] == "READY_HALF_AUTO"
+    assert "SOXS" not in tv_by_sym
+
+
+def test_runner_resolve_pin_symbols_upgrades_legacy_two_pin_override() -> None:
+    assert _resolve_pin_symbols("SOXL,SOXS") == DEFAULT_PIN_SYMBOLS
+    assert _resolve_pin_symbols(" soxs , soxl ") == DEFAULT_PIN_SYMBOLS
+    assert _resolve_pin_symbols("") == DEFAULT_PIN_SYMBOLS
+    assert _resolve_pin_symbols(" , ") == DEFAULT_PIN_SYMBOLS
+    assert _resolve_pin_symbols("SOXL,SOXS,TQQQ,SQQQ") == DEFAULT_PIN_SYMBOLS
+    assert _resolve_pin_symbols("nvda, amd, NVDA") == ("NVDA", "AMD")
+    assert _resolve_pin_symbols("SOXL,NVDA") == ("SOXL", "NVDA")
+
+
+def test_scanner_trf_block_separation_exchange_and_overnight_core3_regime() -> None:
+    from datetime import timedelta
+
+    from tier0_sota.live.scanner import normalize_tv_exchange
+
+    # 1. Institutional round-lot/block FINRA TRF separation vs sub-100 retail odd-lot prints.
+    agg = aggregate_finra_trf_ratios(
+        [
+            SimpleNamespace(symbol="NVDA", size=15, price=130.0, exchange="D"),
+            SimpleNamespace(symbol="NVDA", size=600, price=130.0, exchange="D"),
+            SimpleNamespace(symbol="NVDA", size=385, price=130.0, exchange="Q"),
+        ]
+    )
+    assert agg["NVDA"]["darkpool_trf_ratio"] == pytest.approx(0.615)
+    assert agg["NVDA"]["trf_block_ratio"] == pytest.approx(0.6)
+    assert agg["NVDA"]["darkpool_block_count"] == 1
+
+    # 2. TV exchange prefix normalization (ARCA/NYSEARCA -> AMEX).
+    assert normalize_tv_exchange("ARCA") == "AMEX"
+    assert normalize_tv_exchange("NYSEARCA") == "AMEX"
+    assert normalize_tv_exchange("NASDAQ") == "NASDAQ"
+    assert normalize_tv_exchange("NYSE") == "NYSE"
+    assert normalize_tv_exchange("") is None
+
+    # 3. OVERNIGHT core-3 (SPY/QQQ/SOXX without RSP) causal regime + prior-SIP TRF carryover
+    #    + UV/Darkpool buildup retention (fail-closed extreme_mover_eligible=False) + flat reject.
+    now_utc = datetime(2026, 11, 27, 2, 30, tzinfo=UTC)  # 21:30 ET OVERNIGHT
+    on_start = now_utc - timedelta(minutes=45)
+
+    def _trend_bars(base_px: float, step: float, vol: float = 5_000.0) -> list[SimpleNamespace]:
+        return [
+            _make_ts_bar(
+                on_start + timedelta(minutes=i),
+                base_px + i * step,
+                base_px + (i + 1) * step,
+                vol,
+            )
+            for i in range(45)
+        ]
+
+    # Early UV/Darkpool buildup candidate: +2.0% (< 3.5% extreme gate) with high TRF & UV ramp.
+    amd_buildup = [
+        _make_ts_bar(
+            on_start + timedelta(minutes=i),
+            150.0 + i * 0.065,
+            150.065 + i * 0.065,
+            30_000.0 if i >= 40 else 10_000.0,
+        )
+        for i in range(45)
+    ]
+    # Extreme mover: +5.2% with strong RVOL.
+    nvda_ext = [
+        _make_ts_bar(
+            on_start + timedelta(minutes=i),
+            130.0 + i * 0.15,
+            130.15 + i * 0.15,
+            40_000.0 if i >= 40 else 10_000.0,
+        )
+        for i in range(45)
+    ]
+    meta_flat = [
+        _make_ts_bar(on_start + timedelta(minutes=i), 580.0, 580.05, 50.0) for i in range(45)
+    ]
+
+    class _OvernightCore3Data:
+        def get_stock_bars(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "SPY": _trend_bars(600.0, 0.12, 20_000.0),
+                    "QQQ": _trend_bars(500.0, 0.12, 20_000.0),
+                    "SOXX": _trend_bars(220.0, 0.06, 15_000.0),
+                    # RSP intentionally omitted to prove core-3 overnight regime works without RSP.
+                    "NVDA": nvda_ext,
+                    "AMD": amd_buildup,
+                    "META": meta_flat,
+                }
+            )
+
+        def get_stock_trades(self, _req: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                data={
+                    "NVDA": [
+                        SimpleNamespace(symbol="NVDA", size=800, price=136.5, exchange="D"),
+                        SimpleNamespace(symbol="NVDA", size=200, price=136.5, exchange="Q"),
+                    ],
+                    "AMD": [
+                        SimpleNamespace(symbol="AMD", size=500, price=153.0, exchange="D"),
+                        SimpleNamespace(symbol="AMD", size=500, price=153.0, exchange="Q"),
+                    ],
+                }
+            )
+
+    class _ExchangeTradingClient(_FakeTradingClient):
+        def get_asset(self, symbol: str) -> SimpleNamespace:
+            exch = "ARCA" if symbol in DEFAULT_PIN_SYMBOLS else "NASDAQ"
+            return SimpleNamespace(
+                symbol=symbol,
+                shortable=True,
+                easy_to_borrow=True,
+                exchange=SimpleNamespace(value=exch),
+            )
+
+        def get_all_assets(self, _req: object) -> list[SimpleNamespace]:
+            return [self.get_asset(s) for s in (*DEFAULT_PIN_SYMBOLS, "NVDA", "AMD", "META")]
+
+    scanner = ExtremeMoverScanner(
+        screener_client=None,
+        data_client=_OvernightCore3Data(),
+        trading_client=_ExchangeTradingClient(),
+    )
+    doc = scanner.scan(top_k=15, now_utc=now_utc)
+    assert doc["feed_sources"] == ["alpaca_boats", "finra_trf_exchange_d"]
+    assert doc["macro_regime"]["regime"] == 1
+    assert doc["macro_regime"]["regime_label"] == "BULL"
+    assert doc["macro_regime"]["regime_basis"] == "core_3_spy_qqq_soxx"
+    assert doc["macro_regime"]["core_benchmarks_used"] == ["SPY", "QQQ", "SOXX"]
+    assert doc["macro_regime"]["qqq_session_pct"] > 0.0
+    assert doc["macro_regime"]["soxx_session_pct"] > 0.0
+
+    by_sym = {e["symbol"]: e for e in doc["entries"]}
+    assert "META" not in by_sym  # flat sleepy stock still rejected
+    assert by_sym["NVDA"]["extreme_mover_eligible"] is True
+    assert by_sym["NVDA"]["watch_tier"] == "EXTREME_READY"
+    assert by_sym["NVDA"]["exchange"] == "NASDAQ"
+    assert by_sym["NVDA"]["darkpool_trf_ratio"] == pytest.approx(0.8)
+    assert by_sym["NVDA"]["trf_block_ratio"] == pytest.approx(0.8)
+    assert by_sym["NVDA"]["darkpool_block_count"] == 1
+    assert by_sym["NVDA"]["darkpool_trf_source"] == "prior_sip_trf_carryover"
+    assert by_sym["NVDA"]["rvol"] == by_sym["NVDA"]["rvol_normalized"]
+    assert by_sym["NVDA"]["change_pct"] == by_sym["NVDA"]["session_move_pct"]
+
+    assert by_sym["AMD"]["extreme_mover_eligible"] is False
+    assert by_sym["AMD"]["watch_tier"] == "UV_DARKPOOL_BUILDUP"
+    assert by_sym["AMD"]["darkpool_trf_ratio"] == pytest.approx(0.5)
+    assert by_sym["SOXL"]["exchange"] == "AMEX"
+
+    bundle = build_live_lane_preset_bundle(doc)
+    b_by_sym = {r["symbol"]: r for r in bundle["top_potential_symbols"]}
+    assert b_by_sym["NVDA"]["entry_eligible"] is True
+    assert b_by_sym["NVDA"]["exchange"] == "NASDAQ"
+    assert b_by_sym["NVDA"]["trf_block_ratio"] == pytest.approx(0.8)
+    assert b_by_sym["AMD"]["entry_eligible"] is False
+    assert b_by_sym["AMD"]["entry_hold_reason"] == "UV_DARKPOOL_EARLY_BUILDUP"
+
+
+def test_performance_grafana_breaker_and_tv_darkpool_prometheus_otel(tmp_path: Path) -> None:
+    clients = {acct: _FakeTradingClient() for acct in ALPACA_LANE_PROFILES}
+    coord = PaperFarmCoordinator(tmp_path, alpaca_clients=clients)
+    pa1 = coord.lanes["ALPACA_PA1"]
+    pa1.write_status(equity=98_000.0, session="OVERNIGHT")
+    with duckdb.connect(str(pa1.duckdb_path)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS paper_daily_fuse "
+            "(day DATE PRIMARY KEY, account_id VARCHAR, tripped BOOLEAN)"
+        )
+        conn.execute("INSERT INTO paper_daily_fuse VALUES ('2026-11-26', 'acct-1', TRUE)")
+
+    pack = tmp_path / "tv_sota_pack"
+    pack.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "feed_sources": ["alpaca_boats", "finra_trf_exchange_d"],
+                "macro_regime": {"regime": -1, "regime_label": "CRASH"},
+                "entries": [
+                    {
+                        "symbol": "SOXS",
+                        "extreme_mover_eligible": True,
+                        "unusual_volume_buildup": True,
+                        "darkpool_trf_ratio": 0.48,
+                    },
+                    {
+                        "symbol": "AMD",
+                        "extreme_mover_eligible": False,
+                        "unusual_volume_buildup": True,
+                        "darkpool_trf_ratio": 0.41,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (pack / "live_half_auto_tickets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.live-half-auto-tickets.v1",
+                "active_session": "OVERNIGHT",
+                "schema_validated_count": 1,
+                "tickets": [{"symbol": "SOXS", "action_gate": "READY_HALF_AUTO_HEDGE"}],
+                "standby_presets": [{"symbol": "AMD", "action_gate": "MONITOR_ONLY"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (pack / "tv_compounding_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-compounding-manifest.v1",
+                "active_session": "OVERNIGHT",
+                "tickets_count": 1,
+                "staged_count": 1,
+                "unusual_vol_count": 2,
+                "darkpool_hits_count": 2,
+                "darkpool_trf_covered_count": 2,
+                "pine_omni_sha256": "a" * 64,
+                "pine_shas": {"tier0_omni_sota_24x5.pine": "a" * 64},
+                "top_symbols": [{"symbol": "SOXS", "side": "BUY", "score": 52.0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (pack / "finos_tv_cockpit.json").write_text(
+        json.dumps({"openbb_rows": [{"symbol": "SOXS", "darkpool_trf_ratio": 0.48}]}),
+        encoding="utf-8",
+    )
+    (pack / "tv_order_presets.json").write_text(
+        json.dumps({"schema_version": "tier0.tv-order-presets.v1", "presets": []}),
+        encoding="utf-8",
+    )
+
+    prom_path = tmp_path / "paper_farm_metrics.prom"
+    manifest = aggregate_paper_farm_performance(tmp_path, prom_output_path=prom_path)
+    assert manifest["per_lane"]["ALPACA_PA1"]["breaker_latched"] is True
+    assert manifest["summary"]["any_breaker_latched"] is True
+    tv_meta = manifest["tv_half_auto"]
+    assert tv_meta["ready_tickets_count"] == 1
+    assert tv_meta["standby_presets_count"] == 1
+    assert tv_meta["unusual_vol_count"] == 2
+    assert tv_meta["darkpool_hits_count"] == 2
+    assert tv_meta["darkpool_trf_covered_count"] == 2
+    assert tv_meta["scanner_ranked_count"] == 2
+    assert tv_meta["scanner_extreme_eligible_count"] == 1
+    assert tv_meta["macro_regime"] == -1
+    assert tv_meta["order_presets_present"] is True
+    assert tv_meta["finos_tv_cockpit_present"] is True
+
+    finos = json.loads((tmp_path / "finos_paper_farm_performance.json").read_text(encoding="utf-8"))
+    assert finos["tv_openbb_rows"] == [{"symbol": "SOXS", "darkpool_trf_ratio": 0.48}]
+
+    telemetry = record_paper_farm_telemetry(manifest, prom_output_path=prom_path)
+    for prom_name in (
+        "tier0_drawdown_breaker_latched",
+        "tier0_tv_half_auto_ready_tickets_count",
+        "tier0_tv_half_auto_standby_presets_count",
+        "tier0_tv_half_auto_unusual_vol_count",
+        "tier0_tv_half_auto_darkpool_hits_count",
+        "tier0_tv_half_auto_darkpool_trf_covered_count",
+        "tier0_scanner_ranked_count",
+        "tier0_scanner_extreme_eligible_count",
+        "tier0_scanner_macro_regime",
+    ):
+        assert prom_name in telemetry["prometheus_text"]
+    assert {
+        "tier0.drawdown_breaker.latched",
+        "tier0.tv_half_auto.ready_tickets_count",
+        "tier0.tv_half_auto.standby_presets_count",
+        "tier0.tv_half_auto.unusual_vol_count",
+        "tier0.tv_half_auto.darkpool_hits_count",
+        "tier0.scanner.ranked_count",
+        "tier0.scanner.macro_regime",
+    } <= set(telemetry["otel_metric_names"])
+
+    grafana_path = (
+        Path(__file__).resolve().parent.parent
+        / "docker"
+        / "grafana"
+        / "dashboards"
+        / "tier0-sota-observability.json"
+    )
+    dash = json.loads(grafana_path.read_text(encoding="utf-8"))
+    assert len(dash["panels"]) >= 6
+    exprs = " ".join(t.get("expr", "") for p in dash["panels"] for t in p.get("targets", []))
+    assert "tier0_drawdown_breaker_latched" in exprs
+    assert "tier0_tv_half_auto_darkpool_hits_count" in exprs
+
+
+def test_dagster_reflection_and_mcp_tv_compounding_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dagster import AssetsDefinition
+    from scripts import nautilus_mcp_server as mcp_srv
+    from scripts import run_compounding_reflection as rcr
+
+    from tier0_sota.definitions import (
+        defs,
+        frontier_trigger_telemetry,
+        paper_farm_performance_snapshot,
+    )
+
+    monkeypatch.setenv("TIER0_DATA_ROOT", str(tmp_path))
+    manifests_dir = tmp_path / "manifests"
+    pack_dir = manifests_dir / "tv_sota_pack"
+    pack_dir.mkdir(parents=True, exist_ok=True)
+
+    (manifests_dir / "paper_farm_live_performance_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.paper-farm-live-performance.v1",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "summary": {"combined_equity_usd": 500_000.0},
+                "per_lane": {"ALPACA_PA1": {}, "ALPACA_PA2": {}, "ALPACA_PA3": {}},
+                "tv_half_auto": {
+                    "active_session": "OVERNIGHT",
+                    "tickets_count": 2,
+                    "ready_tickets_count": 1,
+                    "standby_presets_count": 4,
+                    "staged_presets_total": 3,
+                    "duckdb_audit_rows": 12,
+                    "unusual_vol_count": 3,
+                    "darkpool_hits_count": 2,
+                    "darkpool_trf_covered_count": 5,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "paper_farm_execution_status.json").write_text(
+        json.dumps({"status": "SUPERVISING", "paper_only": True, "live_execution_enabled": False}),
+        encoding="utf-8",
+    )
+    (manifests_dir / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "ranked_count": 2,
+                "macro_regime": {"regime": 1, "regime_label": "BULL"},
+                "entries": [
+                    {
+                        "symbol": "NVDA",
+                        "extreme_mover_eligible": True,
+                        "unusual_volume_buildup": True,
+                        "darkpool_trf_ratio": 0.44,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "live_lane_order_preset_bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.live-lane-preset-bundle.v1",
+                "tca_calibration_ok": True,
+                "top_potential_symbols": [{"symbol": "NVDA"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    comp_path = pack_dir / "tv_compounding_manifest.json"
+    comp_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-compounding-manifest.v1",
+                "active_session": "OVERNIGHT",
+                "tickets_count": 2,
+                "ready_tickets_count": 1,
+                "standby_presets_count": 4,
+                "staged_count": 3,
+                "duckdb_audit_rows": 12,
+                "unusual_vol_count": 3,
+                "darkpool_hits_count": 2,
+                "darkpool_trf_covered_count": 5,
+                "pine_omni_sha256": "b" * 64,
+                "pine_shas": {"tier0_omni_sota_24x5.pine": "b" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Exact 8 Dagster assets preserved + TV compounding telemetry surfaced.
+    asset_names = sorted(
+        a.key.to_user_string() for a in (defs.assets or []) if isinstance(a, AssetsDefinition)
+    )
+    assert len(asset_names) == 8
+    snap = paper_farm_performance_snapshot()
+    assert isinstance(snap, dict)
+    tv_snap = snap["tv_half_auto"]
+    assert isinstance(tv_snap, dict)
+    assert tv_snap["darkpool_hits_count"] == 2
+    assert tv_snap["semi_auto_confirmed"] is False
+    frontier = frontier_trigger_telemetry()
+    assert isinstance(frontier, dict)
+    tv_frontier = frontier["tv_half_auto_compounding"]
+    assert isinstance(tv_frontier, dict)
+    assert tv_frontier["standby_presets_count"] == 4
+
+    # Compounding reflection merges TV compounding + movers manifest cleanly.
+    refl = rcr.run_compounding_reflection(offline=True, manifest_dir=manifests_dir)
+    assert refl["tv_half_auto"]["darkpool_hits_count"] == 2
+    assert refl["tv_half_auto"]["standby_presets_count"] == 4
+    assert refl["tv_half_auto"]["semi_auto_confirmed"] is False
+
+    # FastMCP keeps exact 10 tools and exposes sibling TV sync + admits TV schemas.
+    wl_mov = mcp_srv.get_live_watchlist_manifest(
+        str(manifests_dir / "live_whole_market_movers_manifest.json")
+    )
+    assert wl_mov["ok"] is True
+    assert wl_mov["tv_sync"]["preset_bundle_count"] == 1
+    assert wl_mov["tv_sync"]["tv_compounding"]["darkpool_hits_count"] == 2
+
+    wl_comp = mcp_srv.get_live_watchlist_manifest(str(comp_path))
+    assert wl_comp["ok"] is True
+    assert wl_comp["schema_version"] == "tier0.tv-compounding-manifest.v1"
+
+    pf_res = mcp_srv.get_live_performance_manifest(
+        str(manifests_dir / "paper_farm_live_performance_manifest.json")
+    )
+    assert pf_res["ok"] is True
+    assert pf_res["tv_compounding"]["darkpool_hits_count"] == 2
+    assert pf_res["execution_status_snapshot"]["status"] == "SUPERVISING"
+
+    staged = mcp_srv.stage_semi_auto_order_preset(
+        payload={
+            "symbol": "NVDA",
+            "side": "BUY",
+            "session": "OVERNIGHT",
+            "darkpool_trf_ratio": 0.44,
+            "vol_buildup_ratio": 2.3,
+            "unusual_volume_buildup": True,
+            "script_kind": "strategy",
+            "order_preset_id": "OVERNIGHT_24X5_IBKR",
+        },
+        staged_path=str(tmp_path / "mcp_staged.json"),
+    )
+    assert staged["ok"] is True
+    assert staged["semi_auto_confirmed"] is False
+    assert staged["qty"] == 1
+    assert staged["darkpool_trf_ratio"] == 0.44
+    assert staged["script_kind"] == "strategy"
+    assert staged["order_preset_id"] == "OVERNIGHT_24X5_IBKR"

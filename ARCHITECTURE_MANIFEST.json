@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 152,
+    "repository_files_count": 161,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -170,9 +170,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 25,
+    "total_adrs": 27,
     "counts_by_status": {
-      "accepted": 21,
+      "accepted": 23,
       "superseded": 4
     },
     "supersession_edges": [
@@ -208,13 +208,16 @@
         "ADR-0017",
         "ADR-0022",
         "ADR-0023",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026"
       ],
       "L1": [
         "ADR-0001",
         "ADR-0003",
         "ADR-0010",
-        "ADR-0013"
+        "ADR-0013",
+        "ADR-0026",
+        "ADR-0027"
       ],
       "L10": [
         "ADR-0001",
@@ -222,7 +225,8 @@
         "ADR-0010",
         "ADR-0011",
         "ADR-0017",
-        "ADR-0021"
+        "ADR-0021",
+        "ADR-0027"
       ],
       "L11": [
         "ADR-0013",
@@ -247,13 +251,15 @@
       "L15": [
         "ADR-0016",
         "ADR-0018",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0027"
       ],
       "L2": [
         "ADR-0001",
         "ADR-0008",
         "ADR-0014",
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0026"
       ],
       "L3": [
         "ADR-0001",
@@ -263,7 +269,8 @@
         "ADR-0007",
         "ADR-0016",
         "ADR-0019",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0027"
       ],
       "L4": [
         "ADR-0001",
@@ -273,7 +280,8 @@
         "ADR-0013",
         "ADR-0014",
         "ADR-0019",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0027"
       ],
       "L5": [
         "ADR-0001",
@@ -283,7 +291,8 @@
         "ADR-0016",
         "ADR-0019",
         "ADR-0020",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026"
       ],
       "L6": [
         "ADR-0001",
@@ -294,7 +303,9 @@
         "ADR-0019",
         "ADR-0020",
         "ADR-0021",
-        "ADR-0024"
+        "ADR-0024",
+        "ADR-0026",
+        "ADR-0027"
       ],
       "L7": [
         "ADR-0001",
@@ -305,7 +316,8 @@
         "ADR-0020",
         "ADR-0023",
         "ADR-0024",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026"
       ],
       "L8": [
         "ADR-0001",
@@ -322,12 +334,14 @@
         "ADR-0022",
         "ADR-0023",
         "ADR-0024",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0027"
       ]
     },
-    "fitness_bound_accepted_ratio": "21/21",
+    "fitness_bound_accepted_ratio": "23/23",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "2be4ef20b9975786a6b459acdcb08de7dc89d45e7b2890a460559fda02be8ecc"
+    "corpus_sha256": "fa29b669d977f6a38be384a77d0d10ce55a8eae9a10a389a9137b76f83b6f210"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -463,7 +477,13 @@
       "rejected_overlaps": [
         "custom-rest-polling-loops",
         "raw-unfiltered-alpaca-mcp-server",
-        "nautilus-alpaca"
+        "nautilus-alpaca",
+        "tradingview-screener",
+        "tvdatafeed",
+        "tradingview-scraper",
+        "tradingview-api",
+        "tradingview-pine-seeds",
+        "proprietary-tv-webhook-relays"
       ],
       "repo_artifacts": [
         "src/tier0_sota/live/scanner.py",
@@ -537,7 +557,10 @@
         "docker/compose.sota.yml",
         "docker/otel-collector-config.yaml",
         "docker/prometheus.yml",
+        "docker/prometheus_rules.yml",
+        "docker/alertmanager.yml",
         "docker/dagster.yaml",
+        "docker/workspace.yaml",
         "docs/adr/ADR-0001.md",
         "docs/adr/ADR-0002.md",
         "docs/adr/ADR-0003.md",
@@ -562,7 +585,9 @@
         "docs/adr/ADR-0022.md",
         "docs/adr/ADR-0023.md",
         "docs/adr/ADR-0024.md",
-        "docs/adr/ADR-0025.md"
+        "docs/adr/ADR-0025.md",
+        "docs/adr/ADR-0026.md",
+        "docs/adr/ADR-0027.md"
       ]
     },
     "L7": {
@@ -658,7 +683,9 @@
       "rejected_overlaps": [
         "third-party-agent-wrappers",
         "custom-mcp-launchers",
-        "self-built-agent-buses"
+        "self-built-agent-buses",
+        "cdp-tradingview-mcp",
+        "revanthpobala/pinescript-vscode-extension"
       ],
       "repo_artifacts": [
         "AGENTS.md",
@@ -715,7 +742,9 @@
         "dash",
         "gradio",
         "nicegui",
-        "custom-react-blotter"
+        "custom-react-blotter",
+        "tradingview/charting_library",
+        "louisnw01/lightweight-charts-python"
       ],
       "repo_artifacts": [
         "src/tier0_sota/live/performance.py",
@@ -799,6 +828,7 @@
     ".opencode/commands/verify-tier0.md",
     ".pre-commit-config.yaml",
     ".python-version",
+    ".vscode/tasks.json",
     "AGENTS.md",
     "ARCHITECTURE_MANIFEST.json",
     "CLAUDE.md",
@@ -810,6 +840,7 @@
     "docker/Dockerfile.research",
     "docker/Dockerfile.sandbox",
     "docker/Dockerfile.xerj",
+    "docker/alertmanager.yml",
     "docker/compose.sota.yml",
     "docker/dagster.yaml",
     "docker/duckdb-ui/paper-farm.conf",
@@ -818,6 +849,8 @@
     "docker/grafana/provisioning/datasources/prometheus.yml",
     "docker/otel-collector-config.yaml",
     "docker/prometheus.yml",
+    "docker/prometheus_rules.yml",
+    "docker/workspace.yaml",
     "docs/ARCHITECTURE_LAYER_MANIFEST.md",
     "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
     "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
@@ -849,6 +882,8 @@
     "docs/adr/ADR-0023.md",
     "docs/adr/ADR-0024.md",
     "docs/adr/ADR-0025.md",
+    "docs/adr/ADR-0026.md",
+    "docs/adr/ADR-0027.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
@@ -860,8 +895,10 @@
     "mise.toml",
     "opencode.json",
     "orca.yaml",
+    "pine/tier0_darkpool_uv_buildup.pine",
     "pine/tier0_market_regime.pine",
     "pine/tier0_omni_sota_24x5.pine",
+    "pine/tier0_sota_strategy_24x5.pine",
     "pyproject.toml",
     "rules/zero_self_invention.yml",
     "scripts/bootstrap_env.ps1",
@@ -886,6 +923,7 @@
     "scripts/setup_clean_ecosystem.ps1",
     "scripts/sync_manifest.py",
     "scripts/tv_console.ps1",
+    "scripts/tv_console.sh",
     "sgconfig.yml",
     "src/tier0_sota/__init__.py",
     "src/tier0_sota/definitions.py",

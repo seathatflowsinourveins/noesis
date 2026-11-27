@@ -2,14 +2,38 @@
 indicator("Tier-0 Omni SOTA 24x5 Lossless, Auto-Reverse & Regime", shorttitle="T0_OMNI_SOTA", overlay=true, max_bars_back=500, max_lines_count=200, max_labels_count=200)
 
 // ============================================================================
-// Tier-0 SOTA — Omni 24/5 Display, Lossless Trailing & Regime Indicator
+// Tier-0 SOTA — Omni 24/5 Display, Lossless Trailing, UV/Darkpool & Order HUD
 // Parity: src/tier0_sota/engine.py & src/tier0_sota/risk.py (Rule-612 <= 2.00% cap)
 // Compliance: Display-only Pine v6 + tier0.tv-alert.v1 JSON (semi_auto_confirmed=false, qty=1)
 // Non-Repainting: barstate.isconfirmed + gaps=barmerge.gaps_off + lookahead=barmerge.lookahead_off
 // ============================================================================
 
-// ── 1. Omni Use-Case Preset Selector ────────────────────────────────────────
-grp_omni = "01 · Omni Use-Case & Market Tuning"
+// ── 0. Pine v6 UDTs (Clean State & Native TV Order Preset Card) ─────────────
+type OrderPresetCard
+    bool   is_live_leg
+    string side
+    string route_mode
+    string order_type
+    string tif
+    int    collar_bps
+    float  entry_px
+    float  entry_limit
+    float  stop_px
+    float  stop_limit
+    float  stop_pct
+    float  be_floor
+    float  t1r
+    float  l1r
+    float  t2r
+    float  l2r
+    float  t3r
+    float  l3r
+    float  fast_rev
+    int    sh_25k
+    int    sh_100k
+
+// ── 1. Omni Use-Case Preset, Venue & Market Regime Tuning ───────────────────
+grp_omni = "01 · Omni Use-Case, Venue & Market Tuning"
 i_omni_preset = input.string(
     "AUTO_REGIME_ADAPTIVE",
     "Omni SOTA Preset Mode",
@@ -25,19 +49,23 @@ i_omni_preset = input.string(
     ],
     group=grp_omni
 )
-i_use_mkt_reg = input.bool(true, "Enforce Causal Multi-Feed Market Regime", group=grp_omni)
-i_vix_def     = input.float(25.0, "VIX Crash-Defensive Threshold", minval=15.0, maxval=60.0, step=0.5, group=grp_omni)
-i_mkt_sym     = input.symbol("AMEX:SPY", "Broad Market Regime Feed", group=grp_omni)
-i_qqq_sym     = input.symbol("NASDAQ:QQQ", "Growth / Nasdaq Regime Feed", group=grp_omni)
-i_semi_sym    = input.symbol("NASDAQ:SOXX", "Semiconductor Regime Feed", group=grp_omni)
-i_rsp_sym     = input.symbol("AMEX:RSP", "Equal-Weight Breadth Feed", group=grp_omni)
-i_vix_sym     = input.symbol("CBOE:VIX", "Volatility Regime Feed (VIX)", group=grp_omni)
+i_venue            = input.string("IBKR", "Target Paper/Half-Auto Venue", options=["IBKR", "ALPACA"], group=grp_omni)
+i_etb_short        = input.bool(true, "Symbol Shortable & Easy-To-Borrow (ETB)", group=grp_omni)
+i_early_close_1300 = input.bool(false, "XNYS Half-Day Early Close (13:00 ET RTH End)", group=grp_omni)
+i_use_mkt_reg      = input.bool(true, "Enforce Causal Multi-Feed Market Regime", group=grp_omni)
+i_vix_def          = input.float(25.0, "VIX Crash-Defensive Threshold", minval=15.0, maxval=60.0, step=0.5, group=grp_omni)
+i_mkt_sym          = input.symbol("AMEX:SPY", "Broad Market Regime Feed", group=grp_omni)
+i_qqq_sym          = input.symbol("NASDAQ:QQQ", "Growth / Nasdaq Regime Feed", group=grp_omni)
+i_semi_sym         = input.symbol("NASDAQ:SOXX", "Semiconductor Regime Feed", group=grp_omni)
+i_rsp_sym          = input.symbol("AMEX:RSP", "Equal-Weight Breadth Feed", group=grp_omni)
+i_vix_sym          = input.symbol("CBOE:VIX", "Volatility Regime Feed (VIX)", group=grp_omni)
 
 // ── 2. Lossless Trailing, Auto-Reverse & Re-Entry FSM Controls ──────────────
 grp_fsm = "02 · Lossless Trailing, Auto-Reverse & Re-Entry"
-i_sched_ovr     = input.string("AUTO_NATR", "Trailing Schedule Override", options=["AUTO_NATR", "tight_near_lossless", "baseline", "wide_natr_adaptive"], group=grp_fsm)
+i_sched_ovr     = input.string("AUTO_NATR", "Display Trailing Schedule (Bridge Enforces AUTO_NATR)", options=["AUTO_NATR", "tight_near_lossless", "baseline", "wide_natr_adaptive"], group=grp_fsm)
 i_fee_bps_side  = input.float(4.0, "Est Fee/Slippage (bps/side)", minval=0.0, maxval=25.0, step=0.5, group=grp_fsm)
 i_spread_bps    = input.float(2.0, "Spread Buffer (bps)", minval=0.0, maxval=20.0, step=0.5, group=grp_fsm)
+i_use_fast_be   = input.bool(false, "Cap BE Trigger with Fast Override (Off = Exact Engine Parity)", group=grp_fsm)
 i_fast_be_pct   = input.float(0.20, "Fast Lossless BE Trigger (%)", minval=0.10, maxval=1.00, step=0.05, group=grp_fsm)
 i_prog_lock     = input.bool(true, "Enable 4-Tier Progressive R-Lock (+1R/+2R/+3R)", group=grp_fsm)
 i_fast_sell_rev = input.bool(true, "Enable Fast-Sell Climax + Auto-Reverse Short", group=grp_fsm)
@@ -45,25 +73,30 @@ i_auto_reverse  = input.bool(true, "Enable Flatten-First Auto-Reverse", group=gr
 i_auto_reentry  = input.bool(true, "Enable Seamless Auto Re-Entry", group=grp_fsm)
 i_cooldown_sec  = input.int(60, "Re-Entry Cooldown (sec)", minval=60, maxval=3600, step=60, group=grp_fsm)
 i_show_rungs    = input.bool(true, "Plot Lossless BE + 1R/2R/3R Profit Rungs", group=grp_fsm)
+i_show_vwap_bnd = input.bool(true, "Plot Session VWAP +/-1s & +/-2s Darkpool Bands", group=grp_fsm)
 
-// ── 3. Setup Signal Thresholds (Auto-Tuned by Omni Preset) ──────────────────
-grp_sig = "03 · SOTA Setup Sensitivity & Visual HUD"
-i_rvol_len    = input.int(20, "Relative Volume Lookback", minval=5, maxval=100, group=grp_sig)
-i_rvol_base   = input.float(1.5, "Base Min RVOL", minval=1.0, maxval=10.0, step=0.1, group=grp_sig)
-i_ext_mult    = input.float(2.0, "Extreme Move ATR Multiple", minval=1.0, maxval=5.0, step=0.25, group=grp_sig)
-i_show_diag   = input.bool(true, "Show Institutional SOTA Status HUD", group=grp_sig)
-i_show_mtf    = input.bool(true, "Show MTF (1m/5m/15m/D) Alignment Row", group=grp_sig)
-i_show_bg     = input.bool(true, "Show Subtle Regime / VCP Background Tint", group=grp_sig)
+// ── 3. Unusual Volume, Darkpool Proxy & Setup Thresholds ────────────────────
+grp_sig = "03 · SOTA Setup, Unusual Volume & Darkpool Proxy"
+i_rvol_len      = input.int(20, "Relative Volume Lookback", minval=5, maxval=100, group=grp_sig)
+i_rvol_base     = input.float(1.5, "Base Min RVOL", minval=1.0, maxval=10.0, step=0.1, group=grp_sig)
+i_ext_mult      = input.float(2.0, "Extreme Move ATR Multiple", minval=1.0, maxval=5.0, step=0.25, group=grp_sig)
+i_uv_z_min      = input.float(2.0, "Unusual Volume Z-Score Min", minval=1.0, maxval=6.0, step=0.25, group=grp_sig)
+i_uv_vel_min    = input.float(1.8, "3-Bar Volume Velocity Min", minval=1.1, maxval=5.0, step=0.1, group=grp_sig)
+i_show_diag     = input.bool(true, "Show Institutional SOTA Status HUD (Top-Right)", group=grp_sig)
+i_show_ord_hud  = input.bool(true, "Show Copy-Ready Native TV Order Preset HUD (Bottom-Right)", group=grp_sig)
+i_show_mtf      = input.bool(true, "Show MTF (1m/5m/15m/D) Alignment Row", group=grp_sig)
+i_show_bg       = input.bool(true, "Show Subtle Regime / VCP Background Tint", group=grp_sig)
 
 // ── 4. Causal 24/5 America/New_York Session Classification ──────────────────
-ny_hour   = hour(time_close, "America/New_York")
-ny_min    = minute(time_close, "America/New_York")
-ny_dow    = dayofweek(time_close, "America/New_York")
-ny_mins   = ny_hour * 60 + ny_min
+ny_hour      = hour(time_close, "America/New_York")
+ny_min       = minute(time_close, "America/New_York")
+ny_dow       = dayofweek(time_close, "America/New_York")
+ny_mins      = ny_hour * 60 + ny_min
+rth_end_mins = i_early_close_1300 ? 780 : 960
 
-is_rth       = ny_mins >= 570 and ny_mins < 960
+is_rth       = ny_mins >= 570 and ny_mins < rth_end_mins
 is_pre       = ny_mins >= 240 and ny_mins < 570
-is_after     = ny_mins >= 960 and ny_mins < 1200
+is_after     = ny_mins >= rth_end_mins and ny_mins < 1200
 is_24x5_open = (ny_dow >= dayofweek.monday and ny_dow <= dayofweek.thursday) or (ny_dow == dayofweek.friday and ny_mins < 1200) or (ny_dow == dayofweek.sunday and ny_mins >= 1200)
 is_ext       = is_pre or is_after
 
@@ -71,37 +104,83 @@ sess_label = not is_24x5_open ? "CLOSED" : is_rth ? "RTH" : is_pre ? "PRE_MARKET
 order_type = is_rth ? "STOP_MARKET" : "STOP_LIMIT"
 collar_bps = is_rth ? 0 : is_ext ? 35 : 50
 
-// ── 5. Reg-NMS Rule-612 Inward Tick Quantization (Exact Engine Parity) ──────
+// ── 5. Reg-NMS Rule-612 Tick Quantization & Collared Limits (Exact Parity) ──
 rule612_tick(float px) =>
     px >= 1.0 ? 0.01 : 0.0001
 
 inward_stop(float px, int side) =>
-    float tick = rule612_tick(px)
-    float ticks = math.round(px / tick, 10)
+    float safe_px = math.max(0.0001, px)
+    float tick = rule612_tick(safe_px)
+    float ticks = math.round(safe_px / tick, 10)
     math.max(0.0001, math.round((side == 1 ? math.ceil(ticks) : math.floor(ticks)) * tick, 4))
+
+outward_limit(float px, int side) =>
+    float safe_px = math.max(0.0001, px)
+    float tick = rule612_tick(safe_px)
+    float ticks = math.round(safe_px / tick, 10)
+    math.max(0.0001, math.round((side == 1 ? math.floor(ticks) : math.ceil(ticks)) * tick, 4))
+
+collared_stop_limit(float stp_px, int side, int c_bps) =>
+    float col = c_bps / 10000.0
+    outward_limit(stp_px * (1.0 - side * col), side)
+
+collared_entry_limit(float ref_px, int side, int c_bps) =>
+    float col = c_bps / 10000.0
+    outward_limit(ref_px * (1.0 + side * col), side)
 
 hard_stop(float ref_px, int side, float cap) =>
     int ref_ticks = math.round(ref_px * 10000)
-    int cap_bps = math.round(cap * 10000)
+    int cap_bps = math.min(200, math.max(1, math.round(cap * 10000)))
     int numerator = ref_ticks * (10000 - side * cap_bps)
-    int raw_ticks = math.floor((numerator + (side == 1 ? 9999 : 0)) / 10000)
+    int raw_ticks = math.max(1, math.floor((numerator + (side == 1 ? 9999 : 0)) / 10000))
     int step_ticks = raw_ticks >= 10000 ? 100 : 1
     int inward_offset = side == 1 ? step_ticks - 1 : 0
     int stop_ticks = math.floor((raw_ticks + inward_offset) / step_ticks) * step_ticks
+    if side == 1 and stop_ticks >= ref_ticks
+        int back_step = ref_ticks > 10000 ? 100 : 1
+        int cand = math.max(1, ref_ticks - back_step)
+        int cs = cand >= 10000 ? 100 : 1
+        stop_ticks := math.floor((cand + cs - 1) / cs) * cs
+    else if side == -1 and stop_ticks <= ref_ticks
+        int fwd_step = ref_ticks >= 10000 ? 100 : 1
+        int cand = ref_ticks + fwd_step
+        int cs = cand >= 10000 ? 100 : 1
+        stop_ticks := math.floor(cand / cs) * cs
     int distance = side * (ref_ticks - stop_ticks)
     stop_ticks > 0 and distance > 0 and distance * 10000 <= cap_bps * ref_ticks ? stop_ticks / 10000.0 : na
+
+size_by_risk(float eq, float entry_p, float stop_p, float risk_pct, float max_notl_pct) =>
+    float dist = math.abs(entry_p - stop_p)
+    if dist <= 0.0 or entry_p <= 0.0
+        0
+    else
+        int by_risk = math.floor((eq * risk_pct) / dist)
+        int by_notl = math.floor((eq * max_notl_pct) / entry_p)
+        math.max(0, math.min(by_risk, by_notl))
 
 // ── 6. Core Technicals & Wilder NATR Schedule Selection ─────────────────────
 i_natr_len = 14
 atr_val    = ta.atr(i_natr_len)
-natr_pct   = close > 0 ? atr_val / close : 0.020
-natr_out   = math.max(0.000001, math.round(natr_pct, 6))
-vol_sma    = ta.sma(volume, i_rvol_len)
-rvol       = vol_sma > 0 ? volume / vol_sma : 1.0
+natr_pct   = close > 0 ? nz(atr_val, close * 0.015) / close : 0.015
+natr_out   = math.min(1.0, math.max(0.000001, math.round(nz(natr_pct, 0.015), 6)))
+vol_safe   = nz(volume, 0.0)
+vol_sma    = ta.sma(vol_safe, i_rvol_len)
+vol_std    = ta.stdev(vol_safe, i_rvol_len)
+rvol       = vol_sma > 0 ? vol_safe / vol_sma : 1.0
+vol_zscore = vol_std > 0 ? (vol_safe - vol_sma) / vol_std : 0.0
+vol_3      = ta.sma(vol_safe, 3)
+vol_buildup_ratio = vol_sma > 0 ? math.max(0.0, math.round(vol_3 / vol_sma, 3)) : 1.0
+dollar_vol = close * vol_safe
+
 ema_fast   = ta.ema(close, 9)
 ema_slow   = ta.ema(close, 21)
 ema_50     = ta.ema(close, 50)
 vwap_val   = ta.vwap(hlc3)
+vwap_dev   = ta.stdev(close - vwap_val, 20)
+vwap_u1    = not na(vwap_val) and not na(vwap_dev) ? vwap_val + vwap_dev : na
+vwap_d1    = not na(vwap_val) and not na(vwap_dev) ? vwap_val - vwap_dev : na
+vwap_u2    = not na(vwap_val) and not na(vwap_dev) ? vwap_val + 2.0 * vwap_dev : na
+vwap_d2    = not na(vwap_val) and not na(vwap_dev) ? vwap_val - 2.0 * vwap_dev : na
 
 auto_sched   = natr_out <= 0.015 ? "tight_near_lossless" : natr_out <= 0.030 ? "baseline" : "wide_natr_adaptive"
 preset_sched = auto_sched
@@ -113,22 +192,28 @@ is_tight = active_schedule == "tight_near_lossless"
 is_base  = active_schedule == "baseline"
 
 sess_init_cap = is_tight ? (is_rth ? 0.0150 : is_ext ? 0.0125 : 0.0100) : (is_rth ? 0.0200 : is_ext ? 0.0150 : 0.0100)
+auto_init_cap = auto_sched == "tight_near_lossless" ? (is_rth ? 0.0150 : is_ext ? 0.0125 : 0.0100) : (is_rth ? 0.0200 : is_ext ? 0.0150 : 0.0100)
 be_trig_base  = is_tight ? (is_rth ? 0.0025 : is_ext ? 0.0030 : 0.0025) : is_base ? (is_rth ? 0.0040 : is_ext ? 0.0045 : 0.0030) : (is_rth ? 0.0060 : is_ext ? 0.0055 : 0.0040)
-be_trig       = math.min(be_trig_base, i_fast_be_pct / 100.0)
-min_trail_pct = is_tight ? (is_rth ? 0.0020 : is_ext ? 0.0030 : 0.0040) : is_base ? (is_rth ? 0.0030 : is_ext ? 0.0045 : 0.0055) : (is_rth ? 0.0045 : is_ext ? 0.0050 : 0.0060)
+be_trig       = i_use_fast_be ? math.min(be_trig_base, i_fast_be_pct / 100.0) : be_trig_base
+min_trail_pct = is_tight ? (is_rth ? 0.0025 : is_ext ? 0.0035 : 0.0050) : is_base ? (is_rth ? 0.0035 : is_ext ? 0.0050 : 0.0060) : (is_rth ? 0.0050 : is_ext ? 0.0050 : 0.0060)
 natr_mult     = is_tight ? (is_rth ? 1.00 : is_ext ? 1.25 : 1.50) : is_base ? (is_rth ? 1.25 : is_ext ? 1.50 : 1.75) : (is_rth ? 1.50 : is_ext ? 1.50 : 1.75)
 trail_pct     = math.min(sess_init_cap, math.max(min_trail_pct, natr_pct * natr_mult))
 fee_buf       = (i_fee_bps_side * 2.0 + i_spread_bps) / 10000.0
 
-// ── 7. Multi-Feed Causal Market-Status & Inverse-ETF Pair Engine ────────────
+// ── 7. Multi-Feed Causal Market-Status & Bidirectional Pair Engine ──────────
 tkr = str.upper(syminfo.ticker)
-is_inverse_etf = tkr == "SOXS" or tkr == "SQQQ" or tkr == "SPXS" or tkr == "SPXU" or tkr == "SH" or tkr == "SDOW" or tkr == "TZA" or tkr == "QID" or tkr == "SDS"
+is_inverse_etf = tkr == "SOXS" or tkr == "SQQQ" or tkr == "SPXS" or tkr == "SPXU" or tkr == "SH" or tkr == "SDOW" or tkr == "TZA" or tkr == "QID" or tkr == "SDS" or tkr == "TECS" or tkr == "NVDS" or tkr == "TSLS" or tkr == "MSTZ"
 is_soxs        = tkr == "SOXS"
 is_soxl        = tkr == "SOXL"
-is_semi_sym    = is_soxs or is_soxl or tkr == "NVDA" or tkr == "SMH" or tkr == "SOXX" or tkr == "MU" or tkr == "AMD" or tkr == "AVGO" or tkr == "TSM" or tkr == "ASML" or tkr == "MRVL"
+is_lev_bull    = is_soxl or tkr == "TQQQ" or tkr == "UPRO" or tkr == "SPXL" or tkr == "TECL" or tkr == "NVDL" or tkr == "TSLL" or tkr == "MSTU"
+is_lev_or_inv  = is_inverse_etf or is_lev_bull
+pair_sym       = tkr == "SOXL" ? "SOXS" : tkr == "SOXS" ? "SOXL" : tkr == "TQQQ" ? "SQQQ" : tkr == "SQQQ" ? "TQQQ" : tkr == "UPRO" ? "SPXS" : tkr == "SPXS" ? "UPRO" : tkr == "SPXL" ? "SPXS" : tkr == "TECL" ? "TECS" : tkr == "TECS" ? "TECL" : tkr == "NVDL" ? "NVDS" : tkr == "NVDS" ? "NVDL" : tkr == "TSLL" ? "TSLS" : tkr == "TSLS" ? "TSLL" : tkr == "MSTU" ? "MSTZ" : tkr == "MSTZ" ? "MSTU" : ""
+
+is_semi_sym    = is_soxs or is_soxl or tkr == "NVDA" or tkr == "SMH" or tkr == "SOXX" or tkr == "MU" or tkr == "AMD" or tkr == "AVGO" or tkr == "TSM" or tkr == "ASML" or tkr == "MRVL" or tkr == "NVDL" or tkr == "NVDS"
 is_qqq_sym     = tkr == "TQQQ" or tkr == "SQQQ" or tkr == "QQQ" or tkr == "QID"
 bench_sym      = is_semi_sym ? i_semi_sym : is_qqq_sym ? i_qqq_sym : i_mkt_sym
 
+int htf_idx = barstate.isrealtime ? 1 : 0
 [mkt_c, mkt_sma, mkt_vwap, mkt_roc, mkt_close_ts] = request.security(
     ticker.modify(bench_sym, session=session.extended),
     timeframe.period,
@@ -136,13 +221,13 @@ bench_sym      = is_semi_sym ? i_semi_sym : is_qqq_sym ? i_qqq_sym : i_mkt_sym
     gaps=barmerge.gaps_off,
     lookahead=barmerge.lookahead_off
 )
-[spy_c, spy_sma] = request.security(ticker.modify(i_mkt_sym, session=session.extended), "5", [close, ta.sma(close, 50)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[rsp_c, rsp_sma] = request.security(i_rsp_sym, "D", [close, ta.sma(close, 20)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-vix_last         = request.security(i_vix_sym, "15", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[spy_c, spy_sma] = request.security(ticker.modify(i_mkt_sym, session=session.extended), "5", [close[htf_idx], ta.sma(close, 50)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[rsp_c, rsp_sma] = request.security(i_rsp_sym, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+vix_last         = request.security(i_vix_sym, "15", close[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
-mtf_5m_up  = request.security(syminfo.tickerid, "5",  close > ta.ema(close, 21), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-mtf_15m_up = request.security(syminfo.tickerid, "15", close > ta.ema(close, 21), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-mtf_d_up   = request.security(syminfo.tickerid, "D",  close > ta.sma(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+mtf_5m_up  = request.security(syminfo.tickerid, "5",  close[htf_idx] > ta.ema(close, 21)[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+mtf_15m_up = request.security(syminfo.tickerid, "15", close[htf_idx] > ta.ema(close, 21)[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+mtf_d_up   = request.security(syminfo.tickerid, "D",  close[htf_idx] > ta.sma(close, 50)[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
 mkt_bull     = not na(mkt_c) and not na(mkt_sma) and not na(mkt_vwap) and mkt_c > mkt_sma and mkt_c > mkt_vwap and mkt_roc >= 0.002
 mkt_crash    = not na(mkt_c) and not na(mkt_sma) and not na(mkt_vwap) and mkt_c < mkt_sma and mkt_c < mkt_vwap and mkt_roc <= -0.003
@@ -154,14 +239,14 @@ raw_regime = (mkt_crash or (vix_stressed and spy_weak)) ? -1 : mkt_bull ? 1 : 0
 eff_regime = not i_use_mkt_reg ? 0 : is_inverse_etf ? -raw_regime : raw_regime
 
 resolved_mode = i_omni_preset != "AUTO_REGIME_ADAPTIVE" ? i_omni_preset : (not is_rth and not is_ext ? "OVERNIGHT_24X5_IBKR" : raw_regime == -1 ? "CRASH_DEFENSIVE_INVERSE" : raw_regime == 1 ? "MINERVINI_VCP_BREAKOUT" : "LOSSLESS_TIGHT_SCALP")
-rvol_min = resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? math.max(i_rvol_base, 2.5) : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? math.max(i_rvol_base, 1.8) : i_rvol_base
+rvol_min = resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? math.max(i_rvol_base, 2.5) : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? math.max(i_rvol_base, 1.8) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? math.max(1.2, i_rvol_base * 0.9) : i_rvol_base
 
-// ── 8. Full SOTA Setup Library (VCP, EP Burst, Hammer, Hidden Vol, Parabolic) ─
+// ── 8. Full SOTA Setup, Unusual Volume & Darkpool Absorption Library ────────
 bar_range = high - low
 clv       = bar_range > 0 ? (2.0 * close - high - low) / bar_range : 0.0
 lower_wk  = math.min(open, close) - low
 atr_5     = ta.atr(5)
-vol_5     = ta.sma(volume, 5)
+vol_5     = ta.sma(vol_safe, 5)
 coil_ok   = atr_val > 0 and (atr_5 / atr_val) <= 0.70
 vdu_ok    = vol_sma > 0 and (vol_5 / vol_sma) <= 0.70
 hi_20     = ta.highest(high, 20)[1]
@@ -170,27 +255,42 @@ lo_10     = ta.lowest(low, 10)[1]
 prev_lo5  = ta.lowest(low, 5)[1]
 bar_chg   = close[1] > 0 ? (close - close[1]) / close[1] : 0.0
 
+// Session Buying/Selling Pressure (CVD Proxy) & VWAP-Pin Darkpool Proxy
+var float sess_cvd = 0.0
+if timeframe.change("D")
+    sess_cvd := 0.0
+sess_cvd += vol_safe * clv
+cvd_ema   = ta.ema(sess_cvd, 9)
+cvd_bull_div = barstate.isconfirmed and not na(prev_lo5) and low <= prev_lo5 and sess_cvd > nz(sess_cvd[5], sess_cvd) and clv > 0.20
+
 is_extreme        = atr_val > 0 and bar_range >= atr_val * i_ext_mult and rvol >= rvol_min
-hidden_vol_bull   = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_val * 0.85 and clv >= 0.60
-hidden_vol_bear   = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_val * 0.85 and clv <= -0.60
+vol_buildup       = barstate.isconfirmed and ((rvol >= 1.8 and vol_safe > nz(volume[1], 0.0) and nz(volume[1], 0.0) >= vol_sma) or (vol_zscore >= i_uv_z_min and vol_buildup_ratio >= i_uv_vel_min))
+hidden_vol_ratio  = math.max(0.0, math.round(nz(rvol / math.max(0.25, bar_range / math.max(nz(atr_val, syminfo.mintick), syminfo.mintick)), 0.0), 2))
+vwap_pin_absorb   = barstate.isconfirmed and not na(vwap_val) and atr_val > 0 and math.abs(close - vwap_val) <= atr_val * 0.35 and rvol >= 2.0 and bar_range < atr_val * 0.85
+hidden_vol_bull   = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_val * 0.85 and (clv >= 0.60 or (vwap_pin_absorb and clv >= 0.25 and sess_cvd >= cvd_ema))
+hidden_vol_bear   = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_val * 0.85 and (clv <= -0.60 or (vwap_pin_absorb and clv <= -0.25 and sess_cvd < cvd_ema))
+stage2_ok         = close > ema_slow and ema_slow >= ema_50 * 0.99
 vcp_coil          = barstate.isconfirmed and not na(hi_20) and close >= hi_20 * 0.85 and coil_ok and vdu_ok
-vcp_breakout      = barstate.isconfirmed and not na(hi_20) and close > hi_20 and rvol >= rvol_min and clv >= 0.25 and (coil_ok[1] or vdu_ok[1])
+vcp_breakout      = barstate.isconfirmed and not na(hi_20) and stage2_ok and close > hi_20 and rvol >= rvol_min and clv >= 0.25 and (coil_ok[1] or vdu_ok[1])
 ep_momentum_burst = barstate.isconfirmed and bar_chg >= 0.015 and bar_range >= atr_val * 1.6 and rvol >= 2.5 and clv >= 0.55 and close > ema_fast
 exhaustion_hammer = barstate.isconfirmed and not na(prev_lo5) and low < prev_lo5 and close > prev_lo5 and bar_range > 0 and (lower_wk / bar_range) >= 0.55 and clv >= 0.45 and rvol >= 1.3
-parabolic_top     = barstate.isconfirmed and not na(vwap_val) and close >= vwap_val * (1.0 + 2.0 * natr_out) and rvol >= 2.5
+parabolic_top     = barstate.isconfirmed and not na(vwap_val) and ((close >= vwap_val * (1.0 + 2.0 * natr_out)) or (not na(vwap_u2) and high >= vwap_u2)) and rvol >= 2.5
 
 long_extreme_rev  = is_extreme[1] and close[1] < open[1] and low[1] <= lo_10 and close > open and close > ema_fast
-long_vcp_ep       = vcp_breakout or ep_momentum_burst or (hidden_vol_bull and not na(vwap_val) and close > vwap_val and close > ema_fast)
-long_by_mode  = resolved_mode == "MINERVINI_VCP_BREAKOUT" ? vcp_breakout : resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? (ep_momentum_burst or hidden_vol_bull) : resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER" ? (exhaustion_hammer or long_extreme_rev) : resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? false : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? ((is_inverse_etf and (long_vcp_ep or long_extreme_rev)) or (ep_momentum_burst and rvol >= 4.0)) : (long_extreme_rev or long_vcp_ep or exhaustion_hammer)
+long_tight_scalp  = barstate.isconfirmed and not na(vwap_val) and close > vwap_val and close > ema_fast and ema_fast > ema_slow and low <= ema_fast and clv >= 0.50 and (rvol >= rvol_min or vol_buildup)
+long_vcp_ep       = vcp_breakout or ep_momentum_burst or ((hidden_vol_bull or cvd_bull_div) and not na(vwap_val) and close > vwap_val and close > ema_fast)
+on_liq_ok         = vol_safe > 0 and atr_val > 0 and (rvol >= math.max(1.3, rvol_min) or vol_buildup)
+
+long_by_mode  = resolved_mode == "MINERVINI_VCP_BREAKOUT" ? vcp_breakout : resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? (ep_momentum_burst or hidden_vol_bull) : resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER" ? (exhaustion_hammer or long_extreme_rev) : resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? false : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? ((is_inverse_etf and (long_vcp_ep or long_extreme_rev)) or (ep_momentum_burst and rvol >= 4.0)) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? (long_tight_scalp or long_extreme_rev or long_vcp_ep) : resolved_mode == "OVERNIGHT_24X5_IBKR" ? (on_liq_ok and (long_extreme_rev or long_vcp_ep or exhaustion_hammer)) : (long_extreme_rev or long_vcp_ep or exhaustion_hammer)
 
 short_crash_align = eff_regime == -1 and not na(vwap_val) and close < vwap_val and close < ema_fast and close < open and rvol >= rvol_min
 short_peak_rev    = eff_regime != 1 and not na(vwap_val[1]) and (parabolic_top[1] or (is_extreme[1] and close[1] > open[1] and high[1] >= hi_10 and close[1] >= vwap_val[1] * (1.0 + natr_out))) and close < open and (close < low[1] or (not na(vwap_val) and close < vwap_val))
-short_by_mode     = resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? short_peak_rev : (resolved_mode == "MINERVINI_VCP_BREAKOUT" or resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER") ? short_peak_rev : (short_crash_align or short_peak_rev)
+short_by_mode     = resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? short_peak_rev : (resolved_mode == "MINERVINI_VCP_BREAKOUT" or resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER") ? short_peak_rev : resolved_mode == "OVERNIGHT_24X5_IBKR" ? (on_liq_ok and (short_crash_align or short_peak_rev)) : (short_crash_align or short_peak_rev)
 
 long_rev_raw  = barstate.isconfirmed and is_24x5_open and (eff_regime != -1 or (ep_momentum_burst and rvol >= 4.0)) and long_by_mode
 short_rev_raw = barstate.isconfirmed and is_24x5_open and short_by_mode
 
-setup_archetype = ep_momentum_burst ? "EARLY_EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_BREAKOUT" : hidden_vol_bull ? "HIDDEN_VOL_ACCUM" : parabolic_top ? "PARABOLIC_TOP" : short_crash_align ? "CRASH_ALIGNMENT" : short_peak_rev ? "PEAK_REVERSAL" : vcp_coil ? "VCP_COIL" : "EXTREME_REVERSAL"
+setup_archetype = ep_momentum_burst ? "EARLY_EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_BREAKOUT" : exhaustion_hammer ? "EXHAUSTION_HAMMER" : (hidden_vol_bull or (vol_buildup and hidden_vol_ratio >= 2.0)) ? "HIDDEN_VOL_ACCUM" : parabolic_top ? "PARABOLIC_TOP" : short_crash_align ? "CRASH_ALIGNMENT" : short_peak_rev ? "PEAK_REVERSAL" : vcp_coil ? "VCP_COIL" : "EXTREME_REVERSAL"
 
 // ── 9. Stateful Monotonic Lossless Trailing, Auto-Reverse & Re-Entry FSM ────
 var int   pos_dir         = 0
@@ -211,10 +311,13 @@ bool exited_stop   = false
 bool exited_rev    = false
 
 standard_minute  = chart.is_standard and timeframe.isminutes and timeframe.multiplier == 1
-benchmark_ready  = mkt_close_ts == time_close and not na(mkt_c) and not na(mkt_sma) and not na(mkt_vwap) and not na(mkt_roc)
+bench_age_ms     = not na(mkt_close_ts) ? time_close - mkt_close_ts : 999999999
+bench_max_age_ms = is_rth ? 120000 : 900000
+benchmark_ready  = not na(mkt_close_ts) and bench_age_ms >= 0 and bench_age_ms <= bench_max_age_ms and not na(mkt_c) and not na(mkt_sma) and not na(mkt_vwap) and not na(mkt_roc)
 practice_ready   = not i_use_mkt_reg or benchmark_ready
 signal_dir       = not practice_ready or long_rev_raw == short_rev_raw ? 0 : long_rev_raw ? 1 : -1
 fast_sell_climax = barstate.isconfirmed and is_24x5_open and i_fast_sell_rev and eff_regime != 1 and (parabolic_top or (close < open and close < ema_fast and close < low[1] and not na(vwap_val) and (close < vwap_val or high[1] >= vwap_val[1] * (1.0 + natr_out)) and rvol >= math.max(1.2, rvol_min * 0.7)))
+peak_confirmed   = barstate.isconfirmed and (short_peak_rev or fast_sell_climax)
 
 if barstate.isconfirmed and is_24x5_open and pos_dir != 0
     bool stop_touched   = pos_dir == 1 ? low <= stop_px : high >= stop_px
@@ -242,19 +345,19 @@ if barstate.isconfirmed and is_24x5_open and pos_dir != 0
                 if i_prog_lock and not na(leg_risk)
                     if r_mult >= 3.0 or (parabolic_top and pos_dir == 1 and r_mult >= 1.5)
                         lock_tier     := math.max(lock_tier, 4)
-                        eff_trail_pct := math.max(0.0010, trail_pct * 0.25)
+                        eff_trail_pct := math.min(trail_pct, math.max(0.0010, trail_pct * 0.25))
                         float lock3 = inward_stop(math.max(0.0001, entry_px + pos_dir * 2.35 * leg_risk), pos_dir)
                         if pos_dir * (best_px - lock3) > 0
                             next_stop := pos_dir == 1 ? math.max(next_stop, lock3) : math.min(next_stop, lock3)
                     else if r_mult >= 2.0
                         lock_tier     := math.max(lock_tier, 3)
-                        eff_trail_pct := math.max(0.0012, trail_pct * 0.40)
+                        eff_trail_pct := math.min(trail_pct, math.max(0.0012, trail_pct * 0.40))
                         float lock2 = inward_stop(math.max(0.0001, entry_px + pos_dir * 1.35 * leg_risk), pos_dir)
                         if pos_dir * (best_px - lock2) > 0
                             next_stop := pos_dir == 1 ? math.max(next_stop, lock2) : math.min(next_stop, lock2)
                     else if r_mult >= 1.0
                         lock_tier     := math.max(lock_tier, 2)
-                        eff_trail_pct := math.max(0.0015, trail_pct * 0.65)
+                        eff_trail_pct := math.min(trail_pct, math.max(0.0015, trail_pct * 0.65))
                         float lock1 = inward_stop(math.max(0.0001, entry_px + pos_dir * 0.45 * leg_risk), pos_dir)
                         if pos_dir * (best_px - lock1) > 0
                             next_stop := pos_dir == 1 ? math.max(next_stop, lock1) : math.min(next_stop, lock1)
@@ -313,11 +416,64 @@ rung_1r  = pos_dir != 0 and not na(risk_r) ? entry_px + pos_dir * risk_r : na
 rung_2r  = pos_dir != 0 and not na(risk_r) ? entry_px + pos_dir * 2.0 * risk_r : na
 rung_3r  = pos_dir != 0 and not na(risk_r) ? entry_px + pos_dir * 3.0 * risk_r : na
 
-// ── 10. Visual Overlays, Lossless Stop & Profit-Lock Rungs ──────────────────
+// Build Copy-Ready OrderPresetCard UDT (Live Leg OR Standby Reference at Close)
+alpaca_on_short_blocked = i_venue == "ALPACA" and sess_label == "OVERNIGHT"
+rev_short_mode = i_etb_short and not alpaca_on_short_blocked ? "DIRECT_SHORT_ETB" : i_etb_short ? "ROUTE_IBKR_OR_INVERSE_HEDGE_SOXS_SQQQ" : "INVERSE_HEDGE_SOXS_SQQQ"
+
+build_order_card() =>
+    bool live_leg = pos_dir != 0 and not na(entry_px) and not na(init_stop_px)
+    int dir = live_leg ? pos_dir : (eff_regime == -1 ? -1 : 1)
+    float ref_e = live_leg ? entry_px : math.round(close, 4)
+    float ref_s = live_leg ? stop_px : nz(hard_stop(ref_e, dir, auto_init_cap), inward_stop(ref_e * (1.0 - dir * auto_init_cap), dir))
+    float ref_init = live_leg ? init_stop_px : ref_s
+    float r_unit = math.max(rule612_tick(ref_e), math.abs(ref_e - ref_init))
+    float e_lim = is_rth ? ref_e : collared_entry_limit(ref_e, dir, collar_bps)
+    float s_lim = is_rth ? ref_s : collared_stop_limit(ref_s, dir, collar_bps)
+    float s_pct = ref_e > 0 ? math.abs(ref_e - ref_s) / ref_e * 100.0 : 0.0
+    float be_p = inward_stop(ref_e * (1.0 + dir * fee_buf), dir)
+    float t1 = outward_limit(ref_e + dir * 1.0 * r_unit, dir)
+    float l1 = inward_stop(ref_e + dir * 0.45 * r_unit, dir)
+    float t2 = outward_limit(ref_e + dir * 2.0 * r_unit, dir)
+    float l2 = inward_stop(ref_e + dir * 1.35 * r_unit, dir)
+    float t3 = outward_limit(ref_e + dir * 3.0 * r_unit, dir)
+    float l3 = inward_stop(ref_e + dir * 2.35 * r_unit, dir)
+    float f_rev = inward_stop(ref_e * (dir == 1 ? 0.9960 : 1.0040), dir)
+    float r_budget = raw_regime == -1 ? 0.0025 : 0.0050
+    int s25 = size_by_risk(25000.0, ref_e, ref_init, r_budget, 0.15)
+    int s100 = size_by_risk(100000.0, ref_e, ref_init, r_budget, 0.15)
+    OrderPresetCard.new(
+        live_leg,
+        dir == 1 ? "BUY" : "SELL",
+        dir == -1 ? rev_short_mode : (is_inverse_etf ? "INVERSE_HEDGE_LONG" : "DIRECT_LONG"),
+        order_type,
+        is_rth ? "DAY" : "GTC · ExtHrs ON",
+        collar_bps,
+        ref_e,
+        e_lim,
+        ref_s,
+        s_lim,
+        s_pct,
+        be_p,
+        t1,
+        l1,
+        t2,
+        l2,
+        t3,
+        l3,
+        f_rev,
+        s25,
+        s100
+    )
+
+// ── 10. Visual Overlays, VWAP Bands, Lossless Stop & Profit-Lock Rungs ──────
 plot(ema_fast, "EMA 9",  color=color.new(color.teal, 20), linewidth=1)
 plot(ema_slow, "EMA 21", color=color.new(color.orange, 30), linewidth=1)
 plot(ema_50,   "EMA 50", color=color.new(color.purple, 55), linewidth=1)
 plot(vwap_val, "Session VWAP", color=color.new(color.blue, 25), linewidth=2)
+plot(i_show_vwap_bnd ? vwap_u1 : na, "VWAP +1s", color=color.new(color.blue, 72), linewidth=1)
+plot(i_show_vwap_bnd ? vwap_d1 : na, "VWAP -1s", color=color.new(color.blue, 72), linewidth=1)
+plot(i_show_vwap_bnd ? vwap_u2 : na, "VWAP +2s Exhaustion", color=color.new(color.fuchsia, 68), linewidth=1)
+plot(i_show_vwap_bnd ? vwap_d2 : na, "VWAP -2s Exhaustion", color=color.new(color.teal, 68), linewidth=1)
 
 stop_col = be_armed ? color.new(color.lime, 0) : color.new(color.red, 0)
 plot(pos_dir != 0 ? stop_px : na, "Lossless Monotonic Stop", color=stop_col, style=plot.style_linebr, linewidth=2)
@@ -338,44 +494,92 @@ plotshape(parabolic_top,   title="Parabolic Top",        style=shape.xcross,    
 
 bgcolor(i_show_bg ? (eff_regime == -1 ? color.new(color.red, 92) : vcp_coil ? color.new(color.aqua, 94) : na) : na, title="Regime / VCP Tint")
 
-// ── 11. Institutional SOTA Status & Market-Tuned HUD (Top-Right) ────────────
-var table hud = table.new(position.top_right, 2, 11, border_width=1, border_color=color.new(color.gray, 55))
+// ── 11. Institutional SOTA Status HUD (Top-Right) & Order Preset HUD (Bottom-Right) ─
+var table hud = table.new(position.top_right, 2, 13, border_width=1, border_color=color.new(color.gray, 55))
+var table ord_hud = table.new(position.bottom_right, 2, 10, border_width=1, border_color=color.new(color.gray, 55))
+
 if barstate.islast and i_show_diag
-    pair_mode = is_inverse_etf ? "INVERSE_HEDGE" : is_soxl ? "SOXL_BULL_3X" : is_semi_sym ? "SEMI_LEADER" : "EQUITY_BROAD"
-    reg_txt   = raw_regime == 1 ? "RISK-ON (+1)" : raw_regime == -1 ? "CRASH DEF (-1)" : "NEUTRAL (0)"
-    vix_txt   = na(vix_last) ? "N/A" : str.tostring(vix_last, "0.00")
-    br_txt    = breadth_weak ? "WEAK (RSP<20D)" : "OK (RSP>=20D)"
-    mtf_txt   = (close > ema_slow ? "1m▲ " : "1m▼ ") + (mtf_5m_up ? "5m▲ " : "5m▼ ") + (mtf_15m_up ? "15m▲ " : "15m▼ ") + (mtf_d_up ? "D▲" : "D▼")
-    tier_tag  = lock_tier >= 4 ? " [T4 FAST-SELL]" : lock_tier == 3 ? " [T3 +2R LOCK]" : lock_tier == 2 ? " [T2 +1R LOCK]" : be_armed ? " [T1 BE+]" : " [HARD CAP]"
-    stop_txt  = na(stop_px) ? "Flat (Cap " + str.tostring(sess_init_cap * 100.0, "0.00") + "%)" : str.tostring(stop_px, "0.####") + tier_tag
+    pair_mode  = is_inverse_etf ? "INVERSE_HEDGE" : is_soxl ? "SOXL_BULL_3X" : is_semi_sym ? "SEMI_LEADER" : "EQUITY_BROAD"
+    pair_badge = pair_sym != "" ? " <-> " + pair_sym : ""
+    reg_txt    = raw_regime == 1 ? "RISK-ON (+1)" : raw_regime == -1 ? "CRASH DEF (-1)" : "NEUTRAL (0)"
+    vix_txt    = na(vix_last) ? "N/A" : str.tostring(vix_last, "0.00")
+    br_txt     = breadth_weak ? "WEAK" : "OK"
+    bfresh_txt = benchmark_ready ? "FRESH" : "STALE"
+    mtf_txt    = (close > ema_slow ? "1m▲ " : "1m▼ ") + (mtf_5m_up ? "5m▲ " : "5m▼ ") + (mtf_15m_up ? "15m▲ " : "15m▼ ") + (mtf_d_up ? "D▲" : "D▼")
+    tier_tag   = lock_tier >= 4 ? " [T4 FAST-SELL]" : lock_tier == 3 ? " [T3 +2R LOCK]" : lock_tier == 2 ? " [T2 +1R LOCK]" : be_armed ? " [T1 BE+]" : " [HARD CAP]"
+    stop_txt   = na(stop_px) ? "Flat (Cap " + str.tostring(sess_init_cap * 100.0, "0.00") + "%)" : str.tostring(stop_px, "0.####") + tier_tag
+    sched_note = i_sched_ovr != "AUTO_NATR" ? " [OVR; Bridge=" + auto_sched + "]" : ""
+    dvol_m     = dollar_vol / 1000000.0
+    vol_txt    = (vol_buildup ? "UV RAMP · " : hidden_vol_bull ? "ABSORB+ · " : hidden_vol_bear ? "DISTRIB · " : "NORMAL · ") + "Z=" + str.tostring(vol_zscore, "0.#") + " · VBR " + str.tostring(vol_buildup_ratio, "0.#") + "x · HVR " + str.tostring(hidden_vol_ratio, "0.##")
+    vol_bg     = vol_buildup ? color.new(color.teal, 55) : hidden_vol_bull ? color.new(color.green, 65) : hidden_vol_bear ? color.new(color.maroon, 60) : color.new(color.gray, 85)
 
     table.cell(hud, 0, 0,  "Omni Preset",   bgcolor=color.new(color.navy, 35), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 0,  resolved_mode,   bgcolor=color.new(color.navy, 55), text_color=color.aqua,  text_size=size.small)
     table.cell(hud, 0, 1,  "Market Status", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 1,  reg_txt + " | VIX " + vix_txt, bgcolor=raw_regime == -1 ? color.new(color.red, 55) : raw_regime == 1 ? color.new(color.green, 65) : color.new(color.gray, 80), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 2,  "Breadth/Bench", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 2,  br_txt + " [" + bench_sym + "]", bgcolor=breadth_weak ? color.new(color.orange, 65) : color.new(color.green, 75), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 2,  br_txt + " [" + bench_sym + " · " + bfresh_txt + "]", bgcolor=not benchmark_ready ? color.new(color.maroon, 55) : breadth_weak ? color.new(color.orange, 65) : color.new(color.green, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 3,  "24/5 Session",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 3,  sess_label + " · " + order_type + " (" + str.tostring(collar_bps, "0") + "bp)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 4,  "Lossless Sched",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 4,  active_schedule + " (NATR " + str.tostring(natr_out * 100.0, "0.00") + "%)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 4,  active_schedule + " (NATR " + str.tostring(natr_out * 100.0, "0.00") + "%)" + sched_note, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 5,  "Trail / BE Arm",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 5,  "BE " + str.tostring(be_trig * 100.0, "0.00") + "% · Trail " + str.tostring(trail_pct * 100.0, "0.00") + "%", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 6,  "Active Stop",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(hud, 1, 6,  stop_txt,        bgcolor=be_armed ? color.new(color.green, 65) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
-    table.cell(hud, 0, 7,  "Pair / Mode",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 7,  pair_mode + " (eff=" + str.tostring(eff_regime) + ")", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 7,  "Pair / Short",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 7,  pair_mode + pair_badge + " | " + rev_short_mode, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(hud, 0, 8,  "Setup / RVOL",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 8,  setup_archetype + " (" + str.tostring(rvol, "0.00") + "x)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 8,  setup_archetype + " (" + str.tostring(rvol, "0.00") + "x · $" + str.tostring(dvol_m, "0.00") + "M)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 9,  "Vol / Absorb",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 9,  vol_txt,         bgcolor=vol_bg, text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 10, "Darkpool Proxy",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    dp_txt = (vwap_pin_absorb ? "VWAP-PIN ABSORB" : cvd_bull_div ? "CVD BULL DIV" : sess_cvd >= cvd_ema ? "CVD ACCUM (+)" : "CVD DISTRIB (-)") + " · Peak=" + str.tostring(peak_confirmed)
+    table.cell(hud, 1, 10, dp_txt,          bgcolor=vwap_pin_absorb ? color.new(color.teal, 50) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     if i_show_mtf
-        table.cell(hud, 0, 9, "MTF Trend",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-        table.cell(hud, 1, 9, mtf_txt,      bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
-    table.cell(hud, 0, 10, "Auto-Rev/Gate", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+        table.cell(hud, 0, 11, "MTF Trend", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+        table.cell(hud, 1, 11, mtf_txt,     bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 12, "Auto-Rev/Gate", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     gate_txt = "Rev=" + str.tostring(i_auto_reverse) + (did_reverse ? " [FLIP]" : "") + " Re=" + str.tostring(i_auto_reentry) + " · qty=1 (display-only)"
-    table.cell(hud, 1, 10, gate_txt,        bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 12, gate_txt,        bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
+
+if barstate.islast and i_show_ord_hud
+    OrderPresetCard card = build_order_card()
+    string hdr_tag = card.is_live_leg ? "LIVE LEG" : "STANDBY REF"
+    string col_hdr = card.side == "BUY" ? "BUY LONG" : "SELL SHORT"
+    color side_bg  = card.side == "BUY" ? color.new(color.green, 55) : color.new(color.maroon, 50)
+    string ent_str = is_rth ? str.tostring(card.entry_px, "0.####") + " (MKT)" : str.tostring(card.entry_px, "0.####") + " -> Lmt " + str.tostring(card.entry_limit, "0.####")
+    string stp_str = is_rth ? str.tostring(card.stop_px, "0.####") + " (" + str.tostring(card.stop_pct, "0.00") + "%)" : str.tostring(card.stop_px, "0.####") + " / Lmt " + str.tostring(card.stop_limit, "0.####") + " (" + str.tostring(card.stop_pct, "0.00") + "%)"
+
+    table.cell(ord_hud, 0, 0, "TV Order Preset [" + hdr_tag + "]", bgcolor=color.new(color.navy, 30), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 0, col_hdr + " · " + i_venue + " · qty=1", bgcolor=side_bg, text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 1, "Route / Pair",     bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 1, card.route_mode + (pair_sym != "" ? " [" + pair_sym + "]" : ""), bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
+    table.cell(ord_hud, 0, 2, "Order / TIF",      bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 2, card.order_type + " (" + str.tostring(card.collar_bps, "0") + "bp) · " + card.tif, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 3, "Entry / Collar",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 3, ent_str,            bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 4, "Initial SL (R612)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 4, stp_str,            bgcolor=color.new(color.red, 70),  text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 5, "T1 BE+10bp Floor", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 5, str.tostring(card.be_floor, "0.####") + " (Arm +" + str.tostring(be_trig * 100.0, "0.00") + "%)", bgcolor=color.new(color.olive, 65), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 6, "T2 +1R -> +0.45R", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 6, "Tgt " + str.tostring(card.t1r, "0.####") + " -> Lock " + str.tostring(card.l1r, "0.####"), bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
+    table.cell(ord_hud, 0, 7, "T3 +2R -> +1.35R", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 7, "Tgt " + str.tostring(card.t2r, "0.####") + " -> Lock " + str.tostring(card.l2r, "0.####"), bgcolor=color.new(color.gray, 85), text_color=color.lime, text_size=size.small)
+    table.cell(ord_hud, 0, 8, "T4 +3R / Fast-Rev",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 8, "Tgt " + str.tostring(card.t3r, "0.####") + " -> Lock " + str.tostring(card.l3r, "0.####") + " | Rev " + str.tostring(card.fast_rev, "0.####"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 0, 9, "Size ($25k/$100k)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ord_hud, 1, 9, str.tostring(card.sh_25k, "0") + " / " + str.tostring(card.sh_100k, "0") + " sh · semi_auto=false", bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
 
 // ── 12. Strict Schema-Compatible tier0.tv-alert.v1 Payload Emitter ──────────
 emit_alert_json(string sig_side, float trig_px, float stp_px) =>
+    int side_int = sig_side == "BUY" ? 1 : -1
+    float safe_trig = math.max(0.0001, nz(trig_px, close))
+    float bridge_stp = nz(hard_stop(safe_trig, side_int, auto_init_cap), nz(stp_px, safe_trig))
+    float stp_dist = math.min(0.02, math.max(0.0, math.round(math.abs(safe_trig - bridge_stp) / safe_trig, 6)))
+    string eff_venue = (i_venue == "ALPACA" and sig_side == "SELL" and sess_label == "OVERNIGHT") ? "IBKR" : i_venue
+    string pair_json = pair_sym != "" ? ",\"pair_symbol\":\"" + pair_sym + "\"" : ""
     (
         "{\"schema_version\":\"tier0.tv-alert.v1\"" +
         ",\"symbol\":\"" + tkr + "\"" +
@@ -383,12 +587,14 @@ emit_alert_json(string sig_side, float trig_px, float stp_px) =>
         ",\"bar_confirmed\":true" +
         ",\"side\":\"" + sig_side + "\"" +
         ",\"qty\":1" +
+        ",\"venue\":\"" + eff_venue + "\"" +
         ",\"session\":\"" + sess_label + "\"" +
         ",\"order_type\":\"" + order_type + "\"" +
-        ",\"trigger_price\":" + str.tostring(trig_px, "0.####") +
-        ",\"stop_price\":" + str.tostring(stp_px, "0.####") +
+        ",\"trigger_price\":" + str.tostring(safe_trig, "0.####") +
+        ",\"stop_price\":" + str.tostring(bridge_stp, "0.####") +
+        ",\"stop_distance_pct\":" + str.tostring(stp_dist, "0.######") +
         ",\"limit_collar_bps\":" + str.tostring(collar_bps, "0") +
-        ",\"trailing_schedule\":\"" + active_schedule + "\"" +
+        ",\"trailing_schedule\":\"" + auto_sched + "\"" +
         ",\"natr_pct\":" + str.tostring(natr_out, "0.######") +
         ",\"auto_reverse\":" + str.tostring(i_auto_reverse) +
         ",\"auto_reentry\":" + str.tostring(i_auto_reentry) +
@@ -397,8 +603,15 @@ emit_alert_json(string sig_side, float trig_px, float stp_px) =>
         ",\"semi_auto_confirmed\":false" +
         ",\"setup_archetype\":\"" + setup_archetype + "\"" +
         ",\"macro_regime\":" + str.tostring(eff_regime, "0") +
-        ",\"rvol\":" + str.tostring(rvol, "0.##") +
-        ",\"is_leveraged_or_inverse\":" + str.tostring(is_inverse_etf or is_soxl or tkr == "TQQQ") +
+        ",\"rvol\":" + str.tostring(math.max(0.0, nz(rvol, 1.0)), "0.##") +
+        ",\"hidden_volume_ratio\":" + str.tostring(math.max(0.0, nz(hidden_vol_ratio, 0.0)), "0.##") +
+        ",\"vol_buildup_ratio\":" + str.tostring(math.max(0.0, nz(vol_buildup_ratio, 1.0)), "0.##") +
+        ",\"unusual_volume_buildup\":" + str.tostring(vol_buildup) +
+        ",\"peak_confirmed\":" + str.tostring(peak_confirmed) +
+        ",\"is_leveraged_or_inverse\":" + str.tostring(is_lev_or_inv) +
+        pair_json +
+        ",\"script_kind\":\"indicator\"" +
+        ",\"order_preset_id\":\"" + resolved_mode + "\"" +
         ",\"data_source\":\"tradingview_pine_v6\"}"
     )
 
@@ -406,3 +619,16 @@ if entered_long and standard_minute
     alert(emit_alert_json("BUY", entry_px, stop_px), alert.freq_once_per_bar_close)
 if entered_short and standard_minute
     alert(emit_alert_json("SELL", entry_px, stop_px), alert.freq_once_per_bar_close)
+
+// ── 13. Non-Repainting Alert Conditions (Watchlist & Chart Visual Alerts) ───
+alertcondition(entered_long,      title="Tier-0 Long Entry / Re-Entry",      message="T0_OMNI_SOTA LONG confirmed on {{ticker}} @ {{close}}")
+alertcondition(entered_short,     title="Tier-0 Short Entry / Crash",        message="T0_OMNI_SOTA SHORT confirmed on {{ticker}} @ {{close}}")
+alertcondition(exited_rev,        title="Tier-0 Auto-Reverse Climax Flip",   message="T0_OMNI_SOTA AUTO-REVERSE flatten on {{ticker}} @ {{close}}")
+alertcondition(vol_buildup,       title="Tier-0 Unusual Volume Buildup",     message="T0_OMNI_SOTA UV RAMP confirmed on {{ticker}} @ {{close}}")
+alertcondition(hidden_vol_bull,   title="Tier-0 Darkpool Bull Absorption",   message="T0_OMNI_SOTA HIDDEN VOL BULL ABSORPTION on {{ticker}} @ {{close}}")
+alertcondition(hidden_vol_bear,   title="Tier-0 Darkpool Bear Distribution", message="T0_OMNI_SOTA HIDDEN VOL BEAR DISTRIBUTION on {{ticker}} @ {{close}}")
+alertcondition(vwap_pin_absorb,   title="Tier-0 VWAP-Pin Darkpool Proxy",    message="T0_OMNI_SOTA VWAP-PIN DARKPOOL PROXY on {{ticker}} @ {{close}}")
+alertcondition(vcp_breakout,      title="Tier-0 Minervini VCP Breakout",     message="T0_OMNI_SOTA VCP BREAKOUT confirmed on {{ticker}} @ {{close}}")
+alertcondition(ep_momentum_burst, title="Tier-0 Stockbee EP Momentum Burst", message="T0_OMNI_SOTA EP MOMENTUM BURST confirmed on {{ticker}} @ {{close}}")
+alertcondition(exhaustion_hammer, title="Tier-0 Stockbee Exhaustion Hammer", message="T0_OMNI_SOTA EXHAUSTION HAMMER confirmed on {{ticker}} @ {{close}}")
+alertcondition(parabolic_top,     title="Tier-0 Parabolic Exhaustion Top",   message="T0_OMNI_SOTA PARABOLIC TOP detected on {{ticker}} @ {{close}}")

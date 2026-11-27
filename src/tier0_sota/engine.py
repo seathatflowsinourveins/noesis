@@ -10,7 +10,6 @@ from typing import Any, Literal, Self
 from zoneinfo import ZoneInfo
 
 import polars as pl
-from exchange_calendars.errors import DateOutOfBounds
 from nautilus_trader import config as _nc
 from nautilus_trader import indicators as _ni
 from nautilus_trader import model as nm
@@ -24,11 +23,11 @@ from nautilus_trader.trading import Strategy, StrategyConfig
 
 from tier0_sota import risk as _rk
 from tier0_sota.discovery import (
-    _XNYS,
     MarketRegimeActor,
     MarketRegimeActorConfig,
     assert_pre_wall_ns,
     df_to_equity_and_bars,
+    get_xnys_calendar,
     step_rth_5m_bar,
 )
 from tier0_sota.risk import Side
@@ -371,12 +370,15 @@ def _et_dt(ts_utc_ns: int) -> datetime:
 
 @lru_cache(maxsize=2048)
 def _xnys_info(ny_day: date) -> tuple[bool, int] | None:
+    from exchange_calendars.errors import DateOutOfBounds
+
+    xnys = get_xnys_calendar()
     try:
-        if not (_XNYS.first_session.date() <= ny_day <= _XNYS.last_session.date()):
+        if not (xnys.first_session.date() <= ny_day <= xnys.last_session.date()):
             return None
-        if not _XNYS.is_session(iso := ny_day.isoformat()):
+        if not xnys.is_session(iso := ny_day.isoformat()):
             return (False, 960)
-        c = _XNYS.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
+        c = xnys.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
         return (True, c.hour * 60 + c.minute)
     except DateOutOfBounds:
         return None
@@ -907,7 +909,11 @@ class SignalExecutionStrategy(Strategy):
             dt = _et_dt(int(bar.ts_event))
             vw = float(self._vwap.value) if self._vwap.initialized else float(bar.close)
             cs = (float(x) for x in (bar.open, bar.high, bar.low, bar.close))
-            step_rth_5m_bar(self._rth5, dt.date(), dt.hour * 60 + dt.minute, *cs, vw)
+            inf = _xnys_info(dt.date())
+            rth_close = (inf[1] if inf[0] else 0) if inf is not None else 960
+            step_rth_5m_bar(
+                self._rth5, dt.date(), dt.hour * 60 + dt.minute, *cs, vw, rth_close_hm=rth_close
+            )
             return
         if bt != self.bar_type:
             return
@@ -939,7 +945,9 @@ class SignalExecutionStrategy(Strategy):
         ex_px = Decimal(str(bar.high)) if is_l else Decimal(str(bar.low))
         fav = self._fav_ext = (max if is_l else min)(self._fav_ext or entry, ex_px)
         be_hit = ((fav - entry) if is_l else (entry - fav)) / entry >= prof.breakeven_trigger_pct
-        if (sess != "CLOSED" and self._stop_session not in (None, sess)) or (be_hit and stops):
+        if sess == "CLOSED":
+            return
+        if self._stop_session not in (None, sess) or (be_hit and stops):
             if self._stop_session not in (None, sess):
                 self.session_transitions += 1
             self._replace_stop(pos, sess, ts, trailing=be_hit)

@@ -6,13 +6,13 @@ import argparse
 import hashlib
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import duckdb
 from alpaca.common.enums import Sort
 from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed
@@ -30,13 +30,27 @@ from tier0_sota.live.paper_farm import (
     default_manifest_dir,
     ensure_tca_table,
     ensure_wire_table,
+    open_bounded_duckdb,
     round_lot_up,
 )
 from tier0_sota.live.performance import aggregate_paper_farm_performance
-from tier0_sota.live.scanner import DEFAULT_PIN_SYMBOLS, ExtremeMoverScanner
+from tier0_sota.live.scanner import (
+    DEFAULT_PIN_SYMBOLS,
+    ExtremeMoverScanner,
+    build_live_lane_preset_bundle,
+)
 from tier0_sota.tv.tickets import refresh_tickets_from_paths
 
 NY = ZoneInfo("America/New_York")
+_LEGACY_TWO_PIN_SET = frozenset({"SOXL", "SOXS"})
+
+
+def _resolve_pin_symbols(raw: str) -> tuple[str, ...]:
+    """Upgrade empty or legacy 2-pin CLI overrides to 4-symbol DEFAULT_PIN_SYMBOLS."""
+    parsed = tuple(dict.fromkeys(tok.strip().upper() for tok in raw.split(",") if tok.strip()))
+    if not parsed or set(parsed) == _LEGACY_TWO_PIN_SET:
+        return DEFAULT_PIN_SYMBOLS
+    return parsed
 
 
 def verify_paper_environment() -> None:
@@ -94,22 +108,24 @@ def midpoint_asof(data: Any, symbol: str, at: datetime) -> Decimal | None:
 
 
 def refresh_markouts(lane: AlpacaPaperLane, data: Any) -> None:
-    with duckdb.connect(str(lane.duckdb_path)) as conn:
+    with open_bounded_duckdb(lane.duckdb_path) as conn:
         pending = conn.execute(
             "SELECT execution_id,symbol,side,fill_price,CAST(ts_utc AS TIMESTAMPTZ) "
             "FROM paper_tca_fills WHERE execution_id IS NOT NULL AND markout_60s_bps IS NULL "
             "AND CAST(ts_utc AS TIMESTAMPTZ) <= now()-INTERVAL '60 seconds'"
         ).fetchall()
+    updates: list[tuple[Decimal, str, str]] = []
     for eid, symbol, side, price, filled in pending:
         mid = midpoint_asof(data, symbol, filled + timedelta(seconds=60))
         if mid is not None:
             sign = 1 if side == "BUY" else -1
-            with duckdb.connect(str(lane.duckdb_path)) as conn:
-                conn.execute(
-                    "UPDATE paper_tca_fills SET markout_60s_bps=? "
-                    "WHERE account=? AND execution_id=?",
-                    [sign * (mid - price) / price * 10000, lane.account, eid],
-                )
+            updates.append((sign * (mid - price) / price * 10000, lane.account, eid))
+    if updates:
+        with open_bounded_duckdb(lane.duckdb_path) as conn:
+            conn.executemany(
+                "UPDATE paper_tca_fills SET markout_60s_bps=? WHERE account=? AND execution_id=?",
+                updates,
+            )
 
 
 def exit_context(lane: AlpacaPaperLane, order: Any, decisions: dict, data: Any) -> tuple | None:
@@ -149,7 +165,7 @@ def exit_context(lane: AlpacaPaperLane, order: Any, decisions: dict, data: Any) 
         if not synthetic and not any(leg.id in {order.id, ancestor.id, *seen} for leg in legs):
             continue
         if synthetic:
-            with duckdb.connect(str(lane.duckdb_path)) as db:
+            with open_bounded_duckdb(lane.duckdb_path) as db:
                 row = db.execute(
                     "SELECT active_stop FROM paper_entry_decisions WHERE client_order_id=?", [cid]
                 ).fetchone()
@@ -180,7 +196,7 @@ def exit_context(lane: AlpacaPaperLane, order: Any, decisions: dict, data: Any) 
 
 def reconcile_fills(lane: AlpacaPaperLane, data: Any = None) -> int:
     """Replay broker executions against recorded entry decisions, including partial fills."""
-    with duckdb.connect(str(lane.duckdb_path)) as conn:
+    with open_bounded_duckdb(lane.duckdb_path) as conn:
         if ("paper_entry_decisions",) not in conn.execute("SHOW TABLES").fetchall():
             return 0
         decisions = {
@@ -264,7 +280,7 @@ def reconcile_fills(lane: AlpacaPaperLane, data: Any = None) -> int:
         if params.get("page_token") == token:
             raise RuntimeError("Alpaca returned a repeated activity page")
         params["page_token"] = token
-        with duckdb.connect(str(lane.duckdb_path)) as conn:
+        with open_bounded_duckdb(lane.duckdb_path) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO paper_activity_cursor VALUES (?,?)", [lane.account, token]
             )
@@ -273,17 +289,37 @@ def reconcile_fills(lane: AlpacaPaperLane, data: Any = None) -> int:
     return lane.counters["fills"] - initial
 
 
+def _fetch_lane_broker_snapshot(lane: AlpacaPaperLane) -> tuple[Any, list[Any], list[Any]]:
+    broker = lane.trading_client
+    account = broker.get_account()
+    positions = broker.get_all_positions()
+    orders = broker.get_orders(GetOrdersRequest(limit=500))
+    return account, positions, orders
+
+
 def refresh_accounts(
-    farm: PaperFarmCoordinator, now: datetime, session: str, *, publish: bool = True
+    farm: PaperFarmCoordinator,
+    now: datetime,
+    session: str,
+    *,
+    publish: bool = True,
+    data_client: Any = None,
 ) -> dict[str, dict[str, Any]]:
     if farm.lanes.keys() != ALPACA_LANE_PROFILES.keys():
         raise PermissionError("All three Alpaca paper accounts are required")
+    lanes_list = list(farm.lanes.values())
+    distinct_clients = len({id(lane.trading_client) for lane in lanes_list}) == len(lanes_list)
+    if distinct_clients and len(lanes_list) > 1:
+        with ThreadPoolExecutor(max_workers=len(lanes_list)) as pool:
+            snapshots = list(pool.map(_fetch_lane_broker_snapshot, lanes_list))
+    else:
+        snapshots = [_fetch_lane_broker_snapshot(lane) for lane in lanes_list]
+
     ids = set()
     inventory = {}
     owners: dict[str, str] = {}
-    for lane in farm.lanes.values():
-        broker = lane.trading_client
-        account = broker.get_account()
+    shared_data = data_client
+    for lane, (account, positions, orders) in zip(lanes_list, snapshots, strict=True):
         if (
             not account.id
             or account.id in ids
@@ -294,8 +330,6 @@ def refresh_accounts(
         ):
             raise PermissionError(f"{lane.account} is unavailable, blocked or duplicated")
         ids.add(account.id)
-        positions = broker.get_all_positions()
-        orders = broker.get_orders(GetOrdersRequest(limit=500))
         if len(orders) == 500:
             raise RuntimeError("Cannot attest complete open-order inventory")
         for sym in {o.symbol for o in [*positions, *orders]}:
@@ -306,7 +340,7 @@ def refresh_accounts(
         lane.start_equity = equity
         lane.breaker = risk.DailyDrawdownBreaker(start_equity=yesterday)
         day = now.astimezone(NY).date().isoformat()
-        with duckdb.connect(str(lane.duckdb_path)) as conn:
+        with open_bounded_duckdb(lane.duckdb_path) as conn:
             ensure_tca_table(conn)
             ensure_wire_table(conn)
             conn.execute(
@@ -326,9 +360,10 @@ def refresh_accounts(
             ).fetchone()
             lane.breaker.tripped = bool(tripped and tripped[0])
         if publish:
-            data = ExtremeMoverScanner.from_env(lane.account).data_client
-            reconcile_fills(lane, data)
-            refresh_markouts(lane, data)
+            if shared_data is None:
+                shared_data = ExtremeMoverScanner.from_env(lane.account).data_client
+            reconcile_fills(lane, shared_data)
+            refresh_markouts(lane, shared_data)
             lane.write_status(equity=float(equity), session=session, observation=True)
             export_ui_snapshot(lane)
     farm.symbol_lock.reconcile(owners)
@@ -339,7 +374,7 @@ def export_ui_snapshot(lane: AlpacaPaperLane) -> None:
     """Publish committed data for DuckDB UI without keeping the writer database attached."""
     out = lane.manifest_dir / "paper_farm_ui"
     out.mkdir(exist_ok=True)
-    with duckdb.connect(str(lane.duckdb_path), read_only=True) as conn:
+    with open_bounded_duckdb(lane.duckdb_path, read_only=True) as conn:
         tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
         for name in ("paper_wire_orders", "paper_tca_fills"):
             if name in tables:
@@ -353,26 +388,44 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
     verify_paper_environment()
     manifest_dir.mkdir(parents=True, exist_ok=True)
     # DuckDB's exclusive writer lock serializes scheduler invocations and manual cycles.
-    with duckdb.connect(str(manifest_dir / "paper_farm_runner.duckdb")):
+    with open_bounded_duckdb(manifest_dir / "paper_farm_runner.duckdb"):
         farm = PaperFarmCoordinator(manifest_dir)
         reachable = ibkr_health(farm.ibkr)
         now = datetime.now(UTC)
         session = engine.classify_us_equity_session_et(int(now.timestamp() * 1e9))
-        refresh_accounts(farm, now, session)
+        scanner = ExtremeMoverScanner.from_env(pin_symbols=pins)
+        refresh_accounts(farm, now, session, data_client=scanner.data_client)
         movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
-        scan = ExtremeMoverScanner.from_env(pin_symbols=pins).scan(
+        scan = scanner.scan(
             top_k=top_k,
             output_path=movers_path,
         )
+        from tier0_sota.live.execution import cost_calibration_allows_entry
+
+        bundle_path = manifest_dir / "live_lane_order_preset_bundle.json"
+        build_live_lane_preset_bundle(
+            scan,
+            lanes=farm.lanes,
+            output_path=bundle_path,
+            tca_allows_entry=cost_calibration_allows_entry(manifest_dir),
+        )
         tickets = refresh_tickets_from_paths(
             movers_path=movers_path,
+            bundle_path=bundle_path,
             out_dir=manifest_dir / "tv_sota_pack",
             venue="ALPACA",
         )
+        otlp_url = (
+            os.environ.get("TIER0_OTLP_METRICS_URL", "http://127.0.0.1:4318/v1/metrics").strip()
+            or None
+        )
+        prom_path = manifest_dir / "paper_farm_metrics.prom"
         perf = aggregate_paper_farm_performance(
             manifest_dir,
-            otlp_endpoint="http://127.0.0.1:4318/v1/metrics",
+            prom_output_path=prom_path,
+            otlp_endpoint=otlp_url,
         )
+        tv_meta = perf.get("tv_half_auto") or {}
         result = {
             "session": session,
             "paper_only": True,
@@ -381,14 +434,20 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
             "ibkr_tcp_reachable": reachable,
             "scan_rows": scan["ranked_count"],
             "tickets": tickets["staged_count"],
+            "standby_presets": len(tickets.get("standby_presets") or ()),
+            "unusual_vol_count": int(tv_meta.get("unusual_vol_count") or 0),
+            "darkpool_hits_count": int(tv_meta.get("darkpool_hits_count") or 0),
             "tca_fills": perf["summary"]["tca_fills_count"],
             "paper_live_deployed": perf["paper_live_deployed"],
+            "prom_metrics_written": prom_path.is_file(),
         }
         _atomic_write_json(
             manifest_dir / "paper_farm_live_auto_entry_status.json",
             {
                 **result,
                 "generated_at_utc": perf["generated_at_utc"],
+                "macro_regime": scan.get("macro_regime") or {},
+                "tv_half_auto": tv_meta,
                 "accounts": {
                     acct: {
                         "venue": "ALPACA" if acct in farm.lanes else "IBKR",
@@ -440,7 +499,7 @@ def main() -> None:
             run_cycle(
                 args.manifest_dir,
                 top_k=args.top_k,
-                pins=tuple(args.pin_symbols.split(",")),
+                pins=_resolve_pin_symbols(args.pin_symbols),
             )
         )
     )

@@ -192,18 +192,56 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     assert services["telemetry-exporter"]["image"] == "otel/opentelemetry-collector-contrib:0.166.0"
     assert services["prometheus"]["image"] == "prom/prometheus:v3.16.0"
     assert services["grafana"]["image"] == "grafana/grafana:13.3.1"
+    assert (
+        "./prometheus_rules.yml:/etc/prometheus/prometheus_rules.yml:ro"
+        in services["prometheus"]["volumes"]
+    )
+
+    am_svc = services["alertmanager"]
+    assert am_svc["image"] == "prom/alertmanager:v0.28.1"
+    assert am_svc["profiles"] == ["alerting"]
+    assert am_svc["cpus"] == "0.25"
+    assert am_svc["mem_limit"] == "128m"
+    assert am_svc["ports"] == ["127.0.0.1:9093:9093"]
+    assert "GOMAXPROCS=1" in am_svc["environment"]
+    assert "./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" in am_svc["volumes"]
+    assert am_svc["restart"] == "unless-stopped"
 
     for rel in (
         "docker/Dockerfile.research",
         "docker/Dockerfile.sandbox",
         "docker/Dockerfile.xerj",
         "docker/prometheus.yml",
+        "docker/prometheus_rules.yml",
+        "docker/alertmanager.yml",
         "docker/dagster.yaml",
         "docker/grafana/dashboards/tier0-sota-observability.json",
         "docker/grafana/provisioning/datasources/prometheus.yml",
         "docker/grafana/provisioning/dashboards/provider.yml",
     ):
         assert (REPO_ROOT / rel).is_file(), f"Missing docker asset {rel}"
+
+    prom_cfg = yaml.safe_load((REPO_ROOT / "docker" / "prometheus.yml").read_text("utf-8"))
+    assert "/etc/prometheus/prometheus_rules.yml" in prom_cfg.get("rule_files", [])
+    assert prom_cfg["alerting"]["alertmanagers"][0]["static_configs"][0]["targets"] == [
+        "alertmanager:9093"
+    ]
+
+    rules_raw = (REPO_ROOT / "docker" / "prometheus_rules.yml").read_text("utf-8")
+    rules_doc = yaml.safe_load(rules_raw)
+    rule_names = {r["alert"] for grp in rules_doc.get("groups", []) for r in grp.get("rules", [])}
+    assert {
+        "Tier0DailyDrawdownBreakerTripped",
+        "Tier0PaperTelemetryOrExecutionDown",
+        "Tier0PaperTcaEnvelopeBreach",
+    }.issubset(rule_names)
+
+    am_raw = (REPO_ROOT / "docker" / "alertmanager.yml").read_text("utf-8")
+    for bad in ("sk-", "PK", "AKIA", "-----BEGIN", "hooks.slack.com", "https://"):
+        assert bad not in am_raw
+    am_doc = yaml.safe_load(am_raw)
+    assert am_doc["route"]["receiver"] == "tier0-local-null"
+    assert [r["name"] for r in am_doc["receivers"]] == ["tier0-local-null"]
 
 
 def test_grand_reset_scripts_ps1_ast_dryrun_and_wsl_safety() -> None:
@@ -523,5 +561,14 @@ def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
     assert ".gemini/config/skills.json" in wsl_sh
 
     just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
-    for token in ("fnox-check:", "scan", "paper-farm", "open-agy-wsl:"):
+    for token in (
+        "fnox-check:",
+        "scan",
+        "paper-farm",
+        "open-agy-wsl:",
+        "agent-scan:",
+        "SNYK_CFG_TELEMETRY",
+        "SNYK_DISABLE_ANALYTICS",
+        "SNYK_TOKEN",
+    ):
         assert token in just_txt, f"justfile missing {token!r}"

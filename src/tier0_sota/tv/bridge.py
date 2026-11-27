@@ -7,15 +7,15 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal, cast
 
-import duckdb
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -33,7 +33,9 @@ DEFAULT_MANIFEST_DIR = (
     Path("Z:/sota-data/manifests") if os.name == "nt" else Path("/mnt/z/sota-data/manifests")
 )
 DEFAULT_STAGED_PATH = DEFAULT_MANIFEST_DIR / "staged_tv_presets.json"
+DEFAULT_PACK_STAGED_PATH = DEFAULT_MANIFEST_DIR / "tv_sota_pack" / "staged_tv_presets.json"
 DEFAULT_WATCHLIST_PATH = DEFAULT_MANIFEST_DIR / "live_watchlist_manifest.json"
+DEFAULT_MOVERS_PATH = DEFAULT_MANIFEST_DIR / "live_whole_market_movers_manifest.json"
 FORBIDDEN_ENDPOINT_MARKERS = ("4001", "7496", "8798", "8796")
 _LIVE_ALPACA_RE = re.compile(r"(?<![a-z0-9-])api\.alpaca\.markets(?![a-z0-9-])")
 MAX_INPUT_AGE_MS = 15 * 60_000
@@ -50,6 +52,7 @@ _Archetype = Literal[
     "HIDDEN_VOL_ACCUM",
     "PEAK_REVERSAL",
 ]
+_ScriptKind = Literal["indicator", "strategy"]
 _Source = Literal[
     "tradingview_pine_v6",
     "prewall_lake",
@@ -62,6 +65,40 @@ _Source = Literal[
     "ibkr_paper_4002",
     "nautilus_trader",
 ]
+
+_DUCKDB_BASE_SCHEMA_SQL = (
+    "CREATE TABLE IF NOT EXISTS tv_staged_presets ("
+    "alert_id VARCHAR PRIMARY KEY, symbol VARCHAR, side VARCHAR, qty INTEGER, "
+    "venue VARCHAR, session VARCHAR, order_type VARCHAR, trigger_price DOUBLE, "
+    "stop_price DOUBLE, limit_collar_bps DOUBLE, trailing_schedule VARCHAR, "
+    "semi_auto_confirmed BOOLEAN, data_source VARCHAR, source VARCHAR, "
+    "staged_at_utc VARCHAR)"
+)
+_DUCKDB_ALTER_STMTS: tuple[str, ...] = (
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS setup_archetype VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS macro_regime INTEGER",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS rvol DOUBLE",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS darkpool_trf_ratio DOUBLE",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS hidden_volume_ratio DOUBLE",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS vol_buildup_ratio DOUBLE",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS unusual_volume_buildup BOOLEAN",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS peak_confirmed BOOLEAN",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS pair_symbol VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS action_gate VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS reverse_short_mode VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS script_kind VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS order_preset_id VARCHAR",
+)
+_DUCKDB_INSERT_SQL = (
+    "INSERT OR REPLACE INTO tv_staged_presets ("
+    "alert_id, symbol, side, qty, venue, session, order_type, trigger_price, "
+    "stop_price, limit_collar_bps, trailing_schedule, semi_auto_confirmed, "
+    "data_source, source, staged_at_utc, setup_archetype, macro_regime, rvol, "
+    "darkpool_trf_ratio, hidden_volume_ratio, vol_buildup_ratio, "
+    "unusual_volume_buildup, peak_confirmed, pair_symbol, action_gate, "
+    "reverse_short_mode, script_kind, order_preset_id) VALUES ("
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
 
 
 class TvAlertV1(BaseModel):
@@ -96,10 +133,15 @@ class TvAlertV1(BaseModel):
     setup_archetype: _Archetype | None = None
     macro_regime: Literal[-1, 0, 1] | None = None
     rvol: float | None = Field(default=None, ge=0.0)
+    darkpool_trf_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     hidden_volume_ratio: float | None = Field(default=None, ge=0.0)
+    vol_buildup_ratio: float | None = Field(default=None, ge=0.0)
+    unusual_volume_buildup: StrictBool | None = None
     peak_confirmed: StrictBool | None = None
     is_leveraged_or_inverse: StrictBool | None = None
     pair_symbol: str | None = Field(default=None, min_length=1, max_length=16)
+    script_kind: _ScriptKind | None = None
+    order_preset_id: str | None = Field(default=None, min_length=1, max_length=64)
     data_source: _Source | None = None
 
     @field_validator("trigger_price", "stop_price", "natr_pct", "limit_collar_bps", mode="before")
@@ -109,12 +151,36 @@ class TvAlertV1(BaseModel):
             raise ValueError("numeric alert field must not be bool")
         return str(v) if isinstance(v, float) else v
 
+    @field_validator(
+        "stop_distance_pct",
+        "rvol",
+        "darkpool_trf_ratio",
+        "hidden_volume_ratio",
+        "vol_buildup_ratio",
+        mode="before",
+    )
+    @classmethod
+    def _reject_bool_optional_float(cls, v: Any) -> Any:
+        if isinstance(v, bool):
+            raise ValueError("numeric alert field must not be bool")
+        return v
+
     @field_validator("symbol", mode="before")
     @classmethod
     def _clean_symbol(cls, v: Any) -> str:
         s = str(v).strip().upper()
         if not s or not s.replace(".", "").replace("-", "").isalnum():
             raise ValueError(f"Invalid symbol: {v!r}")
+        return s
+
+    @field_validator("order_preset_id", mode="before")
+    @classmethod
+    def _clean_order_preset_id(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            raise ValueError("order_preset_id must not be blank")
         return s
 
 
@@ -198,32 +264,66 @@ def _resolve_tv_audit_duckdb_path(staged_path: Path) -> Path:
     return staged_path.parent / "tv_half_auto_audit.duckdb"
 
 
-def persist_tv_preset_duckdb(
+def _load_watchlist_manifest(watchlist_path: Path) -> Mapping[str, Any] | None:
+    """Load watchlist manifest, falling back to whole-market movers for default path only."""
+    if watchlist_path.is_file():
+        return cast(Mapping[str, Any], json.loads(watchlist_path.read_text(encoding="utf-8")))
+    if watchlist_path == DEFAULT_WATCHLIST_PATH and DEFAULT_MOVERS_PATH.is_file():
+        return cast(Mapping[str, Any], json.loads(DEFAULT_MOVERS_PATH.read_text(encoding="utf-8")))
+    return None
+
+
+def _opt_db_float(val: Any) -> float | None:
+    if val is None or isinstance(val, bool):
+        return None
+    return float(val)
+
+
+def _opt_db_int(val: Any) -> int | None:
+    if val is None or isinstance(val, bool):
+        return None
+    return int(val)
+
+
+def _opt_db_bool(val: Any) -> bool | None:
+    return val if isinstance(val, bool) else None
+
+
+def _opt_db_str(val: Any) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def persist_tv_presets_duckdb(
     duckdb_path: Path,
-    preset: Mapping[str, Any],
+    presets: Sequence[Mapping[str, Any]],
     *,
     source: str = "tv_bridge",
+    meta_by_alert_id: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
-    """Persist a schema-validated semi-auto TV preset (qty=1, semi_auto_confirmed=False)."""
-    refuse_live_endpoints(preset)
-    qty_val = preset.get("qty")
-    if preset.get("semi_auto_confirmed") is not False or type(qty_val) is not int or qty_val != 1:
-        raise ValueError("Refused TV audit persistence unless qty=1 and semi_auto_confirmed=False")
-    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(str(duckdb_path)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS tv_staged_presets ("
-            "alert_id VARCHAR PRIMARY KEY, symbol VARCHAR, side VARCHAR, qty INTEGER, "
-            "venue VARCHAR, session VARCHAR, order_type VARCHAR, trigger_price DOUBLE, "
-            "stop_price DOUBLE, limit_collar_bps DOUBLE, trailing_schedule VARCHAR, "
-            "semi_auto_confirmed BOOLEAN, data_source VARCHAR, source VARCHAR, "
-            "staged_at_utc VARCHAR)"
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO tv_staged_presets VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    """Batch-persist schema-validated semi-auto TV presets (qty=1, semi_auto_confirmed=False)."""
+    if not presets:
+        return
+    rows: list[tuple[Any, ...]] = []
+    now_iso = datetime.now(UTC).isoformat()
+    for preset in presets:
+        refuse_live_endpoints(preset)
+        qty_val = preset.get("qty")
+        if (
+            preset.get("semi_auto_confirmed") is not False
+            or type(qty_val) is not int
+            or qty_val != 1
+        ):
+            raise ValueError(
+                "Refused TV audit persistence unless qty=1 and semi_auto_confirmed=False"
+            )
+        aid = str(preset["alert_id"])
+        meta = (meta_by_alert_id or {}).get(aid) or {}
+        rows.append(
             (
-                str(preset["alert_id"]),
+                aid,
                 str(preset["symbol"]),
                 str(preset["side"]),
                 int(preset["qty"]),
@@ -237,9 +337,104 @@ def persist_tv_preset_duckdb(
                 False,
                 str(preset.get("data_source") or "tradingview_pine_v6"),
                 source,
-                str(preset.get("staged_at_utc") or datetime.now(UTC).isoformat()),
-            ),
+                str(preset.get("staged_at_utc") or now_iso),
+                _opt_db_str(preset.get("setup_archetype") or meta.get("archetype")),
+                _opt_db_int(preset.get("macro_regime")),
+                _opt_db_float(preset.get("rvol")),
+                _opt_db_float(preset.get("darkpool_trf_ratio")),
+                _opt_db_float(preset.get("hidden_volume_ratio")),
+                _opt_db_float(preset.get("vol_buildup_ratio")),
+                _opt_db_bool(preset.get("unusual_volume_buildup")),
+                _opt_db_bool(preset.get("peak_confirmed")),
+                _opt_db_str(preset.get("pair_symbol") or meta.get("pair_symbol")),
+                _opt_db_str(meta.get("action_gate")),
+                _opt_db_str(meta.get("reverse_short_mode")),
+                _opt_db_str(preset.get("script_kind") or meta.get("script_kind")),
+                _opt_db_str(preset.get("order_preset_id") or meta.get("order_preset_id")),
+            )
         )
+
+    from tier0_sota.live.paper_farm import open_bounded_duckdb
+
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    parquet_path = duckdb_path.with_name("tv_staged_presets.parquet")
+    with open_bounded_duckdb(duckdb_path) as conn:
+        conn.execute(_DUCKDB_BASE_SCHEMA_SQL)
+        for alter_sql in _DUCKDB_ALTER_STMTS:
+            conn.execute(alter_sql)
+        conn.executemany(_DUCKDB_INSERT_SQL, rows)
+        with TemporaryDirectory(dir=duckdb_path.parent, prefix="tv_staged_presets.tmp.") as td:
+            tmp_pq = Path(td) / "tv_staged_presets.parquet"
+            conn.table("tv_staged_presets").write_parquet(str(tmp_pq))
+            os.replace(tmp_pq, parquet_path)
+
+
+def persist_tv_preset_duckdb(
+    duckdb_path: Path,
+    preset: Mapping[str, Any],
+    *,
+    source: str = "tv_bridge",
+    meta: Mapping[str, Any] | None = None,
+) -> None:
+    """Persist a schema-validated semi-auto TV preset (qty=1, semi_auto_confirmed=False)."""
+    meta_map = {str(preset["alert_id"]): meta} if meta and "alert_id" in preset else None
+    persist_tv_presets_duckdb(duckdb_path, [preset], source=source, meta_by_alert_id=meta_map)
+
+
+def sync_tv_audit_duckdb_snapshot(duckdb_path: Path) -> bool:
+    """Idempotently migrate an existing TV audit DuckDB to 28 cols and export Parquet snapshot."""
+    if not duckdb_path.is_file():
+        return False
+    from tier0_sota.live.paper_farm import open_bounded_duckdb
+
+    parquet_path = duckdb_path.with_name("tv_staged_presets.parquet")
+    with open_bounded_duckdb(duckdb_path) as conn:
+        conn.execute(_DUCKDB_BASE_SCHEMA_SQL)
+        for alter_sql in _DUCKDB_ALTER_STMTS:
+            conn.execute(alter_sql)
+        with TemporaryDirectory(dir=duckdb_path.parent, prefix="tv_staged_presets.tmp.") as td:
+            tmp_pq = Path(td) / "tv_staged_presets.parquet"
+            conn.table("tv_staged_presets").write_parquet(str(tmp_pq))
+            os.replace(tmp_pq, parquet_path)
+    return True
+
+
+def load_tv_audit_summary(duckdb_path: Path) -> dict[str, Any]:
+    """Read-only summary of tv_half_auto_audit.duckdb without creating missing files."""
+    empty: dict[str, Any] = {
+        "audit_rows": 0,
+        "by_source": {},
+        "distinct_symbols": [],
+        "parquet_snapshot_present": duckdb_path.with_name("tv_staged_presets.parquet").is_file(),
+    }
+    if not duckdb_path.is_file():
+        return empty
+    from tier0_sota.live.paper_farm import open_bounded_duckdb
+
+    try:
+        with open_bounded_duckdb(duckdb_path, read_only=True) as conn:
+            tables = {str(r[0]) for r in conn.execute("SHOW TABLES").fetchall()}
+            if "tv_staged_presets" not in tables:
+                return empty
+            total_row = conn.execute(
+                "SELECT COUNT(DISTINCT alert_id) FROM tv_staged_presets"
+            ).fetchone()
+            by_src_rows = conn.execute(
+                "SELECT COALESCE(source, 'unknown'), COUNT(DISTINCT alert_id) "
+                "FROM tv_staged_presets GROUP BY 1 ORDER BY 1"
+            ).fetchall()
+            sym_rows = conn.execute(
+                "SELECT DISTINCT symbol FROM tv_staged_presets "
+                "WHERE symbol IS NOT NULL ORDER BY symbol"
+            ).fetchall()
+    except OSError:
+        return empty
+    return {
+        "audit_rows": int(total_row[0]) if total_row and total_row[0] is not None else 0,
+        "by_source": {str(src): int(cnt) for src, cnt in by_src_rows},
+        "distinct_symbols": [str(r[0]) for r in sym_rows],
+        "parquet_snapshot_present": duckdb_path.with_name("tv_staged_presets.parquet").is_file(),
+    }
 
 
 def validate_tv_alert_payload(
@@ -310,7 +505,7 @@ def validate_tv_alert_payload(
     digest_src = (
         f"{m.symbol}:{m.ts_utc_ms}:{m.side}:{m.session}:{trig_norm}:{q_stop}:{m.trailing_schedule}"
     )
-    staged = {
+    staged: dict[str, Any] = {
         "alert_id": hashlib.sha256(digest_src.encode("utf-8")).hexdigest()[:16],
         "schema_version": m.schema_version,
         "symbol": m.symbol,
@@ -336,8 +531,26 @@ def validate_tv_alert_payload(
         "semi_auto_confirmed": False,
         "staged_at_utc": datetime.now(UTC).isoformat(),
     }
-    if m.data_source is not None:
-        staged["data_source"] = m.data_source
+    optional_fields: tuple[tuple[str, Any], ...] = (
+        ("data_source", m.data_source),
+        ("pair_symbol", m.pair_symbol),
+        ("setup_archetype", m.setup_archetype),
+        ("macro_regime", m.macro_regime),
+        ("rvol", m.rvol),
+        ("darkpool_trf_ratio", m.darkpool_trf_ratio),
+        ("hidden_volume_ratio", m.hidden_volume_ratio),
+        ("vol_buildup_ratio", m.vol_buildup_ratio),
+        ("unusual_volume_buildup", m.unusual_volume_buildup),
+        ("peak_confirmed", m.peak_confirmed),
+        ("is_leveraged_or_inverse", m.is_leveraged_or_inverse),
+        ("shortable", m.shortable),
+        ("easy_to_borrow", m.easy_to_borrow),
+        ("script_kind", m.script_kind),
+        ("order_preset_id", m.order_preset_id),
+    )
+    for key, val in optional_fields:
+        if val is not None:
+            staged[key] = val
     return staged
 
 
@@ -350,7 +563,7 @@ def stage_tv_alert_preset(
     live_intake: bool = False,
 ) -> dict[str, Any]:
     """Validate, deduplicate by alert_id, and atomically stage a semi-auto preset."""
-    wl_data = json.loads(watchlist_path.read_text("utf-8")) if watchlist_path.is_file() else None
+    wl_data = _load_watchlist_manifest(watchlist_path)
     preset = validate_tv_alert_payload(
         payload, watchlist_manifest=wl_data, venue=venue, live_intake=live_intake
     )
@@ -400,19 +613,35 @@ def ingest_alerts_file(
 def main() -> None:
     """CLI entrypoint for validating and staging TradingView alert JSON."""
     p = argparse.ArgumentParser(description="Tier-0 TradingView semi-auto alert bridge")
-    p.add_argument("--ingest-file", type=Path, required=True)
-    p.add_argument("--staged-path", type=Path, default=DEFAULT_STAGED_PATH)
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--ingest-file", type=Path)
+    src.add_argument("--ingest-stdin", action="store_true")
+    p.add_argument("--staged-path", type=Path, default=DEFAULT_PACK_STAGED_PATH)
     p.add_argument("--watchlist-path", type=Path, default=DEFAULT_WATCHLIST_PATH)
     p.add_argument("--venue", default="IBKR")
     p.add_argument("--live-intake", action="store_true")
     a = p.parse_args()
-    staged = ingest_alerts_file(
-        a.ingest_file,
-        staged_path=a.staged_path,
-        watchlist_path=a.watchlist_path,
-        venue=a.venue,
-        live_intake=a.live_intake,
-    )
+    if a.ingest_stdin:
+        raw = json.loads(sys.stdin.read())
+        items = raw if isinstance(raw, list) else [raw]
+        staged = [
+            stage_tv_alert_preset(
+                cast(Mapping[str, Any], item),
+                staged_path=a.staged_path,
+                watchlist_path=a.watchlist_path,
+                venue=a.venue,
+                live_intake=a.live_intake,
+            )
+            for item in items
+        ]
+    else:
+        staged = ingest_alerts_file(
+            a.ingest_file,
+            staged_path=a.staged_path,
+            watchlist_path=a.watchlist_path,
+            venue=a.venue,
+            live_intake=a.live_intake,
+        )
     print(json.dumps({"ok": True, "staged_count": len(staged), "presets": staged}, indent=2))
 
 

@@ -48,6 +48,84 @@
       "reason": "Apache-2.0 code but non-commercial pretrained weights v2.5/v3 excluded; use soda-inria/tabicl TabICLv2 (BSD-3-Clause)."
     }
   ],
+  "rejected_frontier_candidates": [
+    {
+      "slug": "tradingview-mcp",
+      "layer": "L15",
+      "decision": "pruned",
+      "reason": "No official upstream repo; community tradingview-mcp forks (atilaahmettaner/tradingview-mcp, tradesdontlie/tradingview-mcp, Moon Dev CDP forks) rely on banned CDP (:9223) or undocumented scraping. Pine v6 + Pydantic TvAlertV1 + tradingview/lightweight-charts + nautilus-engine MCP is the ToU-compliant SOTA winner."
+    },
+    {
+      "slug": "tradingview/charting_library",
+      "spdx": "Proprietary-Commercial",
+      "layer": "L10",
+      "decision": "excluded_spdx_firewall",
+      "reason": "Proprietary TradingView Advanced Charts commercial license (examples repo MIT glue only); use tradingview/lightweight-charts (Apache-2.0)."
+    },
+    {
+      "slug": "revanthpobala/pinescript-vscode-extension",
+      "spdx": "Modified-MIT-Non-OSI",
+      "layer": "L15",
+      "decision": "excluded_spdx_firewall",
+      "reason": "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; track strict MIT folknor/pine-tools or trugurpala/pinescriptv6."
+    },
+    {
+      "slug": "tradingview-pine-seeds/docs",
+      "spdx": "Platform-ToU-Deprecated",
+      "layer": "L4",
+      "decision": "rejected_deprecated_eod_only",
+      "reason": "TradingView suspended new Pine Seeds repositories and only supported EOD daily bars, unsuitable for 24/5 intraday extreme movers."
+    },
+    {
+      "slug": "brian-the-dev/python-tradingview-ta",
+      "spdx": "MIT",
+      "layer": "L4",
+      "decision": "banned_tou_scraping",
+      "reason": "Unofficial TradingView HTTP scanner scraping violating ToU; banned in upstream-map.toml and ast-grep (use alpacahq/alpaca-py)."
+    },
+    {
+      "slug": "shner-elmo/TradingView-Screener",
+      "spdx": "MIT",
+      "layer": "L4",
+      "decision": "banned_tou_scraping",
+      "reason": "Unofficial TradingView scanner API scraping violating ToU; use official alpacahq/alpaca-py ScreenerClient + SIP/BOATS."
+    },
+    {
+      "slug": "rongardF/tvdatafeed",
+      "spdx": "MIT",
+      "layer": "L4",
+      "decision": "banned_tou_scraping",
+      "reason": "Unofficial TradingView WebSocket data scraper violating ToU; use official alpacahq/alpaca-py and prewall-lake."
+    },
+    {
+      "slug": "Mathieu2301/TradingView-API",
+      "spdx": "ISC",
+      "layer": "L4",
+      "decision": "banned_tou_scraping",
+      "reason": "Undocumented TradingView WebSocket/page API scraper violating ToU."
+    },
+    {
+      "slug": "mnwato/tradingview-scraper",
+      "spdx": "MIT",
+      "layer": "L4",
+      "decision": "banned_tou_scraping",
+      "reason": "Undocumented TradingView page scraper violating ToU."
+    },
+    {
+      "slug": "louisnw01/lightweight-charts-python",
+      "spdx": "MIT",
+      "layer": "L10",
+      "decision": "rejected_l10_overlap",
+      "reason": "Local desktop WebView/PyQt wrapper duplicating hosted L10 FINOS Workspace (:1420) + OpenBB (:6900) + tradingview/lightweight-charts v5."
+    },
+    {
+      "slug": "proprietary-tv-webhook-relays",
+      "spdx": "Proprietary-SaaS",
+      "layer": "L4",
+      "decision": "excluded_spdx_and_loopback",
+      "reason": "Commercial cloud webhook relays (TradersPost, 3Commas, CrossTrade, PickMyTrade, Autoview) violate SPDX OSI firewall, loopback isolation, and semi_auto_confirmed=false."
+    }
+  ],
   "active_winners_by_layer": {
     "L0": {
       "name": "Runtime, Lockfile & Provenance",
@@ -209,7 +287,12 @@
         "ag-grid/ag-grid (ag-grid-community MIT)"
       ],
       "watches": ["rerun-io/rerun", "uwdata/mosaic", "finos/FDC3", "evidence-dev/evidence"],
-      "artifacts": ["src/tier0_sota/live/performance.py", "src/tier0_sota/tv/bridge.py", "docker/compose.sota.yml"]
+      "artifacts": [
+        "src/tier0_sota/live/performance.py",
+        "src/tier0_sota/tv/bridge.py",
+        "src/tier0_sota/tv/tickets.py",
+        "docker/compose.sota.yml"
+      ]
     }
   },
   "skills_lock": {
@@ -275,7 +358,7 @@
         {"slug": "grafana/loki", "trigger": "24/5 centralized logs"},
         {"slug": "grafana/tempo", "trigger": "distributed OTel trace storage"},
         {"slug": "grafana/pyroscope", "trigger": "continuous Rust/Python profiling"},
-        {"slug": "prometheus/alertmanager", "trigger": "24/5 alert routing"},
+        {"slug": "prometheus/alertmanager", "spdx": "Apache-2.0", "status": "admitted_profile_gated", "compose_profile": "alerting", "artifacts": ["docker/compose.sota.yml", "docker/prometheus.yml", "docker/prometheus_rules.yml", "docker/alertmanager.yml"], "trigger": "24/5 alert routing"},
         {"slug": "langfuse/langfuse", "trigger": "LLM trace scaling beyond MLflow"}
       ]
     },
@@ -300,7 +383,7 @@
         {"slug": "meridianlabs-ai/inspect_scout", "spdx": "MIT", "trigger": "agent transcript failure scanner"},
         {"slug": "SakanaAI/ShinkaEvolve", "trigger": "sandbox evolutionary coding"},
         {"slug": "algorithmicsuperintelligence/openevolve", "trigger": "open-ended evolutionary search"},
-        {"slug": "snyk/agent-scan", "spdx": "Apache-2.0", "trigger": "static MCP & skill supply-chain audit"},
+        {"slug": "snyk/agent-scan", "spdx": "Apache-2.0", "status": "admitted_offline_cli", "recipe": "just agent-scan", "telemetry_disabled": true, "trigger": "static MCP & skill supply-chain audit"},
         {"slug": "agentskills/agentskills", "trigger": "cross-runtime skill spec"},
         {"slug": "a2aproject/A2A", "trigger": "agent-to-agent interoperability"},
         {"slug": "agentclientprotocol/agent-client-protocol", "alias": "ACP", "trigger": "client/editor agent protocol"},
@@ -310,7 +393,9 @@
         {"slug": "upstash/context7", "trigger": "live versioned library docs MCP"},
         {"slug": "vectorize-io/hindsight", "trigger": "long-horizon agent memory"},
         {"slug": "alpacahq/alpaca-mcp-server", "mode": "paper-only", "trigger": "paper-api.alpaca.markets MCP"},
-        {"slug": "tradingview-mcp", "mode": "display-only", "trigger": "display-only Pine/chart MCP"}
+        {"slug": "folknor/pine-tools", "spdx": "MIT", "vendored_libs_spdx": "MPL-2.0", "zero_cdp": true, "trigger": "offline CI semantic Pine Script v6 AST linting (pine-lint), LSP, or zero-CDP MCP validation"},
+        {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "trigger": "pure-Python Pine Script v6 lexer/parser (--agent-json) CI parse gate"},
+        {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "zero_cdp": true, "trigger": "dedicated zero-CDP Pine Script v6 docs/syntax lookup and static validation MCP (uvx)"}
       ]
     }
   }

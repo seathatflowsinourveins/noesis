@@ -244,22 +244,9 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     assert skills_lock["schema"] == "tier0.upstream-skills-lock.v1"
     assert skills_lock["skills_count"] == 46
     assert len(skills_lock["skills"]) == 46
-    for entry in skills_lock["skills"]:
-        skill_dir = REPO_ROOT / ".claude/skills" / entry["skill"]
-        skill_md = skill_dir / "SKILL.md"
-        assert skill_md.is_file(), f"Missing standalone skill {entry['skill']}"
-        assert hashlib.sha256(skill_md.read_bytes()).hexdigest() == entry["skill_sha256"]
-        dir_digest = hashlib.sha256()
-        for rel_posix, fpath in sorted(
-            (p.relative_to(skill_dir).as_posix(), p) for p in skill_dir.rglob("*") if p.is_file()
-        ):
-            file_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
-            dir_digest.update(f"{rel_posix}\0{file_sha}\n".encode())
-        assert dir_digest.hexdigest() == entry["dir_sha256"]
-    expected_lock_sha = hashlib.sha256(
-        json.dumps(skills_lock["skills"], sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    assert skills_lock["lock_sha256"] == expected_lock_sha
+    from scripts.sync_manifest import verify_skills_lock
+
+    verify_skills_lock(REPO_ROOT, skills_lock)
 
     starred = json.loads(
         (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
@@ -271,6 +258,30 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     assert list(starred["earned_trigger_frontier_l11_to_l15"].keys()) == [
         f"L{idx}" for idx in range(11, 16)
     ]
+    frontier_slugs = {
+        str(cand["slug"])
+        for layer_doc in starred["earned_trigger_frontier_l11_to_l15"].values()
+        for cand in layer_doc.get("candidates", [])
+    }
+    assert "tradingview-mcp" not in frontier_slugs
+    rejected_frontier = {
+        str(entry["slug"]): entry for entry in starred.get("rejected_frontier_candidates", [])
+    }
+    assert "tradingview-mcp" in rejected_frontier
+    assert rejected_frontier["tradingview-mcp"]["decision"] == "pruned"
+    assert "9223" in rejected_frontier["tradingview-mcp"]["reason"]
+    l14_by_slug = {
+        str(c["slug"]): c
+        for c in starred["earned_trigger_frontier_l11_to_l15"]["L14"]["candidates"]
+    }
+    assert l14_by_slug["prometheus/alertmanager"]["status"] == "admitted_profile_gated"
+    assert l14_by_slug["prometheus/alertmanager"]["compose_profile"] == "alerting"
+    l15_by_slug = {
+        str(c["slug"]): c
+        for c in starred["earned_trigger_frontier_l11_to_l15"]["L15"]["candidates"]
+    }
+    assert l15_by_slug["snyk/agent-scan"]["status"] == "admitted_offline_cli"
+    assert l15_by_slug["snyk/agent-scan"]["telemetry_disabled"] is True
 
     required_files = {
         ".github/workflows/ci.yml",
@@ -692,3 +703,57 @@ def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
 
     manifest = _load_manifest()
     assert manifest.get("clean_sota_harness") == rep
+
+
+def test_workstation_lazy_imports_and_thread_bounds_fitness(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify ADR-0026 thread-bounded DuckDB, GBDT bounds, lazy imports, and Dagster workspace."""
+    import os
+    import subprocess
+    import sys
+
+    from tier0_sota.discovery import _env_positive_int
+    from tier0_sota.live.paper_farm import duckdb_connect_config, open_bounded_duckdb
+
+    tmp_duck_dir = tmp_path / "duckdb-tmp"
+    monkeypatch.setenv("TIER0_DUCKDB_THREADS", "6")
+    monkeypatch.setenv("TIER0_DUCKDB_MEMORY_LIMIT", "1GB")
+    monkeypatch.setenv("DUCKDB_TEMP_DIRECTORY", str(tmp_duck_dir))
+
+    cfg = duckdb_connect_config(max_threads=4)
+    assert cfg["threads"] == "4"
+    assert cfg["memory_limit"] == "1GB"
+    assert cfg["temp_directory"] == str(tmp_duck_dir)
+
+    with open_bounded_duckdb(tmp_path / "bounded.duckdb", max_threads=2) as conn:
+        row = conn.execute("SELECT current_setting('threads')").fetchone()
+        assert row is not None and int(row[0]) <= 2
+
+    monkeypatch.setenv("TIER0_LGBM_THREADS", "5")
+    assert _env_positive_int("TIER0_LGBM_THREADS", 4) == 5
+    monkeypatch.setenv("TIER0_LGBM_THREADS", "invalid")
+    assert _env_positive_int("TIER0_LGBM_THREADS", 4) == 4
+
+    probe = (
+        "import json, sys; "
+        "import tier0_sota.discovery, tier0_sota.engine, "
+        "tier0_sota.research, tier0_sota.definitions; "
+        "heavy = ['lightgbm', 'catboost', 'shap', 'stumpy', 'mlflow', "
+        "'skfolio', 'dspy', 'inspect_ai', 'optuna']; "
+        "loaded = [m for m in heavy if m in sys.modules]; "
+        "print(json.dumps(loaded))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(REPO_ROOT),
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(proc.stdout.strip()) == []
+
+    ws_path = REPO_ROOT / "docker" / "workspace.yaml"
+    assert ws_path.is_file(), "Missing official Dagster gRPC docker/workspace.yaml"
+    assert "dagster-code-server" in ws_path.read_text(encoding="utf-8")
