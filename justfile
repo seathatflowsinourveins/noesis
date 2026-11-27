@@ -239,6 +239,11 @@ account-switch:
 reflect *args:
     {{uv_run}} python scripts/run_compounding_reflection.py {{args}}
 
+# Run native NautilusTrader v2 ParquetDataCatalog empirical backtest & official 3-tearsheet suite (Nautilus + ml4t-diagnostic + SHAP/shapiq, pre-wall <= 2026-10-15)
+sim-tearsheets:
+    {{uv_run}} python scripts/run_sim_backtest_tearsheet_suite.py
+    {{uv_run}} python scripts/generate_ml4t_and_shap_tearsheets.py
+
 # Run causal pre-wall early-mover Optuna/MLflow compounding & NVDA premarket historical audit
 compound-early-movers *args:
     {{uv_run}} python scripts/run_early_mover_compounding.py {{if args == "" { "--once" } else { args }}}
