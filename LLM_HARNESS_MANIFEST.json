@@ -310,6 +310,7 @@
       ],
       "primary_scripts": [
         "scripts/tv_console.ps1",
+        "scripts/tv_console.sh",
         "scripts/nautilus_mcp_server.py"
       ],
       "manifest_artifacts": [
@@ -349,6 +350,7 @@
       ],
       "upstream_gates": [
         "just check",
+        "just fnox-check",
         "just docs-build",
         "prek run --all-files",
         "zizmor --offline .github/workflows",

@@ -20,23 +20,32 @@ from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed
 from alpaca.data.live import StockDataStream
 from alpaca.data.requests import StockLatestQuoteRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import GetOrderByIdRequest, LimitOrderRequest, ReplaceOrderRequest
+from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+from alpaca.trading.requests import (
+    GetOrderByIdRequest,
+    LimitOrderRequest,
+    ReplaceOrderRequest,
+    StopLossRequest,
+)
 
 from tier0_sota import engine, risk
 from tier0_sota.live.paper_farm import (
     ALPACA_LANE_PROFILES,
     RTH_ENTRY_COLLAR_PCT,
     AlpacaPaperLane,
+    ExtendedHoursStopSupervision,
     PaperFarmCoordinator,
     _atomic_write_json,
     _duckdb_filename,
+    _ensure_entry_decisions_table,
     open_bounded_duckdb,
+    persist_supervised_stop_duckdb,
     select_short_or_inverse_fallback,
     select_situation_lane,
 )
 from tier0_sota.live.runner import refresh_accounts, verify_paper_environment
 from tier0_sota.live.scanner import (
+    INVERSE_ETF_ANNUAL_EXPENSE_RATES,
     ExtremeMoverScanner,
     lookup_alpaca_paper_borrow,
     resolve_alpaca_env_creds,
@@ -769,3 +778,336 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
                 for stream in streams.values():
                     stream.stop()
                 report("STOPPED")
+
+
+def _load_staged_tv_preset(manifest_dir: Path, alert_id: str) -> tuple[dict[str, Any], Path]:
+    """Locate a staged TV preset by alert_id without mutating staged files."""
+    target_id = alert_id.strip().lower()
+    if not target_id:
+        raise ValueError("alert_id must be a non-empty hex identifier")
+    candidates = (
+        manifest_dir / "tv_sota_pack" / "staged_tv_presets.json",
+        manifest_dir / "staged_tv_presets.json",
+        manifest_dir / "tv_sota_pack" / "staged_scan_presets.json",
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            continue
+        if doc.get("semi_auto_confirmed") is True:
+            raise PermissionError(
+                f"Staged preset manifest {path.name} has semi_auto_confirmed=True"
+            )
+        for item in doc.get("presets") or ():
+            if (
+                isinstance(item, dict)
+                and str(item.get("alert_id") or "").strip().lower() == target_id
+            ):
+                return dict(item), path
+    raise ValueError(f"Staged TV alert_id not found: {alert_id!r}")
+
+
+def _lookup_mover_prior_close(manifest_dir: Path, symbol: str) -> Decimal | None:
+    movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
+    if not movers_path.is_file():
+        return None
+    try:
+        doc = json.loads(movers_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    for row in doc.get("entries") or ():
+        if str(row.get("symbol") or "").strip().upper() == symbol:
+            raw = row.get("prior_close")
+            if raw is not None and not isinstance(raw, bool):
+                val = Decimal(str(raw))
+                if val.is_finite() and val > 0:
+                    return val
+    return None
+
+
+def _compute_r_lock_levels(
+    entry_limit: Decimal, stop_price: Decimal, side: risk.Side
+) -> dict[str, float]:
+    risk_r = abs(entry_limit - stop_price)
+    sign = Decimal("1") if side == "LONG" else Decimal("-1")
+
+    def _q(px: Decimal) -> float:
+        return float(risk.quantize_rule_612(max(risk.TICK_SUB_DOLLAR, px), side=side, is_stop=True))
+
+    be_px = entry_limit * (Decimal("1.0010") if side == "LONG" else Decimal("0.9990"))
+    return {
+        "be_plus_fee": _q(be_px),
+        "lock_at_1r": _q(entry_limit + sign * Decimal("0.45") * risk_r),
+        "lock_at_2r": _q(entry_limit + sign * Decimal("1.35") * risk_r),
+        "lock_at_3r": _q(entry_limit + sign * Decimal("2.35") * risk_r),
+    }
+
+
+def submit_confirmed_tv_preset_paper(
+    manifest_dir: Path,
+    *,
+    alert_id: str,
+    qty: int = 1,
+    dry_run: bool = False,
+    now_utc: datetime | None = None,
+) -> dict[str, Any]:
+    """Fail-closed, operator-confirmed paper-only handoff of a staged TradingView preset."""
+    verify_paper_environment()
+    if isinstance(qty, bool) or not isinstance(qty, int) or qty < 1:
+        raise ValueError(f"qty must be a positive integer, got {qty!r}")
+
+    from tier0_sota.tv.bridge import refuse_live_endpoints, validate_tv_alert_payload
+
+    raw_preset, staged_source = _load_staged_tv_preset(manifest_dir, alert_id)
+    if raw_preset.get("semi_auto_confirmed") is not False:
+        raise PermissionError("Staged TV preset must retain semi_auto_confirmed=False")
+    refuse_live_endpoints(raw_preset)
+
+    now = now_utc or datetime.now(UTC)
+    now_ns = int(now.timestamp() * 1_000_000_000)
+    session = engine.classify_us_equity_session_et(now_ns)
+    if session == "CLOSED":
+        raise ValueError("Refused TV preset execution while XNYS 24/5 session is CLOSED")
+    raw_side = str(raw_preset.get("side") or "").strip().upper()
+    raw_sess = str(raw_preset.get("session") or "").strip().upper()
+    if raw_side == "SELL" and (session == "OVERNIGHT" or raw_sess == "OVERNIGHT"):
+        raise ValueError("ALPACA OVERNIGHT SELL unsupported: ROUTE_IBKR_OR_INVERSE_HEDGE_SOXS_SQQQ")
+
+    validated = validate_tv_alert_payload(raw_preset, venue="ALPACA", live_intake=False)
+    sym = str(validated["symbol"]).strip().upper()
+    route_side: risk.Side = "LONG" if validated["side"] == "BUY" else "SHORT"
+    natr_d = Decimal(str(validated["natr_pct"]))
+    is_inverse = sym in _INVERSE_HEDGE_SYMBOLS
+    if is_inverse and route_side == "LONG":
+        origin = f"INVERSE_HEDGE_{sym}"
+    elif route_side == "SHORT":
+        origin = "DIRECT_SHORT_ETB"
+    else:
+        origin = "TV_HALF_AUTO_CONFIRMED"
+
+    farm = PaperFarmCoordinator(manifest_dir)
+    if not cost_calibration_allows_entry(manifest_dir):
+        raise PermissionError("TCA_RECALIBRATION_REQUIRED: cost calibration blocks new paper entry")
+
+    def _evaluate_and_maybe_submit() -> dict[str, Any]:
+        refresh_accounts(farm, now, session, publish=False, record_fuse=not dry_run)
+        owners = farm.symbol_lock.snapshot()
+        if sym in owners:
+            raise PermissionError(
+                f"CrossLaneSymbolLock refused {sym}: already owned by {owners[sym]}"
+            )
+        lane = select_situation_lane(
+            farm.lanes,
+            origin=origin,
+            natr_pct=natr_d,
+            rvol_normalized=validated.get("rvol"),
+        )
+        if lane is None:
+            raise PermissionError(
+                "All Alpaca paper lanes unavailable or daily drawdown breaker tripped"
+            )
+        if not lane.paper_only or lane.live_execution_enabled:
+            raise PermissionError("Live execution disabled; paper_only=True enforced.")
+
+        broker = lane.trading_client
+        if session == "RTH" and not broker.get_clock().is_open:
+            raise ValueError("Broker reports RTH market clock is closed")
+        asset = broker.get_asset(sym)
+        attrs = getattr(asset, "attributes", None) or []
+        overnight = "overnight_tradable" in attrs and "overnight_halted" not in attrs
+        if not getattr(asset, "tradable", False):
+            raise ValueError(f"Asset {sym} is not tradable on Alpaca Paper")
+        if session == "OVERNIGHT" and not overnight:
+            raise ValueError(f"Asset {sym} is not overnight_tradable on Alpaca BOATS")
+        if route_side == "SHORT" and (
+            lookup_alpaca_paper_borrow([sym], broker).get(sym, {}).get("easy_to_borrow") is not True
+        ):
+            raise ValueError(f"Short refused for non-ETB symbol {sym}")
+
+        data = ExtremeMoverScanner.from_env().data_client
+        if data is None:
+            raise RuntimeError("Missing market data client")
+        feed = DataFeed.BOATS if session == "OVERNIGHT" else DataFeed.SIP
+        quote = data.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=sym, feed=feed)
+        )[sym]
+        bid, ask = Decimal(str(quote.bid_price)), Decimal(str(quote.ask_price))
+        if not 0 <= (now - quote.timestamp).total_seconds() <= 5:
+            raise ValueError(f"Stale or future live quote for {sym}")
+        if not quote_microstructure_allows_entry(bid, ask, session):
+            raise ValueError(
+                f"Quote microstructure rejected {sym} (bid={bid}, ask={ask}, session={session})"
+            )
+
+        sched_name, sp_map = engine.select_pooled_trailing_schedule(natr_d)
+        prof = engine.get_session_protection_profile(session, sp_map)
+        is_ext = session != "RTH"
+        ref_price = ask if route_side == "LONG" else bid
+        arrival_price = (bid + ask) / Decimal("2")
+        entry_collar = prof.limit_collar_pct if is_ext else RTH_ENTRY_COLLAR_PCT
+        entry_limit = engine.compute_collared_entry_limit_price(ref_price, route_side, entry_collar)
+        stop_price = risk.compute_capped_stop_price(
+            entry_limit, route_side, max_loss_pct=prof.initial_max_loss_pct
+        )
+        stop_limit_price = (
+            engine.compute_collared_limit_price(stop_price, route_side, prof.limit_collar_pct)
+            if is_ext
+            else None
+        )
+        r_lock_levels = _compute_r_lock_levels(entry_limit, stop_price, route_side)
+        protective_stop_mode = "COLLARED_STOP_LIMIT_SUPERVISED" if is_ext else "NATIVE_OTO_STOP"
+        preview: dict[str, Any] = {
+            "ok": True,
+            "dry_run": True,
+            "would_submit": True,
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "semi_auto_confirmed_in_stage": False,
+            "staged_source": staged_source.name,
+            "alert_id": str(validated["alert_id"]),
+            "symbol": sym,
+            "side": route_side,
+            "qty": qty,
+            "lane_account": lane.account,
+            "lane_id": lane.profile["lane_id"],
+            "session": session,
+            "origin": origin,
+            "order_type": prof.order_mode,
+            "entry_order_type": "LIMIT_EXTENDED" if is_ext else "OTO_LIMIT",
+            "protective_stop_mode": protective_stop_mode,
+            "entry_limit": float(entry_limit),
+            "stop_price": float(stop_price),
+            "stop_limit_price": float(stop_limit_price) if stop_limit_price is not None else None,
+            "collar_bps": float(prof.limit_collar_bps),
+            "trailing_schedule": sched_name,
+            "r_lock_levels": r_lock_levels,
+        }
+        if dry_run:
+            return preview
+
+        cid = f"noesis-tv-{validated['alert_id']}"
+        for other in farm.lanes.values():
+            if not other.duckdb_path.is_file():
+                continue
+            with open_bounded_duckdb(other.duckdb_path, read_only=True) as db:
+                if ("paper_entry_decisions",) in db.execute(
+                    "SHOW TABLES"
+                ).fetchall() and db.execute(
+                    "SELECT 1 FROM paper_entry_decisions WHERE client_order_id=? OR "
+                    "(symbol=? AND (closed_at IS NULL OR closed_at>now()-INTERVAL '60 seconds'))",
+                    [cid, sym],
+                ).fetchone():
+                    raise PermissionError(
+                        f"Duplicate or cooldown-blocked TV paper entry for {sym} ({cid})"
+                    )
+
+        if not farm.symbol_lock.try_claim(sym, lane.account):
+            raise PermissionError(f"CrossLaneSymbolLock refused concurrent claim for {sym}")
+        with lane._budget_lock:
+            allowed_rpm = lane.rate_budget.try_consume(now.timestamp(), is_exit=False)
+        if not allowed_rpm:
+            farm.symbol_lock.release(sym, lane.account)
+            raise PermissionError(
+                f"Rate budget exhausted on {lane.account} (exit reserve protected)"
+            )
+
+        annual_rate = Decimal(str(INVERSE_ETF_ANNUAL_EXPENSE_RATES.get(sym, 0.0)))
+        prior_close = _lookup_mover_prior_close(manifest_dir, sym)
+        if origin.startswith("INVERSE_HEDGE_") and prior_close is None:
+            prior_close = Decimal(str(validated["trigger_price"]))
+
+        req_kw: dict[str, Any] = {
+            "symbol": sym,
+            "qty": qty,
+            "side": OrderSide.BUY if route_side == "LONG" else OrderSide.SELL,
+            "limit_price": float(entry_limit),
+            "time_in_force": TimeInForce.DAY if is_ext else TimeInForce.GTC,
+            "extended_hours": is_ext,
+            "client_order_id": cid,
+        }
+        if not is_ext:
+            req_kw["order_class"] = OrderClass.OTO
+            req_kw["stop_loss"] = StopLossRequest(stop_price=float(stop_price))
+        request = LimitOrderRequest(**req_kw)
+
+        lane.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+        with open_bounded_duckdb(lane.duckdb_path) as conn:
+            _ensure_entry_decisions_table(conn)
+            conn.execute(
+                "INSERT INTO paper_entry_decisions "
+                "(client_order_id,symbol,side,decision_price,arrival_price,session,origin,"
+                "annual_rate,prior_close,initial_stop,natr_pct) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    cid,
+                    sym,
+                    route_side,
+                    Decimal(str(validated["trigger_price"])),
+                    arrival_price,
+                    session,
+                    origin,
+                    annual_rate,
+                    prior_close,
+                    stop_price,
+                    natr_d,
+                ),
+            )
+        order = broker.submit_order(request)
+        now_iso = now.isoformat()
+        broker_order_id = str(getattr(order, "id", ""))
+        order_status = str(getattr(order, "status", "SUBMITTED"))
+
+        if is_ext and stop_limit_price is not None:
+            supervision = ExtendedHoursStopSupervision(
+                ts_utc=now_iso,
+                account=lane.account,
+                lane_id=lane.profile["lane_id"],
+                broker_order_id=broker_order_id,
+                symbol=sym,
+                side=route_side,
+                qty=qty,
+                session=session,
+                protective_stop_mode="COLLARED_STOP_LIMIT_SUPERVISED",
+                ref_price=ref_price,
+                stop_price=stop_price,
+                stop_limit_price=stop_limit_price,
+                collar_bps=prof.limit_collar_bps,
+                max_loss_pct=prof.initial_max_loss_pct,
+                status="ARMED",
+            )
+            lane.supervised_stops[broker_order_id] = supervision
+            persist_supervised_stop_duckdb(lane.duckdb_path, supervision)
+        lane._record_order(
+            (
+                now_iso,
+                lane.account,
+                lane.profile["lane_id"],
+                broker_order_id,
+                sym,
+                route_side,
+                float(qty),
+                "LIMIT_EXTENDED" if is_ext else "LIMIT",
+                float(entry_limit),
+                float(stop_price),
+                session,
+                order_status,
+                0.0,
+            )
+        )
+        return preview | {
+            "dry_run": False,
+            "would_submit": False,
+            "submitted": True,
+            "broker_order_id": broker_order_id,
+            "client_order_id": cid,
+            "broker_status": order_status,
+            "submitted_at_utc": now_iso,
+        }
+
+    if dry_run:
+        return _evaluate_and_maybe_submit()
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    with open_bounded_duckdb(manifest_dir / "paper_farm_runner.duckdb"):
+        return _evaluate_and_maybe_submit()

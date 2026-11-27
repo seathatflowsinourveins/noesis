@@ -123,6 +123,73 @@ print(json.dumps(load_tv_audit_summary(Path('${TIER0_PACK_DIR}/tv_half_auto_audi
 "
 }
 
+tv_confirm_paper() {
+  local alert_id="${1:-}"
+  if [[ -z "$alert_id" ]]; then
+    printf 'Usage: tv_confirm_paper <alert_id> [--dry-run] [--qty 1]\n' >&2
+    return 2
+  fi
+  shift
+  local qty="1"
+  local dry_run="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run)
+        dry_run="1"
+        shift
+        ;;
+      --qty|--tv-qty)
+        if [[ $# -lt 2 ]]; then
+          printf '[ERR] %s requires an integer quantity\n' "$1" >&2
+          return 2
+        fi
+        qty="$2"
+        shift 2
+        ;;
+      --qty=*|--tv-qty=*)
+        qty="${1#*=}"
+        shift
+        ;;
+      *)
+        printf '[ERR] Unknown option for tv-confirm-paper: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+  local key_file="${FNOX_AGE_KEY_FILE:-${HOME}/.config/fnox/age.txt}"
+  if ! command -v fnox >/dev/null 2>&1; then
+    printf '[ERR] fnox is required for tv-confirm-paper (--profile paper)\n' >&2
+    return 1
+  fi
+  if [[ ! -f "$key_file" ]]; then
+    printf '[ERR] Missing fnox paper age key: %s\n' "$key_file" >&2
+    return 1
+  fi
+  local uv_env=""
+  if [[ ! -x "${TIER0_REPO_ROOT}/.venv/bin/python" && -x "${HOME}/noesis/.venv/bin/python" ]]; then
+    uv_env="${HOME}/noesis/.venv"
+  fi
+  local runner_args=(
+    --manifest-dir "${TIER0_MANIFEST_DIR}"
+    --confirm-tv-alert "$alert_id"
+    --tv-qty "$qty"
+  )
+  if [[ "$dry_run" == "1" ]]; then
+    runner_args+=(--dry-run)
+  fi
+  (
+    cd "${TIER0_REPO_ROOT}"
+    if [[ -n "$uv_env" ]]; then
+      export UV_PROJECT_ENVIRONMENT="$uv_env"
+    fi
+    FNOX_AGE_KEY_FILE="$key_file" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH="${TIER0_REPO_ROOT}/src" \
+    TIER0_DATA_ROOT="${TIER0_DATA_ROOT}" \
+      fnox exec --profile paper -- uv run --no-sync python -m tier0_sota.live.runner "${runner_args[@]}"
+  )
+}
+
 tv_portals() {
   printf 'FINOS Workspace : http://localhost:1420/\n'
   printf 'OpenBB Widgets  : http://127.0.0.1:6900/widgets.json\n'
@@ -141,7 +208,7 @@ tv_land() {
   printf '  1. Pine Editor Ctrl+V -> Save (tier0_omni_sota_24x5.pine copied)\n'
   printf '  2. tv_copy_regime -> Macro pane (tier0_market_regime.pine into Pane 1)\n'
   printf '  3. tv_copy_watchlist -> Watchlist ... Import list... -> Open\n'
-  printf '  4. Optional: tv_copy_strategy | tv_copy_darkpool | tv_presets\n'
+  printf '  4. Optional: tv_copy_strategy | tv_copy_darkpool | tv_presets | tv_confirm_paper <alert_id> --dry-run\n'
 }
 
 tv_e2e() {
@@ -170,11 +237,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     copy-darkpool) tv_copy_darkpool ;;
     watchlist|copy-watchlist) tv_copy_watchlist "$@" ;;
     ingest) tv_ingest "$@" ;;
+    confirm-paper|tv-confirm-paper) tv_confirm_paper "$@" ;;
     audit) tv_audit ;;
     portals) tv_portals ;;
     e2e) tv_e2e ;;
     *)
-      printf 'Usage: %s {land|tickets|presets|sync-pine|copy-omni|copy-strategy|copy-regime|copy-darkpool|watchlist|ingest|audit|portals|e2e}\n' "$0" >&2
+      printf 'Usage: %s {land|tickets|presets|sync-pine|copy-omni|copy-strategy|copy-regime|copy-darkpool|watchlist|ingest|confirm-paper|tv-confirm-paper|audit|portals|e2e}\n' "$0" >&2
       exit 2
       ;;
   esac

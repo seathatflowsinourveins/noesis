@@ -1715,8 +1715,15 @@ def test_tv_console_sh_syntax_shellcheck_and_ps1_extensions() -> None:
         "function tv-copy-strategy",
         "function tv-copy-darkpool",
         "function tv-ingest",
+        "function tv-confirm-paper",
     ):
         assert fn in ps1_src
+    assert "'--profile', 'paper'" in ps1_src
+    assert "'--confirm-tv-alert'" in ps1_src
+    assert "'--tv-qty'" in ps1_src
+    assert "'--dry-run'" in ps1_src
+    assert "--profile live" not in ps1_src and "'--profile', 'live'" not in ps1_src
+    assert "| tv-confirm-paper |" in ps1_src
 
     sh_path = REPO_ROOT / "scripts" / "tv_console.sh"
     sh_src = sh_path.read_text(encoding="utf-8")
@@ -1724,6 +1731,15 @@ def test_tv_console_sh_syntax_shellcheck_and_ps1_extensions() -> None:
     assert "semi_auto_confirmed=false" in sh_src
     assert "http://localhost:1420/" in sh_src
     assert "http://127.0.0.1:1420/" not in sh_src
+    assert "tv_confirm_paper()" in sh_src
+    assert "tv-confirm-paper" in sh_src
+    assert (
+        "fnox exec --profile paper -- uv run --no-sync python -m tier0_sota.live.runner" in sh_src
+    )
+    assert "--confirm-tv-alert" in sh_src
+    assert "--tv-qty" in sh_src
+    assert "--dry-run" in sh_src
+    assert "--profile live" not in sh_src
     for forbidden in ("api.alpaca.markets", "4001", "7496", "8798", "8796"):
         assert forbidden not in sh_src
 

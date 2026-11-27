@@ -197,6 +197,38 @@ open(r'$tmp', 'w', encoding='utf-8').write(json.dumps(payload))
     }
 }
 
+function tv-confirm-paper {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{16}$')][string]$AlertId,
+        [ValidateRange(1, 10000)][int]$Qty = 1,
+        [switch]$DryRun,
+        [string]$ManifestDir = $script:Tier0Manifest
+    )
+    $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { [Environment]::GetEnvironmentVariable('FNOX_AGE_KEY_FILE', 'User') }
+    if (-not $keyFile) { $keyFile = Join-Path $HOME '.config\fnox\age.txt' }
+    if (-not (Get-Command fnox -ErrorAction SilentlyContinue)) { throw 'fnox is required for tv-confirm-paper (--profile paper)' }
+    if (-not (Test-Path -LiteralPath $keyFile)) { throw "Missing fnox paper age key: $keyFile" }
+    $env:FNOX_AGE_KEY_FILE = $keyFile
+    $env:PYTHONDONTWRITEBYTECODE = '1'
+    $env:PYTHONPATH = Join-Path $script:Tier0RepoRoot 'src'
+    $runnerArgs = @(
+        'exec', '--profile', 'paper', '--',
+        'uv', 'run', '--no-sync', 'python', '-B', '-m', 'tier0_sota.live.runner',
+        '--manifest-dir', $ManifestDir,
+        '--confirm-tv-alert', $AlertId.Trim().ToLowerInvariant(),
+        '--tv-qty', "$Qty"
+    )
+    if ($DryRun) { $runnerArgs += '--dry-run' }
+    Push-Location $script:Tier0RepoRoot
+    try {
+        & fnox @runnerArgs
+        if ($LASTEXITCODE -ne 0) { throw "tv-confirm-paper exited with code $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
 function tv-portals {
     foreach ($url in @(
         'http://localhost:1420/',
@@ -246,4 +278,4 @@ function tv-e2e {
     }
 }
 
-Write-Host "[TV-SOTA] Loaded: tv-land | tv-tickets | tv-presets | tv-stage | tv-ingest | tv-sync-pine | tv-copy-omni | tv-copy-strategy | tv-copy-regime | tv-copy-darkpool | tv-copy-watchlist | tv-portals | tv-e2e" -ForegroundColor Cyan
+Write-Host "[TV-SOTA] Loaded: tv-land | tv-tickets | tv-presets | tv-stage | tv-ingest | tv-confirm-paper | tv-sync-pine | tv-copy-omni | tv-copy-strategy | tv-copy-regime | tv-copy-darkpool | tv-copy-watchlist | tv-portals | tv-e2e" -ForegroundColor Cyan

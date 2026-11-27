@@ -493,7 +493,8 @@
         "src/tier0_sota/tv/bridge.py",
         "src/tier0_sota/tv/tickets.py",
         "src/tier0_sota/tv/schema_v1.json",
-        "scripts/tv_console.ps1"
+        "scripts/tv_console.ps1",
+        "scripts/tv_console.sh"
       ]
     },
     "L5": {
@@ -773,6 +774,7 @@
     "lane_launcher": "scripts/launch_clean_lanes.ps1",
     "paper_farm": "scripts/run_live_paper_farm.ps1",
     "tv_console": "scripts/tv_console.ps1",
+    "tv_console_sh": "scripts/tv_console.sh",
     "mcp_server": "scripts/nautilus_mcp_server.py",
     "orca_account_failover": "scripts/orca_account_failover.py",
     "formal_risk_z3": "evals/formal_risk_z3.py",

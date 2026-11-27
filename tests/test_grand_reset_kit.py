@@ -565,6 +565,7 @@ def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
         "fnox-check:",
         "scan",
         "paper-farm",
+        "tv-confirm-paper",
         "open-agy-wsl:",
         "agent-scan:",
         "SNYK_CFG_TELEMETRY",
@@ -572,3 +573,56 @@ def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
         "SNYK_TOKEN",
     ):
         assert token in just_txt, f"justfile missing {token!r}"
+
+
+def test_fnox_live_profile_physical_key_isolation_and_tv_confirm_paper_recipe() -> None:
+    """Enforce dormant Stage-5 live key isolation in fnox.toml and paper-only tv-confirm-paper."""
+    fnox_raw = (REPO_ROOT / "fnox.toml").read_text(encoding="utf-8")
+    assert "AGE-SECRET-KEY-" not in fnox_raw
+    assert not re.search(r"\b(?:PK|AK)[0-9A-Z]{16,28}\b", fnox_raw)
+    assert "api.alpaca.markets" not in fnox_raw.lower()
+
+    fnox_doc = tomllib.loads(fnox_raw)
+    default_age = fnox_doc["providers"]["age"]
+    assert default_age["type"] == "age"
+    assert default_age.get("key_file") != "~/.config/fnox/live-age.txt"
+
+    live_prof = fnox_doc["profiles"]["live"]
+    age_live = live_prof["providers"]["age_live"]
+    assert age_live["type"] == "age"
+    live_key_file = age_live["key_file"]
+    assert live_key_file == "~/.config/fnox/live-age.txt"
+    assert live_key_file != "~/.config/fnox/age.txt"
+    assert live_key_file != default_age.get("key_file")
+
+    live_secrets = live_prof["secrets"]
+    assert live_secrets["LIVE_EXECUTION_ENABLED"]["default"] == "false"
+    for live_key_name in ("ALPACA_LIVE_API_KEY", "ALPACA_LIVE_SECRET_KEY"):
+        entry = live_secrets.get(live_key_name)
+        assert isinstance(entry, dict), (
+            f"Missing dormant {live_key_name} in [profiles.live.secrets]"
+        )
+        assert entry.get("provider") == "age_live"
+        assert entry.get("if_missing") == "ignore"
+        assert "value" not in entry, f"{live_key_name} must remain dormant with no embedded value"
+        assert live_key_name not in fnox_doc.get("secrets", {})
+        assert live_key_name not in fnox_doc["profiles"]["paper"].get("secrets", {})
+
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    blocks = re.findall(
+        r"(?ms)^\[(unix|windows)\]\ntv-confirm-paper alert_id \*args:\n((?:    [^\n]*\n?)+)",
+        just_txt,
+    )
+    by_os = dict(blocks)
+    assert set(by_os.keys()) == {"unix", "windows"}, (
+        f"justfile must define [unix] and [windows] tv-confirm-paper recipes; got {sorted(by_os)}"
+    )
+    for os_name, body in by_os.items():
+        assert "fnox exec --profile paper --" in body, f"{os_name} recipe must use --profile paper"
+        assert "tier0_sota.live.runner" in body
+        assert "--confirm-tv-alert" in body
+        for forbidden in ("--profile live", "api.alpaca.markets", "live-age.txt", "9223"):
+            assert forbidden not in body, f"Forbidden {forbidden!r} in {os_name} tv-confirm-paper"
+    for live_port in ("4001", "7496", "8798", "8796"):
+        assert live_port in by_os["unix"], f"Unix tv-confirm-paper must guard live port {live_port}"
+    assert "ALPACA_LIVE_API_KEY" in just_txt and "ALPACA_LIVE_SECRET_KEY" in just_txt

@@ -93,6 +93,17 @@ tv-e2e:
     {{uv_run}} ty check src/tier0_sota/tv tests/test_tv_automation.py
     {{uv_run}} pytest -q {{pytest_cache_flag}} tests/test_tv_automation.py
 
+# Confirm a staged TradingView alert into the Alpaca PAPER farm via encrypted fnox paper profile (never live)
+[unix]
+tv-confirm-paper alert_id *args:
+    active=$(ss -Htan '( sport = :4001 or dport = :4001 or sport = :7496 or dport = :7496 or sport = :8798 or dport = :8798 or sport = :8796 or dport = :8796 )'); test -z "$active"
+    FNOX_AGE_KEY_FILE="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/src" TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" {{uv_prefix}}fnox exec --profile paper -- uv run --no-sync python -B -m tier0_sota.live.runner --confirm-tv-alert "{{alert_id}}" {{args}}
+
+# Confirm a staged TradingView alert into the Alpaca PAPER farm via encrypted fnox paper profile (never live)
+[windows]
+tv-confirm-paper alert_id *args:
+    $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { [Environment]::GetEnvironmentVariable('FNOX_AGE_KEY_FILE', 'User') }; if (-not $keyFile) { $keyFile = Join-Path $HOME '.config\fnox\age.txt' }; if (-not (Get-Command fnox -ErrorAction SilentlyContinue)) { throw 'fnox is required for tv-confirm-paper (--profile paper)' }; if (-not (Test-Path -LiteralPath $keyFile)) { throw "Missing fnox paper age key: $keyFile" }; $env:FNOX_AGE_KEY_FILE = $keyFile; $env:PYTHONDONTWRITEBYTECODE = '1'; $env:PYTHONPATH = Join-Path $PWD 'src'; fnox exec --profile paper -- uv run --no-sync python -B -m tier0_sota.live.runner --confirm-tv-alert '{{alert_id}}' {{args}}; exit $LASTEXITCODE
+
 # Build Zensical ADR & architecture documentation site (strict mode)
 docs-build:
     {{uv_run}} zensical build --clean --strict
@@ -129,7 +140,7 @@ security: gitleaks zizmor trivy
 agent-scan:
     #!/usr/bin/env bash
     set -euo pipefail
-    unset SNYK_TOKEN ALPACA_PA1_API_KEY ALPACA_PA1_SECRET ALPACA_PA1_SECRET_KEY ALPACA_PA2_API_KEY ALPACA_PA2_SECRET ALPACA_PA2_SECRET_KEY ALPACA_PA3_API_KEY ALPACA_PA3_SECRET ALPACA_PA3_SECRET_KEY APCA_API_KEY_ID APCA_API_SECRET_KEY
+    unset SNYK_TOKEN ALPACA_PA1_API_KEY ALPACA_PA1_SECRET ALPACA_PA1_SECRET_KEY ALPACA_PA2_API_KEY ALPACA_PA2_SECRET ALPACA_PA2_SECRET_KEY ALPACA_PA3_API_KEY ALPACA_PA3_SECRET ALPACA_PA3_SECRET_KEY APCA_API_KEY_ID APCA_API_SECRET_KEY ALPACA_LIVE_API_KEY ALPACA_LIVE_SECRET_KEY
     export SNYK_CFG_TELEMETRY=0
     export SNYK_DISABLE_ANALYTICS=1
     targets=(.mcp.json .claude/settings.json .gemini/settings.json opencode.json .codex/config.toml .claude/skills)
@@ -144,7 +155,7 @@ agent-scan:
 # Run guarded offline static MCP & skills supply-chain audit via snyk/agent-scan (L15; telemetry off, zero secrets)
 [windows]
 agent-scan:
-    $env:SNYK_CFG_TELEMETRY = '0'; $env:SNYK_DISABLE_ANALYTICS = '1'; foreach ($v in @('SNYK_TOKEN','ALPACA_PA1_API_KEY','ALPACA_PA1_SECRET','ALPACA_PA1_SECRET_KEY','ALPACA_PA2_API_KEY','ALPACA_PA2_SECRET','ALPACA_PA2_SECRET_KEY','ALPACA_PA3_API_KEY','ALPACA_PA3_SECRET','ALPACA_PA3_SECRET_KEY','APCA_API_KEY_ID','APCA_API_SECRET_KEY')) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }; $targets = @('.mcp.json','.claude/settings.json','.gemini/settings.json','opencode.json','.codex/config.toml','.claude/skills'); if (Get-Command agent-scan -ErrorAction SilentlyContinue) { agent-scan inspect --opt-out @targets } elseif (Get-Command uvx -ErrorAction SilentlyContinue) { & uvx --offline --from snyk-agent-scan agent-scan --help *> $null; if ($LASTEXITCODE -eq 0) { uvx --offline --from snyk-agent-scan agent-scan inspect --opt-out @targets } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' } } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' }
+    $env:SNYK_CFG_TELEMETRY = '0'; $env:SNYK_DISABLE_ANALYTICS = '1'; foreach ($v in @('SNYK_TOKEN','ALPACA_PA1_API_KEY','ALPACA_PA1_SECRET','ALPACA_PA1_SECRET_KEY','ALPACA_PA2_API_KEY','ALPACA_PA2_SECRET','ALPACA_PA2_SECRET_KEY','ALPACA_PA3_API_KEY','ALPACA_PA3_SECRET','ALPACA_PA3_SECRET_KEY','APCA_API_KEY_ID','APCA_API_SECRET_KEY','ALPACA_LIVE_API_KEY','ALPACA_LIVE_SECRET_KEY')) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }; $targets = @('.mcp.json','.claude/settings.json','.gemini/settings.json','opencode.json','.codex/config.toml','.claude/skills'); if (Get-Command agent-scan -ErrorAction SilentlyContinue) { agent-scan inspect --opt-out @targets } elseif (Get-Command uvx -ErrorAction SilentlyContinue) { & uvx --offline --from snyk-agent-scan agent-scan --help *> $null; if ($LASTEXITCODE -eq 0) { uvx --offline --from snyk-agent-scan agent-scan inspect --opt-out @targets } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' } } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' }
 
 # Start WSL2/Docker hosted SOTA research stack (-p docker)
 docker-up:

@@ -2566,6 +2566,415 @@ def test_runner_resolve_pin_symbols_upgrades_legacy_two_pin_override() -> None:
     assert _resolve_pin_symbols("SOXL,NVDA") == ("SOXL", "NVDA")
 
 
+def _stage_sample_tv_preset(
+    manifest_dir: Path,
+    *,
+    symbol: str,
+    side: str,
+    session: str,
+    trigger_price: float,
+    stop_price: float,
+    natr_pct: float,
+    trailing_schedule: str,
+    order_type: str,
+    limit_collar_bps: float,
+    rvol: float | None = None,
+    venue: str = "ALPACA",
+    shortable: bool | None = None,
+    easy_to_borrow: bool | None = None,
+) -> dict[str, object]:
+    from tier0_sota.tv.bridge import stage_tv_alert_preset
+
+    payload: dict[str, object] = {
+        "schema_version": "tier0.tv-alert.v1",
+        "symbol": symbol,
+        "ts_utc_ms": 1795746660000,
+        "bar_confirmed": True,
+        "side": side,
+        "qty": 1,
+        "venue": venue,
+        "session": session,
+        "order_type": order_type,
+        "trigger_price": trigger_price,
+        "stop_price": stop_price,
+        "limit_collar_bps": limit_collar_bps,
+        "trailing_schedule": trailing_schedule,
+        "natr_pct": natr_pct,
+        "auto_reverse": True,
+        "auto_reentry": True,
+        "reentry_cooldown_secs": 60,
+        "strategy_id": "SignalExecutionStrategy",
+        "semi_auto_confirmed": False,
+        "data_source": "tradingview_pine_v6",
+    }
+    if rvol is not None:
+        payload["rvol"] = rvol
+    if shortable is not None:
+        payload["shortable"] = shortable
+    if easy_to_borrow is not None:
+        payload["easy_to_borrow"] = easy_to_borrow
+    return stage_tv_alert_preset(
+        payload,
+        staged_path=manifest_dir / "tv_sota_pack" / "staged_tv_presets.json",
+        watchlist_path=manifest_dir / "missing_wl.json",
+        venue=venue,
+        live_intake=False,
+    )
+
+
+class _TvConfirmBroker(_FakeTradingClient):
+    def __init__(self, *, positions: list[SimpleNamespace] | None = None) -> None:
+        super().__init__(shortable=True, etb=True)
+        self.identity = uuid4()
+        self.positions = positions or []
+
+    def get_account(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=self.identity,
+            status=SimpleNamespace(value="ACTIVE"),
+            account_blocked=False,
+            trading_blocked=False,
+            trade_suspended_by_user=False,
+            equity="100000",
+            last_equity="100000",
+        )
+
+    def get_all_positions(self) -> list[SimpleNamespace]:
+        return list(self.positions)
+
+    def get_orders(self, _req: object) -> list[SimpleNamespace]:
+        return []
+
+    def get_clock(self) -> SimpleNamespace:
+        return SimpleNamespace(is_open=True)
+
+    def get_asset(self, symbol: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            symbol=symbol,
+            tradable=True,
+            shortable=self.shortable,
+            easy_to_borrow=self.etb,
+            attributes=["overnight_tradable"],
+        )
+
+    def get_order_by_client_id(self, cid: str) -> SimpleNamespace:
+        for idx, req in enumerate(self.orders, 1):
+            if getattr(req, "client_order_id", None) == cid:
+                legs = []
+                sl = getattr(req, "stop_loss", None)
+                if sl is not None:
+                    legs.append(
+                        SimpleNamespace(
+                            id=f"child-{idx}",
+                            status=SimpleNamespace(value="held"),
+                            replaced_by=None,
+                            symbol=getattr(req, "symbol", ""),
+                            side=SimpleNamespace(value="sell"),
+                            stop_price=str(sl.stop_price),
+                        )
+                    )
+                return SimpleNamespace(
+                    id=f"ord-{idx}",
+                    legs=legs,
+                    status=SimpleNamespace(value="new"),
+                    filled_qty="0",
+                    filled_avg_price=None,
+                    submitted_at=datetime.now(UTC),
+                )
+        raise APIError(
+            "missing", http_error=SimpleNamespace(response=SimpleNamespace(status_code=404))
+        )
+
+    def get_order_by_id(self, order_id: str, *args: object) -> SimpleNamespace:
+        idx = int(order_id.removeprefix("ord-")) - 1
+        req = self.orders[idx]
+        return self.get_order_by_client_id(str(getattr(req, "client_order_id", "")))
+
+
+def test_confirmed_tv_preset_paper_multi_situation_24x5_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _setup_env(
+        base_dir: Path,
+        *,
+        quote_map: dict[str, tuple[float, float]],
+        now_dt: datetime,
+        positions_by_acct: dict[str, list[SimpleNamespace]] | None = None,
+    ) -> tuple[PaperFarmCoordinator, dict[str, _TvConfirmBroker]]:
+        brokers = {
+            acct: _TvConfirmBroker(positions=(positions_by_acct or {}).get(acct))
+            for acct in ALPACA_LANE_PROFILES
+        }
+        farm = PaperFarmCoordinator(base_dir, alpaca_clients=brokers)
+
+        class _LiveQuotes:
+            def get_stock_latest_quote(self, req: object) -> dict[str, SimpleNamespace]:
+                sym = str(getattr(req, "symbol_or_symbols", ""))
+                bid_px, ask_px = quote_map[sym]
+                return {sym: SimpleNamespace(bid_price=bid_px, ask_price=ask_px, timestamp=now_dt)}
+
+        monkeypatch.setattr(execution, "verify_paper_environment", lambda: None)
+        monkeypatch.setattr(execution, "PaperFarmCoordinator", lambda _dir: farm)
+        monkeypatch.setattr(
+            execution.ExtremeMoverScanner,
+            "from_env",
+            lambda *_a, **_kw: SimpleNamespace(data_client=_LiveQuotes()),
+        )
+        return farm, brokers
+
+    # (1) RTH OTO STOP_MARKET + progressive 4-tier R-lock + Guard adoption -> PA1 (L1_ORB_BURST).
+    rth_dir = tmp_path / "rth"
+    rth_now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)  # 11:00 ET RTH
+    nvda_staged = _stage_sample_tv_preset(
+        rth_dir,
+        symbol="NVDA",
+        side="BUY",
+        session="RTH",
+        trigger_price=100.0,
+        stop_price=98.0,
+        natr_pct=0.035,
+        trailing_schedule="wide_natr_adaptive",
+        order_type="STOP_MARKET",
+        limit_collar_bps=0.0,
+        rvol=4.2,
+    )
+    rth_farm, rth_brokers = _setup_env(
+        rth_dir, quote_map={"NVDA": (100.00, 100.02)}, now_dt=rth_now
+    )
+    rth_receipt = execution.submit_confirmed_tv_preset_paper(
+        rth_dir, alert_id=str(nvda_staged["alert_id"]), qty=2, dry_run=False, now_utc=rth_now
+    )
+    assert rth_receipt["ok"] is True
+    assert rth_receipt["dry_run"] is False
+    assert rth_receipt["submitted"] is True
+    assert rth_receipt["paper_only"] is True
+    assert rth_receipt["live_execution_enabled"] is False
+    assert rth_receipt["lane_account"] == "ALPACA_PA1"
+    assert rth_receipt["session"] == "RTH"
+    assert rth_receipt["order_type"] == "STOP_MARKET"
+    assert rth_receipt["protective_stop_mode"] == "NATIVE_OTO_STOP"
+    rl = rth_receipt["r_lock_levels"]
+    assert (
+        rth_receipt["stop_price"]
+        < rth_receipt["entry_limit"]
+        < rl["be_plus_fee"]
+        < rl["lock_at_1r"]
+        < rl["lock_at_2r"]
+        < rl["lock_at_3r"]
+    )
+    assert len(rth_brokers["ALPACA_PA1"].orders) == 1
+    oto_req = rth_brokers["ALPACA_PA1"].orders[0]
+    assert isinstance(oto_req, LimitOrderRequest)
+    assert oto_req.order_class == OrderClass.OTO
+    assert oto_req.stop_loss is not None and oto_req.qty == 2
+    assert oto_req.extended_hours is False
+    # Staged JSON must NEVER be mutated to semi_auto_confirmed=True.
+    staged_doc = json.loads(
+        (rth_dir / "tv_sota_pack" / "staged_tv_presets.json").read_text(encoding="utf-8")
+    )
+    assert staged_doc["semi_auto_confirmed"] is False
+    assert all(p["semi_auto_confirmed"] is False for p in staged_doc["presets"])
+    # Execution supervisor immediately adopts the handed-off guard from DuckDB.
+    adopted = execution.restore_guards(rth_farm, {a: {} for a in ALPACA_LANE_PROFILES})
+    assert "NVDA" in adopted and adopted["NVDA"].client_id == rth_receipt["client_order_id"]
+
+    # (2) PRE_MARKET & AFTER_HOURS 35bp STOP_LIMIT supervised exit -> PA2 (L2_STRUCTURAL_TREND).
+    for label, ext_now, sess_name in (
+        ("pre", datetime(2026, 10, 15, 12, 30, tzinfo=UTC), "PRE_MARKET"),  # 08:30 ET
+        ("ah", datetime(2026, 10, 15, 21, 30, tzinfo=UTC), "AFTER_HOURS"),  # 17:30 ET
+    ):
+        ext_dir = tmp_path / label
+        amd_staged = _stage_sample_tv_preset(
+            ext_dir,
+            symbol="AMD",
+            side="BUY",
+            session=sess_name,
+            trigger_price=150.0,
+            stop_price=147.75,
+            natr_pct=0.022,
+            trailing_schedule="baseline",
+            order_type="STOP_LIMIT",
+            limit_collar_bps=35.0,
+            rvol=2.0,
+        )
+        ext_farm, ext_brokers = _setup_env(
+            ext_dir, quote_map={"AMD": (150.00, 150.10)}, now_dt=ext_now
+        )
+        ext_res = execution.submit_confirmed_tv_preset_paper(
+            ext_dir, alert_id=str(amd_staged["alert_id"]), qty=1, dry_run=False, now_utc=ext_now
+        )
+        assert ext_res["lane_account"] == "ALPACA_PA2"
+        assert ext_res["session"] == sess_name
+        assert ext_res["order_type"] == "STOP_LIMIT"
+        assert ext_res["collar_bps"] == 35.0
+        assert ext_res["protective_stop_mode"] == "COLLARED_STOP_LIMIT_SUPERVISED"
+        assert ext_res["stop_limit_price"] < ext_res["stop_price"] < ext_res["entry_limit"]
+        ext_req = ext_brokers["ALPACA_PA2"].orders[0]
+        assert isinstance(ext_req, LimitOrderRequest)
+        assert ext_req.extended_hours is True and ext_req.order_class is None
+        with duckdb.connect(str(ext_farm.lanes["ALPACA_PA2"].duckdb_path), read_only=True) as db:
+            sup_n = db.execute("SELECT COUNT(*) FROM paper_supervised_stops").fetchone()
+        assert sup_n == (1,)
+
+    # (3) OVERNIGHT inverse hedge (SOXS -> PA3 50bp <= 1.00% even with wide NATR/high RVOL).
+    on_dir = tmp_path / "overnight"
+    on_now = datetime(2026, 11, 27, 2, 30, tzinfo=UTC)  # 21:30 ET OVERNIGHT
+    soxs_staged = _stage_sample_tv_preset(
+        on_dir,
+        symbol="SOXS",
+        side="BUY",
+        session="OVERNIGHT",
+        trigger_price=55.0,
+        stop_price=54.45,
+        natr_pct=0.035,
+        trailing_schedule="wide_natr_adaptive",
+        order_type="STOP_LIMIT",
+        limit_collar_bps=50.0,
+        rvol=4.5,
+    )
+    on_farm, on_brokers = _setup_env(on_dir, quote_map={"SOXS": (55.00, 55.08)}, now_dt=on_now)
+    on_res = execution.submit_confirmed_tv_preset_paper(
+        on_dir, alert_id=str(soxs_staged["alert_id"]), qty=1, dry_run=False, now_utc=on_now
+    )
+    assert on_res["lane_account"] == "ALPACA_PA3"
+    assert on_res["origin"] == "INVERSE_HEDGE_SOXS"
+    assert on_res["session"] == "OVERNIGHT"
+    assert on_res["order_type"] == "STOP_LIMIT"
+    assert on_res["collar_bps"] == 50.0
+    loss_frac = (
+        Decimal(str(on_res["entry_limit"])) - Decimal(str(on_res["stop_price"]))
+    ) / Decimal(str(on_res["entry_limit"]))
+    assert Decimal("0") < loss_frac <= Decimal("0.0100")
+    assert len(on_brokers["ALPACA_PA3"].orders) == 1
+    with duckdb.connect(str(on_farm.lanes["ALPACA_PA3"].duckdb_path), read_only=True) as db:
+        row = db.execute(
+            "SELECT origin, annual_rate, prior_close FROM paper_entry_decisions"
+        ).fetchone()
+    assert row == ("INVERSE_HEDGE_SOXS", Decimal("0.0099000000"), Decimal("55.000000"))
+
+    # (4) OVERNIGHT Alpaca SELL fail-closed refusal + CLOSED session refusal.
+    sell_dir = tmp_path / "overnight_sell"
+    sell_staged = _stage_sample_tv_preset(
+        sell_dir,
+        symbol="SMCI",
+        side="SELL",
+        session="OVERNIGHT",
+        trigger_price=40.0,
+        stop_price=40.40,
+        natr_pct=0.015,
+        trailing_schedule="tight_near_lossless",
+        order_type="STOP_LIMIT",
+        limit_collar_bps=50.0,
+        venue="IBKR",
+        shortable=True,
+        easy_to_borrow=True,
+    )
+    _, sell_brokers = _setup_env(sell_dir, quote_map={"SMCI": (39.95, 40.05)}, now_dt=on_now)
+    with pytest.raises(ValueError, match="ROUTE_IBKR_OR_INVERSE_HEDGE_SOXS_SQQQ"):
+        execution.submit_confirmed_tv_preset_paper(
+            sell_dir, alert_id=str(sell_staged["alert_id"]), now_utc=on_now
+        )
+    assert all(len(b.orders) == 0 for b in sell_brokers.values())
+    closed_now = datetime(2026, 11, 27, 0, 59, tzinfo=UTC)  # 19:59 ET Thanksgiving CLOSED
+    with pytest.raises(ValueError, match="CLOSED"):
+        execution.submit_confirmed_tv_preset_paper(
+            on_dir, alert_id=str(soxs_staged["alert_id"]), now_utc=closed_now
+        )
+
+    # (5) CrossLaneSymbolLock overlap refusal when symbol already held on another lane.
+    lock_dir = tmp_path / "lock_conflict"
+    lock_staged = _stage_sample_tv_preset(
+        lock_dir,
+        symbol="NVDA",
+        side="BUY",
+        session="RTH",
+        trigger_price=100.0,
+        stop_price=98.0,
+        natr_pct=0.035,
+        trailing_schedule="wide_natr_adaptive",
+        order_type="STOP_MARKET",
+        limit_collar_bps=0.0,
+        rvol=4.0,
+    )
+    _, lock_brokers = _setup_env(
+        lock_dir,
+        quote_map={"NVDA": (100.00, 100.02)},
+        now_dt=rth_now,
+        positions_by_acct={"ALPACA_PA2": [SimpleNamespace(symbol="NVDA", qty="5")]},
+    )
+    with pytest.raises(PermissionError, match="CrossLaneSymbolLock"):
+        execution.submit_confirmed_tv_preset_paper(
+            lock_dir, alert_id=str(lock_staged["alert_id"]), now_utc=rth_now
+        )
+    assert all(len(b.orders) == 0 for b in lock_brokers.values())
+
+    # (6) dry_run=True zero-submit & zero-DuckDB-write proof (SQQQ -> PA3).
+    dry_dir = tmp_path / "dry_run"
+    sqqq_staged = _stage_sample_tv_preset(
+        dry_dir,
+        symbol="SQQQ",
+        side="BUY",
+        session="OVERNIGHT",
+        trigger_price=46.50,
+        stop_price=46.04,
+        natr_pct=0.002,
+        trailing_schedule="tight_near_lossless",
+        order_type="STOP_LIMIT",
+        limit_collar_bps=50.0,
+    )
+    _, dry_brokers = _setup_env(dry_dir, quote_map={"SQQQ": (46.48, 46.52)}, now_dt=on_now)
+    preview = execution.submit_confirmed_tv_preset_paper(
+        dry_dir, alert_id=str(sqqq_staged["alert_id"]), qty=1, dry_run=True, now_utc=on_now
+    )
+    assert preview["ok"] is True
+    assert preview["dry_run"] is True
+    assert preview["would_submit"] is True
+    assert preview["paper_only"] is True
+    assert preview["live_execution_enabled"] is False
+    assert preview["lane_account"] == "ALPACA_PA3"
+    assert preview["collar_bps"] == 50.0
+    assert all(len(b.orders) == 0 for b in dry_brokers.values())
+    assert list(dry_dir.glob("*.duckdb")) == []
+
+    # (7) LIVE_EXECUTION_ENABLED=true / api.alpaca.markets hard refusal even with dormant live key.
+    from tier0_sota.live.runner import verify_paper_environment as real_verify
+
+    monkeypatch.setattr(execution, "verify_paper_environment", real_verify)
+    paper_env = {
+        "ALPACA_PAPER": "true",
+        "LIVE_EXECUTION_ENABLED": "false",
+        "IBKR_HOST": "127.0.0.1",
+        "IBKR_PORT": "4002",
+        "APCA_API_BASE_URL": PAPER_ALPACA_ENDPOINT,
+        "ALPACA_PA1_API_KEY": "PKTEST1",
+        "ALPACA_PA1_SECRET": "sec1",
+        "ALPACA_PA2_API_KEY": "PKTEST2",
+        "ALPACA_PA2_SECRET": "sec2",
+        "ALPACA_PA3_API_KEY": "PKTEST3",
+        "ALPACA_PA3_SECRET": "sec3",
+        "ALPACA_LIVE_API_KEY": "AK_DORMANT_ISOLATED",
+    }
+    for k, v in paper_env.items():
+        monkeypatch.setenv(k, v)
+    # Dormant live key alone does not break strict paper dry-run when paper guards hold.
+    ok_preview = execution.submit_confirmed_tv_preset_paper(
+        dry_dir, alert_id=str(sqqq_staged["alert_id"]), qty=1, dry_run=True, now_utc=on_now
+    )
+    assert ok_preview["ok"] is True and ok_preview["live_execution_enabled"] is False
+
+    for bad_key, bad_val in (
+        ("LIVE_EXECUTION_ENABLED", "true"),
+        ("APCA_API_BASE_URL", "https://api.alpaca.markets"),
+        ("ALPACA_PAPER", "false"),
+    ):
+        monkeypatch.setenv(bad_key, bad_val)
+        with pytest.raises(PermissionError):
+            execution.submit_confirmed_tv_preset_paper(
+                dry_dir, alert_id=str(sqqq_staged["alert_id"]), qty=1, dry_run=True, now_utc=on_now
+            )
+        monkeypatch.setenv(bad_key, paper_env[bad_key])
+
+
 def test_scanner_trf_block_separation_exchange_and_overnight_core3_regime() -> None:
     from datetime import timedelta
 

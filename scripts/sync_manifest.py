@@ -89,6 +89,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "src/tier0_sota/tv/tickets.py",
         "src/tier0_sota/tv/schema_v1.json",
         "scripts/tv_console.ps1",
+        "scripts/tv_console.sh",
     ],
     "L5": ["src/tier0_sota/research.py"],
     "L6": [
@@ -208,6 +209,7 @@ ENTRYPOINT_CANDIDATES: dict[str, str] = {
     "lane_launcher": "scripts/launch_clean_lanes.ps1",
     "paper_farm": "scripts/run_live_paper_farm.ps1",
     "tv_console": "scripts/tv_console.ps1",
+    "tv_console_sh": "scripts/tv_console.sh",
     "mcp_server": "scripts/nautilus_mcp_server.py",
     "orca_account_failover": "scripts/orca_account_failover.py",
     "formal_risk_z3": "evals/formal_risk_z3.py",
@@ -1536,6 +1538,7 @@ def build_llm_harness_manifest(
             ],
             "primary_scripts": [
                 "scripts/tv_console.ps1",
+                "scripts/tv_console.sh",
                 "scripts/nautilus_mcp_server.py",
             ],
             "manifest_artifacts": [
@@ -1560,6 +1563,7 @@ def build_llm_harness_manifest(
             ),
             "upstream_gates": [
                 "just check",
+                "just fnox-check",
                 "just docs-build",
                 "prek run --all-files",
                 "zizmor --offline .github/workflows",

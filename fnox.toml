@@ -35,3 +35,4 @@ key_file = "~/.config/fnox/live-age.txt"
 [profiles.live.secrets]
 LIVE_EXECUTION_ENABLED = { default = "false", description = "Fail-closed live execution lock until full Stage-5 promotion" }
 ALPACA_LIVE_API_KEY = { provider = "age_live", description = "Dormant Stage-5 live broker API key (isolated key_file)", if_missing = "ignore" }
+ALPACA_LIVE_SECRET_KEY = { provider = "age_live", description = "Dormant Stage-5 live broker API secret key (isolated key_file)", if_missing = "ignore" }

@@ -304,6 +304,7 @@ def refresh_accounts(
     *,
     publish: bool = True,
     data_client: Any = None,
+    record_fuse: bool = True,
 ) -> dict[str, dict[str, Any]]:
     if farm.lanes.keys() != ALPACA_LANE_PROFILES.keys():
         raise PermissionError("All three Alpaca paper accounts are required")
@@ -339,26 +340,32 @@ def refresh_accounts(
         equity, yesterday = Decimal(account.equity), Decimal(account.last_equity)
         lane.start_equity = equity
         lane.breaker = risk.DailyDrawdownBreaker(start_equity=yesterday)
-        day = now.astimezone(NY).date().isoformat()
-        with open_bounded_duckdb(lane.duckdb_path) as conn:
-            ensure_tca_table(conn)
-            ensure_wire_table(conn)
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS paper_daily_fuse "
-                "(day DATE PRIMARY KEY, account_id UUID, tripped BOOLEAN)"
-            )
-            row = conn.execute(
-                "SELECT account_id,tripped FROM paper_daily_fuse ORDER BY day DESC LIMIT 1"
-            ).fetchone()
-            if row and row[0] != account.id:
-                raise PermissionError(f"{lane.account} broker identity changed")
+        day_et = now.astimezone(NY).date()
+        day = day_et.isoformat()
+        if record_fuse:
+            with open_bounded_duckdb(lane.duckdb_path) as conn:
+                ensure_tca_table(conn)
+                ensure_wire_table(conn)
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS paper_daily_fuse "
+                    "(day DATE PRIMARY KEY, account_id UUID, tripped BOOLEAN)"
+                )
+                row = conn.execute(
+                    "SELECT account_id,tripped FROM paper_daily_fuse ORDER BY day DESC LIMIT 1"
+                ).fetchone()
+                if row and row[0] != account.id:
+                    raise PermissionError(f"{lane.account} broker identity changed")
+                lane.breaker.update(realized_pnl=equity - yesterday)
+                tripped = conn.execute(
+                    "INSERT INTO paper_daily_fuse VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE "
+                    "SET tripped=paper_daily_fuse.tripped OR excluded.tripped RETURNING tripped",
+                    (day, account.id, lane.breaker.tripped),
+                ).fetchone()
+                lane.breaker.tripped = bool(tripped and tripped[0])
+        else:
             lane.breaker.update(realized_pnl=equity - yesterday)
-            tripped = conn.execute(
-                "INSERT INTO paper_daily_fuse VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE "
-                "SET tripped=paper_daily_fuse.tripped OR excluded.tripped RETURNING tripped",
-                (day, account.id, lane.breaker.tripped),
-            ).fetchone()
-            lane.breaker.tripped = bool(tripped and tripped[0])
+            if lane._persisted_daily_fuse_tripped(day_et):
+                lane.breaker.tripped = True
         if publish:
             if shared_data is None:
                 shared_data = ExtremeMoverScanner.from_env(lane.account).data_client
@@ -478,15 +485,29 @@ def main() -> None:
     p.add_argument("--manifest-dir", type=Path, default=default_manifest_dir())
     p.add_argument("--top-k", type=int, default=15)
     p.add_argument("--pin-symbols", default=",".join(DEFAULT_PIN_SYMBOLS))
+    p.add_argument("--tv-qty", "--qty", dest="tv_qty", type=int, default=1)
+    p.add_argument("--dry-run", action="store_true")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--observe", action="store_true")
     mode.add_argument("--confirm-paper", action="store_true")
+    mode.add_argument("--confirm-tv-alert", metavar="ALERT_ID")
     mode.add_argument("--ibkr-health", action="store_true")
     args = p.parse_args()
     if args.confirm_paper:
         from tier0_sota.live.execution import run_execution
 
         run_execution(args.manifest_dir)
+        return
+    if args.confirm_tv_alert:
+        from tier0_sota.live.execution import submit_confirmed_tv_preset_paper
+
+        receipt = submit_confirmed_tv_preset_paper(
+            args.manifest_dir,
+            alert_id=args.confirm_tv_alert,
+            qty=args.tv_qty,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(receipt, indent=2))
         return
     if args.ibkr_health:
         reachable = ibkr_health(IbkrPaperAdapter(args.manifest_dir))
