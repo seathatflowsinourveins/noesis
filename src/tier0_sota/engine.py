@@ -551,8 +551,9 @@ def compute_progressive_trailing_stop(
     cost_bps_per_side: Decimal = Decimal("4.0"),
     natr_pct: Decimal = _ZERO,
     initial_stop: Decimal | None = None,
+    breakeven_trigger_override: Decimal | None = None,
 ) -> tuple[Decimal, int, Decimal]:
-    """4-tier progressive lossless trailing (Tier 1 BE+fee, Tier 2 +1R, Tier 3 +2R, Tier 4 +3R)."""
+    """4-tier progressive lossless trailing (Tier 1 BE+fee/+0.5R, +1R, +2R, +3R)."""
     prof = profile or (get_session_protection_profile(session) if session is not None else None)
     if prof is None or side not in ("LONG", "SHORT"):
         raise ValueError(f"Invalid profile={prof!r} or side={side!r}")
@@ -569,7 +570,12 @@ def compute_progressive_trailing_stop(
     base_trail = min(cap, max(prof.min_trail_pct, natr * prof.natr_trail_mult))
     eff_trail, tier = base_trail, 0
     fav_gain = (fav_ - entry) if is_l else (entry - fav_)
-    if fav_gain / entry >= prof.breakeven_trigger_pct:
+    eff_be_trigger = (
+        min(prof.breakeven_trigger_pct, max(_ZERO, Decimal(str(breakeven_trigger_override))))
+        if breakeven_trigger_override is not None
+        else prof.breakeven_trigger_pct
+    )
+    if fav_gain / entry >= eff_be_trigger:
         tier = 1
         fee_buf = (cost_bps * Decimal("2") + Decimal("2")) / _BPS_DIV
         raw_be = max(_rk.TICK_SUB_DOLLAR, entry * (_ONE + fee_buf if is_l else _ONE - fee_buf))
@@ -578,6 +584,12 @@ def compute_progressive_trailing_stop(
         init_s = Decimal(str(initial_stop)) if initial_stop else hard
         leg_risk = max(_rk.tick_size_for(entry), abs(entry - init_s))
         r_mult = fav_gain / leg_risk
+        if breakeven_trigger_override is not None and r_mult >= Decimal("0.5"):
+            lk05 = (
+                entry + Decimal("0.20") * leg_risk if is_l else entry - Decimal("0.20") * leg_risk
+            )
+            if behind(lk05_s := q_stop(max(_rk.TICK_SUB_DOLLAR, lk05)), fav_):
+                cand = better(cand, lk05_s)
         for r_thr, lock_k, mult, flr in (
             (Decimal("3"), Decimal("2.35"), Decimal("0.25"), Decimal("0.0010")),
             (Decimal("2"), Decimal("1.35"), Decimal("0.40"), Decimal("0.0012")),
@@ -664,6 +676,7 @@ def compute_non_noise_min_trail_spec(
     archetype: str = "EARLY_EP_MOMENTUM_BURST",
     venue_profile: str = "ALPACA_PAPER_1000",
     cost_bps_per_side: Decimal | int | float | str = Decimal("4.0"),
+    profile_override: SessionProtectionProfile | None = None,
 ) -> dict[str, Any]:
     """Compute exact Decimal per-symbol, per-situation 24/5 non-noise lossless trailing spec."""
     sym = str(symbol).strip().upper()
@@ -677,7 +690,11 @@ def compute_non_noise_min_trail_spec(
     cost_d = _dec_nonneg(cost_bps_per_side, "cost_bps_per_side")
 
     sched_key, sp_map = select_pooled_trailing_schedule(natr_d)
-    prof = get_session_protection_profile(session, sp_map)
+    prof = (
+        profile_override
+        if profile_override is not None
+        else get_session_protection_profile(session, sp_map)
+    )
     venue_prof = _resolve_venue(venue_profile)
     venue_handle = build_venue_order_handle_spec(
         venue_prof.venue_id, session=prof.session, trailing_schedule=sched_key
@@ -701,6 +718,17 @@ def compute_non_noise_min_trail_spec(
     raw_trail = max(fee_and_spread_noise_floor, situation_mult * natr_d, two_tick_pct)
     non_noise_min_trail_pct = min(cap, raw_trail.quantize(_PCT_Q6, rounding=ROUND_CEILING))
     fast_sell_non_noise_reversal_pct = non_noise_min_trail_pct
+    ultra_liquid_tier = (
+        entry_d >= Decimal("10") and spread_d <= Decimal("6") and natr_d <= Decimal("0.015")
+    )
+    be_fee_buf = (cost_d * Decimal("2") + Decimal("2")) / _BPS_DIV
+    adaptive_be_raw = max(
+        be_fee_buf + two_tick_pct, non_noise_min_trail_pct, Decimal("2.5") * natr_d
+    )
+    adaptive_breakeven_trigger_pct = min(
+        prof.breakeven_trigger_pct,
+        adaptive_be_raw.quantize(_PCT_Q6, rounding=ROUND_CEILING),
+    )
 
     peak_climax_r_mult = Decimal("2.5")
     peak_climax_reverse_trigger_pct = (peak_climax_r_mult * raw_risk_pct).quantize(
@@ -746,6 +774,9 @@ def compute_non_noise_min_trail_spec(
         "situation_mult": situation_mult,
         "non_noise_min_trail_pct": non_noise_min_trail_pct,
         "fast_sell_non_noise_reversal_pct": fast_sell_non_noise_reversal_pct,
+        "ultra_liquid_tier": ultra_liquid_tier,
+        "adaptive_breakeven_trigger_pct": adaptive_breakeven_trigger_pct,
+        "gain_protect_step_pct": non_noise_min_trail_pct,
         "peak_climax_r_multiple": peak_climax_r_mult,
         "peak_climax_reverse_trigger_pct": peak_climax_reverse_trigger_pct,
         "peak_climax_pullback_trigger_pct": non_noise_min_trail_pct,
@@ -823,6 +854,8 @@ class SignalExecutionConfig(StrategyConfig):
         reentry_cooldown_secs: int = 60,
         max_reentries: int | None = None,
         fixed_qty: int | None = None,
+        enable_adaptive_lossless_be: bool = True,
+        spread_bps: Decimal = Decimal("5.0"),
     ) -> None:
         del strategy_id, order_id_tag
         super().__init__()
@@ -842,6 +875,8 @@ class SignalExecutionConfig(StrategyConfig):
             None if max_reentries is None else _chk_n(max_reentries, "max_reentries", 0)
         )
         self.fixed_qty = None if fixed_qty is None else _chk_n(fixed_qty, "fixed_qty", 1)
+        self.enable_adaptive_lossless_be = bool(enable_adaptive_lossless_be)
+        self.spread_bps = _dec_nonneg(spread_bps, "spread_bps")
 
 
 class SignalExecutionStrategy(Strategy):
@@ -990,6 +1025,27 @@ class SignalExecutionStrategy(Strategy):
         self.submit_order(ord_)
         return True
 
+    def _adaptive_trail_spec(
+        self,
+        iid: nm.InstrumentId,
+        entry: Decimal,
+        side: Side,
+        sess: SessionOrClosed,
+        natr: Decimal,
+        prof: SessionProtectionProfile,
+    ) -> dict[str, Any]:
+        return compute_non_noise_min_trail_spec(
+            symbol=str(iid.symbol),
+            entry_price=entry,
+            side=side,
+            session=sess,
+            natr_pct=natr,
+            spread_bps=self.cfg.spread_bps,
+            venue_profile=self.cfg.venue_profile,
+            cost_bps_per_side=self.cfg.cost_bps_per_side,
+            profile_override=prof,
+        )
+
     def _replace_stop(self, pos: Any, sess: SessionOrClosed, ts_ns: int, *, trailing: bool) -> None:
         if self._closing:
             return
@@ -1006,6 +1062,14 @@ class SignalExecutionStrategy(Strategy):
         atr_dec = Decimal(str(self._atr.value)) if self._atr.initialized else _ZERO
         natr = max(_ZERO, atr_dec / ref_px)
         if trailing and self._fav_ext is not None:
+            tspec = (
+                self._adaptive_trail_spec(iid, entry, side, sess, natr, prof)
+                if self.cfg.enable_adaptive_lossless_be
+                else None
+            )
+            eff_be_ovr: Decimal | None = (
+                tspec["adaptive_breakeven_trigger_pct"] if tspec is not None else None
+            )
             spx, tier, _ = compute_progressive_trailing_stop(
                 entry_price=entry,
                 side=side,
@@ -1015,6 +1079,7 @@ class SignalExecutionStrategy(Strategy):
                 cost_bps_per_side=self.cfg.cost_bps_per_side,
                 natr_pct=natr,
                 initial_stop=self._init_stop_px,
+                breakeven_trigger_override=eff_be_ovr,
             )
             self.max_lock_tier = max(self.max_lock_tier, tier)
         spx = _to_increment(spx, self.price_increment, up=is_l)
@@ -1180,7 +1245,14 @@ class SignalExecutionStrategy(Strategy):
         is_l, entry = pos.is_long, Decimal(str(pos.avg_px_open))
         ex_px = Decimal(str(bar.high)) if is_l else Decimal(str(bar.low))
         fav = self._fav_ext = (max if is_l else min)(self._fav_ext or entry, ex_px)
-        be_hit = ((fav - entry) if is_l else (entry - fav)) / entry >= prof.breakeven_trigger_pct
+        eff_be_trig = prof.breakeven_trigger_pct
+        if self.cfg.enable_adaptive_lossless_be and sess != "CLOSED":
+            atr_dec = Decimal(str(self._atr.value)) if self._atr.initialized else _ZERO
+            natr_bar = max(_ZERO, atr_dec / cl)
+            eff_be_trig = self._adaptive_trail_spec(
+                iid, entry, "LONG" if is_l else "SHORT", sess, natr_bar, prof
+            )["adaptive_breakeven_trigger_pct"]
+        be_hit = ((fav - entry) if is_l else (entry - fav)) / entry >= eff_be_trig
         if sess == "CLOSED":
             return
         if self._stop_session not in (None, sess) or (be_hit and stops):
@@ -1318,6 +1390,8 @@ def run_nautilus_signal_backtest(
             "semi_auto_confirmed",
             "shortable",
             "enable_native_5m_bars",
+            "enable_adaptive_lossless_be",
+            "spread_bps",
         )
         skw = {k: o[k] for k in opt_keys if k in o}
         cfg = SignalExecutionConfig(

@@ -523,6 +523,8 @@ class Guard:
             "archetype": self.archetype,
             "min_trailing_pct": float(nn_pct),
             "non_noise_min_trail_pct": float(nn_pct),
+            "adaptive_breakeven_trigger_pct": float(trail_spec["adaptive_breakeven_trigger_pct"]),
+            "ultra_liquid_tier": bool(trail_spec["ultra_liquid_tier"]),
             "fast_sell_non_noise_reversal_pct": float(
                 trail_spec["fast_sell_non_noise_reversal_pct"]
             ),
@@ -665,6 +667,7 @@ class Guard:
         self.non_noise_min_trail_pct = trail_spec["non_noise_min_trail_pct"]
         self.execution_mechanism = str(trail_spec["execution_mechanism"])
 
+        eff_be_trigger: Decimal = trail_spec["adaptive_breakeven_trigger_pct"]
         if entry_px is not None:
             base_peak = (
                 self.peak_favorable_px if self.peak_favorable_px > Decimal("0") else entry_px
@@ -674,7 +677,7 @@ class Guard:
                 (self.peak_favorable_px - entry_px) if long else (entry_px - self.peak_favorable_px)
             )
             fav_gain_pct = fav_gain / entry_px
-            if fav_gain_pct >= profile.breakeven_trigger_pct:
+            if fav_gain_pct >= eff_be_trigger:
                 self.fast_sell_armed = True
             if fav_gain_pct >= trail_spec["peak_climax_reverse_trigger_pct"]:
                 self.peak_reverse_armed = True
@@ -704,6 +707,7 @@ class Guard:
                 initial_stop=self.initial,
                 natr_pct=self.natr,
                 profile=profile,
+                breakeven_trigger_override=eff_be_trigger,
             )
             self.lock_tier = max(self.lock_tier, int(tier))
             if tier >= 1 or self.fast_sell_armed:
@@ -1144,9 +1148,10 @@ def adopt_unmanaged_broker_positions(
             peak_reverse_armed = False
             sched_name, sp_map = engine.select_pooled_trailing_schedule(natr_d)
             prof = engine.get_session_protection_profile(active_session, sp_map)
+            eff_be_trigger: Decimal = trail_spec["adaptive_breakeven_trigger_pct"]
             fav_gain = (peak_px - entry_px) if is_long else (entry_px - peak_px)
             fav_gain_pct = fav_gain / entry_px
-            if fav_gain_pct >= prof.breakeven_trigger_pct:
+            if fav_gain_pct >= eff_be_trigger:
                 fast_sell_armed = True
                 prog_stop, lock_tier, _ = engine.compute_progressive_trailing_stop(
                     entry_price=entry_px,
@@ -1156,6 +1161,7 @@ def adopt_unmanaged_broker_positions(
                     initial_stop=initial_stop,
                     natr_pct=natr_d,
                     profile=prof,
+                    breakeven_trigger_override=eff_be_trigger,
                 )
                 nn_pct: Decimal = trail_spec["non_noise_min_trail_pct"]
                 nn_raw = max(
@@ -1512,6 +1518,16 @@ def run_execution(manifest_dir: Path, *, stop: threading.Event | None = None) ->
                 movers_by_symbol=rows_map,
                 now_utc=now_dt,
             )
+            if rows_map:
+                for g_sym, guard in guards.items():
+                    row_meta = rows_map.get(g_sym)
+                    if not isinstance(row_meta, dict):
+                        continue
+                    raw_sp = row_meta.get("spread_bps")
+                    if raw_sp not in (None, "") and not isinstance(raw_sp, bool):
+                        cand_sp = Decimal(str(raw_sp))
+                        if cand_sp.is_finite() and cand_sp >= Decimal("0"):
+                            guard.spread_bps = cand_sp
         cached_ledger_sig = _ledger_sig()
 
     def report(status: str) -> None:

@@ -1018,3 +1018,132 @@ def test_compute_non_noise_min_trail_spec_24x5_and_invariants() -> None:
             session="RTH",
             natr_pct=Decimal("0.015"),
         )
+
+
+def test_ultra_liquid_large_cap_adaptive_lossless_trailing_and_gain_protect_24x5() -> None:
+    """Mega-liquid ETFs/large-caps (SOXL/SNDK/NVDA) arm BE+fee & +0.5R gain-protect adaptively."""
+    for session, expected_be_cap in (
+        ("RTH", Decimal("0.0020")),
+        ("PRE_MARKET", Decimal("0.0022")),
+        ("AFTER_HOURS", Decimal("0.0022")),
+        ("OVERNIGHT", Decimal("0.0025")),
+    ):
+        spec = compute_non_noise_min_trail_spec(
+            symbol="SOXL",
+            entry_price=Decimal("35.89"),
+            side="LONG",
+            session=session,
+            natr_pct=Decimal("0.00074"),
+            spread_bps=Decimal("2.8"),
+            venue_profile="ALPACA_PAPER_1000",
+        )
+        assert spec["ultra_liquid_tier"] is True
+        assert spec["adaptive_breakeven_trigger_pct"] <= expected_be_cap
+        assert spec["adaptive_breakeven_trigger_pct"] >= spec["non_noise_min_trail_pct"]
+
+    # Live SOXL AFTER_HOURS scenario: entry 35.89 -> peak 35.96 (+0.195%) must lock BE+fee (>35.89)
+    soxl_ah = compute_non_noise_min_trail_spec(
+        symbol="SOXL",
+        entry_price=Decimal("35.89"),
+        side="LONG",
+        session="AFTER_HOURS",
+        natr_pct=Decimal("0.00074"),
+        spread_bps=Decimal("2.8"),
+        venue_profile="ALPACA_PAPER_1000",
+    )
+    _, sp_map = select_pooled_trailing_schedule(Decimal("0.00074"))
+    prof_ah = get_session_protection_profile("AFTER_HOURS", sp_map)
+    stop_be, tier_be, _ = compute_progressive_trailing_stop(
+        entry_price=Decimal("35.89"),
+        side="LONG",
+        favorable_extreme=Decimal("35.96"),
+        current_stop=soxl_ah["initial_stop_price"],
+        initial_stop=soxl_ah["initial_stop_price"],
+        natr_pct=Decimal("0.00074"),
+        profile=prof_ah,
+        breakeven_trigger_override=soxl_ah["adaptive_breakeven_trigger_pct"],
+    )
+    assert tier_be == 1
+    assert stop_be > Decimal("35.89")
+
+    # Intermediate +0.5R gain-protect locks >= +0.20R before +1.0R (both LONG and SHORT).
+    stop_half_r, tier_half_r, _ = compute_progressive_trailing_stop(
+        entry_price=Decimal("35.89"),
+        side="LONG",
+        favorable_extreme=Decimal("36.15"),  # +0.59R on 0.44 risk
+        current_stop=stop_be,
+        initial_stop=soxl_ah["initial_stop_price"],
+        natr_pct=Decimal("0.00074"),
+        profile=prof_ah,
+        breakeven_trigger_override=soxl_ah["adaptive_breakeven_trigger_pct"],
+    )
+    assert tier_half_r == 1
+    assert stop_half_r >= Decimal("35.97")
+
+    # Wide small-cap retains full schedule BE trigger (no premature noise whipsaw).
+    wide_sc = compute_non_noise_min_trail_spec(
+        symbol="AEHL",
+        entry_price=Decimal("14.12"),
+        side="LONG",
+        session="AFTER_HOURS",
+        natr_pct=Decimal("0.0071"),
+        spread_bps=Decimal("21.2"),
+    )
+    assert wide_sc["ultra_liquid_tier"] is False
+    assert wide_sc["adaptive_breakeven_trigger_pct"] == prof_ah.breakeven_trigger_pct
+
+
+def test_nautilus_backtest_sim_parity_soxl_adaptive_lossless_24x5_prewall() -> None:
+    """Real NautilusTrader v2 BacktestEngine parity on pre-wall SOXL RTH -> AFTER_HOURS path."""
+    from datetime import timedelta
+
+    # Strictly pre-wall (2026-10-15): 15:57 ET (RTH) -> 16:06 ET (AFTER_HOURS).
+    # Entry at 35.88 in RTH, rallies to 35.97 (+0.25% / +9c), transitions into AFTER_HOURS
+    # (STOP_MARKET -> STOP_LIMIT 35 bps), ratchets BE+fee + non-noise trail, then pulls back.
+    start_et = datetime(2026, 10, 15, 15, 57, tzinfo=ZoneInfo("America/New_York"))
+    ohlc = [
+        (35.87, 35.89, 35.86, 35.88),  # 15:57 RTH entry signal
+        (35.88, 35.90, 35.87, 35.89),  # 15:58 RTH fill bar
+        (35.89, 35.95, 35.89, 35.94),  # 15:59 RTH +0.17% -> adaptive BE+fee arms!
+        (35.94, 36.12, 35.94, 36.10),  # 16:00 AFTER_HOURS transition + +0.61% gain-protect
+        (36.10, 36.22, 36.08, 36.18),  # 16:01 AFTER_HOURS +0.84% -> non-noise ratchet up
+        (36.18, 36.20, 35.95, 35.96),  # 16:02 AFTER_HOURS reversal triggers locked profit stop
+        (35.96, 35.97, 35.90, 35.92),  # 16:03 AFTER_HOURS settle
+    ]
+    rows = []
+    signals: dict[int, int] = {}
+    for i, (o, h, lo, c) in enumerate(ohlc):
+        t_ns = int((start_et + timedelta(minutes=i)).astimezone(UTC).timestamp() * 1_000_000_000)
+        rows.append(
+            {
+                "symbol": "SOXL",
+                "t_ns": t_ns,
+                "o": o,
+                "h": h,
+                "l": lo,
+                "c": c,
+                "v": 500_000.0,
+            }
+        )
+        if i == 0:
+            signals[t_ns + 60_000_000_000] = 1
+    bars_df = pl.DataFrame(rows)
+
+    res = run_nautilus_signal_backtest(
+        bars_df,
+        signals_by_ts=signals,
+        venue_profile="ALPACA_PAPER_1000",
+        cost_bps_per_side=Decimal("4.0"),
+        spread_bps=Decimal("2.8"),
+        enable_24x5_trailing=True,
+        enable_adaptive_lossless_be=True,
+        fixed_qty=100,
+    )
+    assert res.bars_processed == len(ohlc)
+    assert res.stops_attached >= 2  # RTH STOP_MARKET + AFTER_HOURS STOP_LIMIT
+    assert res.session_transitions >= 1
+    assert res.max_lock_tier >= 1
+    assert res.trailing_ratchets >= 1
+    assert res.outside_rth_market_entries == 0
+    assert res.fills_total >= 2
+    assert res.total_return_pct > 0.0  # Lossless profit locked even on reversal!

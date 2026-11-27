@@ -208,7 +208,10 @@ def adr_governance_and_graph_sync() -> dict[str, object]:
 @asset(deps=[paper_farm_performance_snapshot])
 def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
     """Reconcile Paper Farm DuckDB & manifest TCA against sim cost assumptions."""
+    from decimal import Decimal
+
     from tier0_sota.live.paper_farm import open_bounded_duckdb
+    from tier0_sota.live.performance import _DEC_ZERO, _summarize_tca_fill_details, _to_dec
 
     manifests_dir = _resolve_data_root() / "manifests"
     perf_path = manifests_dir / "paper_farm_live_performance_manifest.json"
@@ -219,6 +222,8 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
     tca_rows = 0
     is_bps_samples: list[float] = []
     liquid_ge10_samples: list[float] = []
+    fill_details: list[dict[str, Any]] = []
+    has_order_or_qty_cols = False
     lanes_queried: list[str] = []
     duckdb_errors: list[str] = []
 
@@ -235,28 +240,53 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
                     ).fetchall()
                 }
                 if "paper_tca_fills" in tables:
-                    cols = {
-                        str(r[0]).lower()
-                        for r in con.execute("DESCRIBE paper_tca_fills").fetchall()
+                    cursor = con.execute("SELECT * FROM paper_tca_fills")
+                    col_idx = {
+                        str(desc[0]).lower(): idx
+                        for idx, desc in enumerate(cursor.description or ())
                     }
-                    if "fill_price" in cols:
-                        rows = con.execute(
-                            "SELECT implementation_shortfall_bps, fill_price FROM paper_tca_fills "
-                            "WHERE implementation_shortfall_bps IS NOT NULL"
-                        ).fetchall()
-                        for val, fpx in rows:
-                            v_f = float(val)
-                            is_bps_samples.append(v_f)
-                            if fpx is not None and float(fpx) >= 10.0:
-                                liquid_ge10_samples.append(v_f)
-                    else:
-                        rows = con.execute(
-                            "SELECT implementation_shortfall_bps FROM paper_tca_fills "
-                            "WHERE implementation_shortfall_bps IS NOT NULL"
-                        ).fetchall()
-                        for (val,) in rows:
-                            is_bps_samples.append(float(val))
-                    tca_rows += len(rows)
+                    if "broker_order_id" in col_idx or "filled_qty" in col_idx:
+                        has_order_or_qty_cols = True
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        is_idx = col_idx.get("implementation_shortfall_bps")
+                        val = row[is_idx] if is_idx is not None else None
+                        if val is None:
+                            continue
+                        tca_rows += 1
+                        v_f = float(val)
+                        is_bps_samples.append(v_f)
+                        fpx_idx = col_idx.get("fill_price")
+                        fpx = row[fpx_idx] if fpx_idx is not None else None
+                        if fpx is not None and float(fpx) >= 10.0:
+                            liquid_ge10_samples.append(v_f)
+                        acct_idx = col_idx.get("account")
+                        oid_idx = col_idx.get("broker_order_id")
+                        qty_idx = col_idx.get("filled_qty")
+                        exec_idx = col_idx.get("execution_bps")
+                        delay_idx = col_idx.get("delay_bps")
+                        acct_val = row[acct_idx] if acct_idx is not None else db_path.stem
+                        oid_val = row[oid_idx] if oid_idx is not None else ""
+                        qty_val = row[qty_idx] if qty_idx is not None else None
+                        exec_val = row[exec_idx] if exec_idx is not None else None
+                        delay_val = row[delay_idx] if delay_idx is not None else None
+                        fill_details.append(
+                            {
+                                "account": str(acct_val or db_path.stem),
+                                "broker_order_id": str(oid_val or ""),
+                                "filled_qty": (
+                                    _to_dec(qty_val) if qty_val is not None else Decimal("1")
+                                ),
+                                "fill_price": (_to_dec(fpx) if fpx is not None else _DEC_ZERO),
+                                "execution_bps": (
+                                    _to_dec(exec_val) if exec_val is not None else _DEC_ZERO
+                                ),
+                                "delay_bps": (
+                                    _to_dec(delay_val) if delay_val is not None else _DEC_ZERO
+                                ),
+                                "is_bps": _to_dec(val),
+                            }
+                        )
             finally:
                 con.close()
         except Exception as exc:  # noqa: BLE001
@@ -269,6 +299,7 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
         if isinstance(summary, dict) and isinstance(summary.get("mean_is_bps"), (int, float)):
             perf_tca_bps = float(summary["mean_is_bps"])
 
+    perold = _summarize_tca_fill_details(fill_details)
     realized_mean_is_bps = (
         round(sum(is_bps_samples) / len(is_bps_samples), 4)
         if is_bps_samples
@@ -276,6 +307,14 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
     )
     liquid_ge10_mean_is_bps = (
         round(sum(liquid_ge10_samples) / len(liquid_ge10_samples), 4)
+        if liquid_ge10_samples
+        else None
+    )
+    liquid_ge10_order_mean_is_bps = (
+        round(float(perold["liquid_ge10_order_mean_is_bps"]), 4) if liquid_ge10_samples else None
+    )
+    liquid_ge10_notional_weighted_is_bps = (
+        round(float(perold["liquid_ge10_notional_weighted_is_bps"]), 4)
         if liquid_ge10_samples
         else None
     )
@@ -287,9 +326,28 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
             s_liq[mid_i] if len(s_liq) % 2 == 1 else 0.5 * (s_liq[mid_i - 1] + s_liq[mid_i]),
             4,
         )
+    if liquid_ge10_mean_is_bps is None:
+        liquid_ge10_within_2x = True
+    elif (
+        has_order_or_qty_cols
+        and liquid_ge10_order_mean_is_bps is not None
+        and liquid_ge10_notional_weighted_is_bps is not None
+    ):
+        liquid_ge10_within_2x = (
+            abs(liquid_ge10_order_mean_is_bps) <= 8.0
+            and abs(liquid_ge10_notional_weighted_is_bps) <= 8.0
+        )
+    else:
+        liquid_ge10_within_2x = abs(liquid_ge10_mean_is_bps) <= 8.0
+
+    effective_cost_bps = (
+        liquid_ge10_notional_weighted_is_bps
+        if has_order_or_qty_cols and liquid_ge10_notional_weighted_is_bps is not None
+        else realized_mean_is_bps
+    )
     recommended_1x = (
-        round(max(_DEFAULT_SIM_COST_BPS_1X, abs(realized_mean_is_bps)), 2)
-        if realized_mean_is_bps is not None
+        round(max(_DEFAULT_SIM_COST_BPS_1X, abs(effective_cost_bps)), 2)
+        if effective_cost_bps is not None
         else _DEFAULT_SIM_COST_BPS_1X
     )
     payload: dict[str, Any] = {
@@ -300,13 +358,26 @@ def sim_vs_paper_parity_reconciliation() -> dict[str, object]:
         "lanes_queried": lanes_queried,
         "duckdb_tca_rows": tca_rows,
         "duckdb_errors": duckdb_errors,
+        "tca_aggregation_method": (
+            "perold_order_and_notional_weighted"
+            if has_order_or_qty_cols
+            else "raw_fill_mean_fallback"
+        ),
+        "unique_orders_count": int(perold["unique_orders_count"]),
+        "order_mean_is_bps": (
+            round(float(perold["order_mean_is_bps"]), 4) if fill_details else None
+        ),
+        "notional_weighted_is_bps": (
+            round(float(perold["notional_weighted_is_bps"]), 4) if fill_details else None
+        ),
         "realized_mean_is_bps": realized_mean_is_bps,
         "liquid_ge10_tca_rows": len(liquid_ge10_samples),
+        "liquid_ge10_orders_count": int(perold["liquid_ge10_orders_count"]),
         "liquid_ge10_mean_is_bps": liquid_ge10_mean_is_bps,
+        "liquid_ge10_order_mean_is_bps": liquid_ge10_order_mean_is_bps,
+        "liquid_ge10_notional_weighted_is_bps": liquid_ge10_notional_weighted_is_bps,
         "liquid_ge10_median_is_bps": liquid_ge10_median_is_bps,
-        "liquid_ge10_within_2x_envelope": (
-            True if liquid_ge10_mean_is_bps is None else abs(liquid_ge10_mean_is_bps) <= 8.0
-        ),
+        "liquid_ge10_within_2x_envelope": liquid_ge10_within_2x,
         "rth_entry_collar_bps": 5.0,
         "min_liquid_entry_price_usd": 10.0,
         "max_rth_quoted_spread_bps": 12.0,
