@@ -100,11 +100,6 @@
     },
     {
       "action": "shell",
-      "resource": "*api.alpaca.markets*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
       "resource": "*:4001*",
       "effect": "deny"
     },
@@ -126,7 +121,7 @@
     {
       "action": "edit",
       "resource": "src/tier0_sota/risk.py",
-      "effect": "deny"
+      "effect": "ask"
     }
   ]
 }

@@ -401,6 +401,7 @@ services:
       - GOMAXPROCS=2
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+      - --web.external-url=http://127.0.0.1:9090
       - --storage.tsdb.retention.time=30d
       - --storage.tsdb.retention.size=2GB
     depends_on:
@@ -452,7 +453,8 @@ services:
     environment:
       - GOMAXPROCS=2
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false

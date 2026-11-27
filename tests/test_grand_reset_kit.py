@@ -325,7 +325,7 @@ def test_preflight_resume_kit_scripts_and_playbook() -> None:
         "tier0-openbb-docker-bridge",
         "otelcol_",
         "Caddy",
-        "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c",
+        "9fa037355c3942201e3c0813acaa7b01c590e6294cd5e85787ae1bdcef55a7b8",
         "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
         "seathatflowsinourveins/noesis",
         "workstation_preflight_resume_manifest.json",
@@ -370,7 +370,7 @@ def test_preflight_resume_kit_scripts_and_playbook() -> None:
         "tier0-openbb-docker-bridge",
         "otelcol_",
         "caddy",
-        "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c",
+        "9fa037355c3942201e3c0813acaa7b01c590e6294cd5e85787ae1bdcef55a7b8",
         "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
         "seathatflowsinourveins/noesis",
         "workstation_preflight_resume_manifest.json",
@@ -576,7 +576,7 @@ def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
 
 
 def test_fnox_live_profile_physical_key_isolation_and_tv_confirm_paper_recipe() -> None:
-    """Enforce dormant Stage-5 live key isolation in fnox.toml and paper-only tv-confirm-paper."""
+    """Enforce live key isolation (own age identity, no tracked ciphertext) and tv-confirm-paper."""
     fnox_raw = (REPO_ROOT / "fnox.toml").read_text(encoding="utf-8")
     assert "AGE-SECRET-KEY-" not in fnox_raw
     assert not re.search(r"\b(?:PK|AK)[0-9A-Z]{16,28}\b", fnox_raw)
@@ -594,17 +594,18 @@ def test_fnox_live_profile_physical_key_isolation_and_tv_confirm_paper_recipe() 
     assert live_key_file == "~/.config/fnox/live-age.txt"
     assert live_key_file != "~/.config/fnox/age.txt"
     assert live_key_file != default_age.get("key_file")
+    # The live identity must be a different keypair, so the default key cannot decrypt live values.
+    assert age_live["recipients"], "age_live needs its own recipient"
+    assert not set(age_live["recipients"]) & set(default_age["recipients"])
 
     live_secrets = live_prof["secrets"]
     assert live_secrets["LIVE_EXECUTION_ENABLED"]["default"] == "false"
+    # Live key ciphertext lives in the user-level fnox config. A project-level declaration would
+    # shadow that value, and a tracked value would put ciphertext into git history.
     for live_key_name in ("ALPACA_LIVE_API_KEY", "ALPACA_LIVE_SECRET_KEY"):
-        entry = live_secrets.get(live_key_name)
-        assert isinstance(entry, dict), (
-            f"Missing dormant {live_key_name} in [profiles.live.secrets]"
+        assert live_key_name not in live_secrets, (
+            f"{live_key_name} must not be declared in the tracked fnox.toml"
         )
-        assert entry.get("provider") == "age_live"
-        assert entry.get("if_missing") == "ignore"
-        assert "value" not in entry, f"{live_key_name} must remain dormant with no embedded value"
         assert live_key_name not in fnox_doc.get("secrets", {})
         assert live_key_name not in fnox_doc["profiles"]["paper"].get("secrets", {})
 

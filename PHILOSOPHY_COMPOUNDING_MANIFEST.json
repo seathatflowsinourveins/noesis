@@ -30,7 +30,7 @@
       "short_routing": {
         "easy_to_borrow": "DIRECT_SHORT_ETB",
         "hard_to_borrow_or_unverified": "INVERSE_HEDGE_SOXS_SQQQ",
-        "inverse_hedges": ["SOXS", "SQQQ", "SPXS", "SDOW"]
+        "inverse_hedges": ["SOXS", "SQQQ", "SPXS", "SDOW", "NVDS", "NVD"]
       },
       "prewall_pit_cutoff": "2026-10-15",
       "causal_bar_lag_secs": 60,
@@ -90,14 +90,15 @@
       "modules": ["src/tier0_sota/engine.py", "src/tier0_sota/research.py"]
     },
     "causal_pit_and_features": {
-      "primary": ["polars", "duckdb", "pandera", "exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy"],
+      "primary": ["polars", "duckdb", "pandera", "exchange_calendars", "sqlglot", "ml4t-engineer", "river", "ruptures", "skchange", "stumpy"],
       "fundamentals_and_macro": ["edgartools", "fredapi", "dvc"],
-      "ml_and_explainability": ["lightgbm", "catboost", "shap", "optuna"],
-      "modules": ["src/tier0_sota/discovery.py", "src/tier0_sota/definitions.py"]
+      "ml_and_explainability": ["lightgbm", "catboost", "shap", "shapiq", "optuna"],
+      "modules": ["src/tier0_sota/discovery.py", "src/tier0_sota/definitions.py", "src/tier0_sota/live/scanner.py"]
     },
     "statistical_falsification": {
-      "primary": ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"],
+      "primary": ["skfolio", "clarabel", "ml4t-diagnostic", "arch", "statsmodels", "mlflow", "mapie"],
       "min_cpcv_samples": 16,
+      "conformal_excursion_hard_cap_pct": "0.0200",
       "gates": [
         "1_hftbacktest_l1_markout",
         "2_cost_1x_2x_survival",
@@ -132,7 +133,15 @@
         "CRASH_ALIGNMENT"
       ],
       "tv_order_preset_contract": "tier0.tv-order-presets.v1",
+      "non_noise_min_trail_contract": "tier0.non-noise-min-trail.v1",
       "tv_engine_coordination_contract": "tier0.tv-engine-coordination.v1",
+      "tv_watchlist_sync_payload_contract": "tier0.tv-watchlist-sync-payload.v1",
+      "tv_mcp_sync_receipt_contract": "tier0.tv-mcp-sync-receipt.v1",
+      "tv_cloud_mcp_sync_contract": "tier0.tv-cloud-mcp-sync.v1",
+      "historical_extreme_mover_calibration_contract": "tier0.historical-extreme-mover-calibration.v1",
+      "nonstop_compounding_loop_contract": "tier0.nonstop-compounding-loop.v1",
+      "early_mover_tuning_contract": "tier0.early-mover-tuning.v1",
+      "historical_early_mover_audit_contract": "tier0.historical-early-mover-audit.v1",
       "finos_tv_cockpit_contract": "tier0.finos-openbb-tv-cockpit.v1",
       "tv_compounding_manifest_contract": "tier0.tv-compounding-manifest.v1",
       "pine_v6_suite": [
@@ -155,7 +164,9 @@
     "immutable_risk_kernel": {
       "path": "src/tier0_sota/risk.py",
       "sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
-      "smt_verifier": "z3-solver"
+      "smt_verifier": "z3-solver",
+      "symbolic_contract_verifier": "pschanely/CrossHair (isolated uvx: just crosshair)",
+      "symbolic_contract_harness": "evals/symbolic_risk_crosshair.py"
     }
   },
   "compounding_harness_lanes": {
@@ -170,15 +181,21 @@
         "duckdb",
         "pandera",
         "exchange_calendars",
+        "sqlglot",
+        "edgartools",
         "ml4t-engineer",
         "river",
         "ruptures",
+        "skchange",
         "stumpy",
         "lightgbm",
         "catboost",
         "shap",
+        "shapiq",
         "optuna",
         "skfolio",
+        "clarabel",
+        "mapie",
         "ml4t-diagnostic",
         "arch",
         "statsmodels",
@@ -188,11 +205,22 @@
         "MLflow pre-wall experiment runs (http://127.0.0.1:5000/)",
         "Optuna study trials (http://127.0.0.1:8080/)",
         "Caddy tearsheets (http://127.0.0.1:8793/)",
-        "XERJ verified lessons (http://127.0.0.1:9200/)"
+        "XERJ verified lessons (http://127.0.0.1:9200/)",
+        "Z:\\sota-data\\manifests\\historical_extreme_mover_calibration_manifest.json",
+        "Z:\\sota-data\\manifests\\historical_extreme_mover_calibration.duckdb",
+        "Z:\\sota-data\\manifests\\starred_frontier_landscape_manifest.json",
+        "Z:\\sota-data\\manifests\\prewall_h109_falsification_dossier.json",
+        "Z:\\sota-data\\manifests\\sim_tod_rvol_prewall_study.json",
+        "Z:\\sota-data\\manifests\\nonstop_compounding_loop_status.json"
       ],
       "e2e_verification_gates": [
         "just test tests/test_core_engine.py",
+        "just test tests/test_starred_frontier_landscape.py",
+        "just test tests/test_prewall_h109.py",
+        "just test tests/test_extreme_mover_calibration.py",
+        "just test tests/test_nonstop_compounding_loop.py",
         "just z3",
+        "just crosshair",
         "just mcp-smoke"
       ]
     },
@@ -204,21 +232,31 @@
       "upstream_stack": [
         "nautilus_trader",
         "alpaca-py",
+        "edgartools",
         "duckdb",
         "polars",
         "mlflow",
         "dagster",
         "otel-collector-contrib",
         "prometheus",
+        "alertmanager",
         "grafana",
         "finos-workspace",
+        "finos-workspace-plugins",
         "OpenBB"
       ],
       "compounding_outputs": [
         "Z:\\sota-data\\manifests\\paper_lane_{pa1,pa2,pa3}.duckdb",
         "Z:\\sota-data\\manifests\\paper_farm_live_performance_manifest.json",
+        "Z:\\sota-data\\manifests\\live_session_lossless_trailing_manifest.json",
         "Z:\\sota-data\\manifests\\finos_paper_farm_performance.json",
-        "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json"
+        "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json",
+        "Z:\\sota-data\\manifests\\live_lane_order_preset_bundle.json",
+        "Z:\\sota-data\\manifests\\historical_extreme_mover_calibration_manifest.json",
+        "Z:\\sota-data\\manifests\\nonstop_compounding_loop_status.json",
+        "Z:\\sota-data\\manifests\\early_mover_tuning_manifest.json",
+        "Z:\\sota-data\\manifests\\historical_early_mover_audit_manifest.json",
+        "Z:\\sota-data\\manifests\\frontier_trigger_status.json"
       ],
       "e2e_verification_gates": [
         "just test tests/test_live_automation.py",
@@ -234,6 +272,7 @@
         "tradingview_pine_v6",
         "tradingview/lightweight-charts",
         "finos-workspace",
+        "finos-workspace-plugins",
         "OpenBB",
         "perspective",
         "ag-grid-community",
@@ -253,7 +292,12 @@
         "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_order_presets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\TV_ORDER_PRESET_CARDS.md",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_layout_blueprints.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\TV_LAYOUT_AND_PRESET_QUICKSTART.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_watchlist_sync_payload.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_mcp_sync_receipt.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_cloud_mcp_sync_manifest.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_engine_coordination_manifest.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\finos_tv_cockpit.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
@@ -269,6 +313,7 @@
       ],
       "e2e_verification_gates": [
         "just test tests/test_tv_automation.py",
+        "just tv-preset-setup",
         "just tv-land",
         "just adr-check",
         "just mcp-smoke",
@@ -279,6 +324,7 @@
       "command": ".claude/commands/lane-live.md",
       "mcp_lane": ".claude/mcp-lanes/gate.mcp.json",
       "status": "stage5_promotion_readiness_gated",
+      "staged_adr_0029_rollout": "Active staged rollout of ADR-0029 (Three-Tier Live Operations on ALPACA_LIVE_PRO_LINE_1000) in Z:\\noesis-tier-model; merges once its gates clear. Until merge, this tree stays paper_only=true / live_execution_enabled=false with read-only Tier-1 live account telemetry.",
       "live_execution_enabled": false,
       "paper_only": true,
       "forbidden_live_ports": [4001, 7496, 8798, 8796],
@@ -295,11 +341,18 @@
       "compounding_outputs": [
         "Cross-leg 6-gate MLflow promotion dossiers",
         "Z3 UNSAT formal risk attestations (evals/formal_risk_z3.py)",
+        "CrossHair symbolic PEP-316 contract attestations (evals/symbolic_risk_crosshair.py)",
         "Inspect AI safety receipts (evals/tier0_inspect_eval.py)",
+        "Read-only Tier-1 live account telemetry manifest (Z:\\sota-data\\manifests\\live_account_tier1_telemetry_manifest.json)",
+        "L15 formal & supply-chain audit manifest (Z:\\sota-data\\manifests\\l15_supply_chain_and_formal_audit.json)",
+        "Stage-4 operational readiness drills manifest (Z:\\sota-data\\manifests\\stage4_operational_readiness_drills.json)",
+        "Git & GitHub merge-gate audit manifest (Z:\\sota-data\\manifests\\git_github_merge_gate_audit.json)",
         "Programmatic ARCHITECTURE_MANIFEST.json & LLM_HARNESS_MANIFEST.json"
       ],
       "e2e_verification_gates": [
         "just check",
+        "just stage4-drills",
+        "just crosshair",
         "just docs-build",
         "prek run --all-files",
         "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1"
@@ -314,6 +367,7 @@
     "ssot_manifest_sync": {"tool": "scripts/sync_manifest.py", "outputs": ["ARCHITECTURE_MANIFEST.json", "LLM_HARNESS_MANIFEST.json"]},
     "observability_and_docs": {
       "otel_collector": "http://127.0.0.1:9464/metrics",
+      "alertmanager_profile_gated": "http://127.0.0.1:9093/-/healthy",
       "caddy_tearsheets": "http://127.0.0.1:8793/",
       "zensical_adrs": "http://127.0.0.1:8010/"
     }
@@ -347,7 +401,12 @@
     {
       "anti_pattern": "ungrouped_shelfware_and_banned_transitive_packages",
       "purged": true,
-      "mechanical_upstream_gate": "PEP 735 [dependency-groups] + uv.lock (0 yfinance, 0 quantstats) + SPDX OSI firewall"
+      "mechanical_upstream_gate": "PEP 735 [dependency-groups] + uv.lock (0 yfinance, 0 quantstats, 0 mypy) + SPDX OSI firewall"
+    },
+    {
+      "anti_pattern": "speculative_frontier_bloat_and_mypy_transitive_leakage",
+      "purged": true,
+      "mechanical_upstream_gate": "isolated uvx CrossHair (just crosshair) + uv.lock zero-banned firewall + audit_zero_paper_winners"
     }
   ]
 }

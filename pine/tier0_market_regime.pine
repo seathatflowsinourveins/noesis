@@ -1,31 +1,39 @@
 //@version=6
 indicator("Tier-0 Market Status, Breadth & Crash-Regime Gauge", shorttitle="T0_MKT_STATUS", overlay=false, max_bars_back=300)
 
+import TradingView/TechnicalRating/3 as tvtr
+
 // ============================================================================
 // Tier-0 SOTA — Dedicated Pane-1 Market Status, Cross-Asset Regime & Short-Route Gauge
+// Official Upstream: TradingView/TechnicalRating/3 (STD;Technical%1Ratings v18.0)
 // Non-Repainting: barstate.isconfirmed + gaps=barmerge.gaps_off + lookahead=barmerge.lookahead_off
 // Mirrors: src/tier0_sota/engine.py CRASH_DEFENSIVE (-1) / NEUTRAL (0) / RISK_ON (+1)
 //          DIRECT_SHORT_ETB vs INVERSE_HEDGE_SOXS_SQQQ routing directive
 // ============================================================================
 
-i_spy     = input.symbol("AMEX:SPY",   "S&P 500 (SPY)")
-i_qqq     = input.symbol("NASDAQ:QQQ", "Nasdaq 100 (QQQ)")
-i_soxx    = input.symbol("NASDAQ:SOXX","Semiconductors (SOXX)")
-i_rsp     = input.symbol("AMEX:RSP",   "Equal-Weight Breadth (RSP)")
-i_vix     = input.symbol("CBOE:VIX",   "Volatility Index (VIX)")
-i_tlt     = input.symbol("NASDAQ:TLT", "20Y Treasury Flight-to-Safety (TLT)")
+i_spy     = input.string("AMEX:SPY",   "S&P 500 (SPY)")
+i_qqq     = input.string("NASDAQ:QQQ", "Nasdaq 100 (QQQ)")
+i_soxx    = input.string("NASDAQ:SOXX","Semiconductors (SOXX)")
+i_rsp     = input.string("AMEX:RSP",   "Equal-Weight Breadth (RSP)")
+i_vix     = input.string("TVC:VIX",    "Volatility Index (VIX)")
+i_tlt     = input.string("NASDAQ:TLT", "20Y Treasury Flight-to-Safety (TLT)")
 i_vix_def = input.float(25.0, "VIX Crash-Defensive Threshold", minval=15.0, maxval=60.0, step=0.5)
 i_show_disc = input.bool(true, "Plot Discrete Causal Regime Step (-1 / 0 / +1)")
 
 int htf_idx = barstate.isrealtime ? 1 : 0
 
-[spy_c, spy_sma50, spy_vwap, spy_roc] = request.security(ticker.modify(i_spy,  session=session.extended), timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[qqq_c, qqq_sma50, qqq_vwap, qqq_roc] = request.security(ticker.modify(i_qqq,  session=session.extended), timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[sox_c, sox_sma50, sox_vwap, sox_roc] = request.security(ticker.modify(i_soxx, session=session.extended), timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[rsp_c, rsp_sma20] = request.security(i_rsp, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[spy_d, spy_d20]   = request.security(i_spy, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-vix_c              = request.security(i_vix, "15", close[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[tlt_c, tlt_sma20] = request.security(i_tlt, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[spy_c, spy_sma50, spy_vwap, spy_roc] = request.security(i_spy,  timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[qqq_c, qqq_sma50, qqq_vwap, qqq_roc] = request.security(i_qqq,  timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[sox_c, sox_sma50, sox_vwap, sox_roc] = request.security(i_soxx, timeframe.period, [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[spy_tr_tot, _, _] = request.security(i_spy,  "5", tvtr.calcRatingAll(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[qqq_tr_tot, _, _] = request.security(i_qqq,  "5", tvtr.calcRatingAll(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[sox_tr_tot, _, _] = request.security(i_soxx, "5", tvtr.calcRatingAll(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+float tv_mkt_rating = (nz(spy_tr_tot, 0.0) + nz(qqq_tr_tot, 0.0) + nz(sox_tr_tot, 0.0)) / 3.0
+string tv_mkt_status = tvtr.ratingStatus(tv_mkt_rating)
+[rsp_c, rsp_sma20] = request.security(i_rsp, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[spy_d, spy_d20]   = request.security(i_spy, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+vix_c              = request.security(i_vix, "15", close[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[tlt_c, tlt_sma20] = request.security(i_tlt, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
 
 // NA-Safe 0-100 Composite Intraday + Structural Market Health Score
 spy_ok = not na(spy_c) and not na(spy_sma50) and not na(spy_vwap)
@@ -68,7 +76,15 @@ hline(75, "Risk-On Band",  color=color.new(color.green, 60), linestyle=hline.sty
 hline(50, "Midline",       color=color.new(color.gray, 60),  linestyle=hline.style_dotted)
 hline(25, "Crash Band",    color=color.new(color.red, 50),   linestyle=hline.style_dashed)
 
-var table mkt = table.new(position.top_right, 2, 8, border_width=1, border_color=color.new(color.gray, 55))
+var table mkt = table.new(position.top_right, 2, 9, border_width=1, border_color=color.new(color.gray, 55))
+ny_h    = hour(time_close, "America/New_York")
+ny_m    = minute(time_close, "America/New_York")
+ny_dow  = dayofweek(time_close, "America/New_York")
+ny_mins = ny_h * 60 + ny_m
+is_rth  = ny_mins >= 570 and ny_mins < 960
+is_ext  = (ny_mins >= 240 and ny_mins < 570) or (ny_mins >= 960 and ny_mins < 1200)
+is_open = (ny_dow >= dayofweek.monday and ny_dow <= dayofweek.thursday) or (ny_dow == dayofweek.friday and ny_mins < 1200) or (ny_dow == dayofweek.sunday and ny_mins >= 1200)
+sess_ord_txt = not is_open ? "CLOSED · HOLD_GTC_STOP" : is_rth ? "RTH STOP_MARKET 0bp (Native Ratchet)" : is_ext ? "PRE/AH 35bp SYNTHETIC_COLLARED_LIMIT" : "OVERNIGHT 50bp SYNTHETIC_COLLARED_LIMIT"
 if barstate.islast
     int fresh_n = (spy_ok ? 1 : 0) + (qqq_ok ? 1 : 0) + (sox_ok ? 1 : 0)
     string disc_str = macro_regime == 1 ? "+1 RISK-ON" : macro_regime == -1 ? "-1 CRASH DEF" : "0 NEUTRAL"
@@ -86,8 +102,10 @@ if barstate.islast
     table.cell(mkt, 1, 5, na(vix_c) ? "N/A" : str.tostring(vix_c, "0.00") + (vix_c >= i_vix_def ? " [CRASH]" : vix_c >= 18 ? " [ELEVATED]" : " [CALM]"), bgcolor=not na(vix_c) and vix_c >= i_vix_def ? color.new(color.red, 55) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(mkt, 0, 6, "RSP/SPY 20D",      bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(mkt, 1, 6, breadth_broad ? "BROADENING (>=20D)" : "NARROW / WEAK (<20D)", bgcolor=breadth_broad ? color.new(color.green, 75) : color.new(color.orange, 65), text_color=color.white, text_size=size.small)
-    table.cell(mkt, 0, 7, "TLT Safety Bid",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(mkt, 1, 7, (not na(tlt_c) and not na(tlt_sma20) and tlt_c > tlt_sma20) ? "RISK-OFF BID" : "NEUTRAL", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 7, "TLT / TV Rating",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 7, ((not na(tlt_c) and not na(tlt_sma20) and tlt_c > tlt_sma20) ? "TLT BID" : "TLT NEUT") + " · TV " + str.replace_all(tv_mkt_status, "\n", " ") + " (" + str.tostring(tv_mkt_rating, "0.00") + ")", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 0, 8, "24/5 Order Mode",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(mkt, 1, 8, sess_ord_txt,       bgcolor=is_rth ? color.new(color.gray, 85) : color.new(color.navy, 55), text_color=is_rth ? color.white : color.aqua, text_size=size.small)
 
 // Non-Repainting Regime Shift Alert Conditions
 shift_crash = barstate.isconfirmed and macro_regime == -1 and nz(macro_regime[1], 0) != -1

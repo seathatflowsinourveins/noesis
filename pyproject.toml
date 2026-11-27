@@ -49,8 +49,12 @@ research = [
     "edgartools>=6.0.0",
     "fredapi>=0.5.2",
     "lightgbm>=4.5.0",
+    "mapie>=1.6.0",
     "pyarrow>=26.0.0",
     "shap>=0.54.0",
+    "shapiq>=1.8.0",
+    "skchange>=0.18.0",
+    "sqlglot>=30.35.0",
 ]
 data-versioning = [
     "dvc>=3.67.1",
@@ -110,6 +114,7 @@ non_dev_dependency_groups = ["evals"]
 [tool.deptry.package_module_name_map]
 anthropic = "anthropic"
 dvc = "dvc"
+edgartools = "edgar"
 google-genai = "google_genai"
 openai = "openai"
 opentelemetry-api = "opentelemetry"
@@ -126,12 +131,17 @@ DEP002 = [
 ]
 DEP004 = [
   "catboost",
+  "edgar",
   "fredapi",
   "lightgbm",
+  "mapie",
   "opentelemetry",
   "optuna",
   "prometheus_client",
   "shap",
+  "shapiq",
+  "skchange",
+  "sqlglot",
   "yaml",
 ]
 

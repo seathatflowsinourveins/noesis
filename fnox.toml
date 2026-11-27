@@ -1,6 +1,8 @@
 # noesis — Tier-0 SOTA — Declarative Encrypted Secret Profiles (jdx/fnox + FiloSottile/age)
 # Zero plaintext secrets in git; private age key lives outside the repository
-# (~/.config/fnox/age.txt or $FNOX_AGE_KEY_FILE). Stage-5 live profile stays physically isolated.
+# (~/.config/fnox/age.txt or $FNOX_AGE_KEY_FILE). The live profile uses its own age identity
+# (~/.config/fnox/live-age.txt) and recipient; live key ciphertext is stored in the user-level
+# fnox config (`just live-key` -> `fnox set --global --profile live`), never in this tracked file.
 
 default_provider = "age"
 
@@ -29,10 +31,10 @@ ALPACA_PA3_SECRET_KEY= { provider = "age", value = "YWdlLWVuY3J5cHRpb24ub3JnL3Yx
 
 [profiles.live.providers.age_live]
 type = "age"
-recipients = ["age18p7ze4w2qge89gcd8cdk25ym6upg0fmyy9azz4hhys8a4kpmwsvqqp7p7z"]
+recipients = ["age1gkcwd6ksj6mn27js0uz7jv2rgfpzs2uccrgn8wfhc6z8j7hvhfesl7gvjs"]
 key_file = "~/.config/fnox/live-age.txt"
 
+# ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY are deliberately NOT declared here: a project-level
+# declaration shadows the user-level value. They live in ~/.config/fnox/config.toml under age_live.
 [profiles.live.secrets]
-LIVE_EXECUTION_ENABLED = { default = "false", description = "Fail-closed live execution lock until full Stage-5 promotion" }
-ALPACA_LIVE_API_KEY = { provider = "age_live", description = "Dormant Stage-5 live broker API key (isolated key_file)", if_missing = "ignore" }
-ALPACA_LIVE_SECRET_KEY = { provider = "age_live", description = "Dormant Stage-5 live broker API secret key (isolated key_file)", if_missing = "ignore" }
+LIVE_EXECUTION_ENABLED = { default = "false", description = "Tier-3 autonomous live entries opt-in, off by default; tiers 1-2 run under the live profile (ADR-0029)" }

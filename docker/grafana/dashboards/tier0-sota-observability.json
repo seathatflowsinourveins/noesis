@@ -2,7 +2,7 @@
   "uid": "tier0-sota-obs",
   "title": "Tier-0 SOTA — Prometheus & OTel Observability",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "15s",
   "timezone": "browser",
   "panels": [
@@ -12,7 +12,7 @@
       "title": "Observability Exporter Health",
       "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [{"expr": "up{job=\"tier0_sota_telemetry\"}", "refId": "A"}]
+      "targets": [{"expr": "min(up{instance=\"telemetry-exporter:9464\", exported_job=\"\"})", "refId": "A"}]
     },
     {
       "id": 2,
@@ -28,9 +28,13 @@
       "title": "Combined Paper Farm Equity (USD)",
       "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2},
+        "overrides": []
+      },
       "targets": [
         {
-          "expr": "tier0_paper_farm_equity_usd_USD{scope=\"combined\"} or tier0_paper_farm_combined_equity_usd",
+          "expr": "tier0_paper_farm_combined_equity_usd",
           "refId": "A"
         }
       ]
@@ -79,17 +83,17 @@
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
       "targets": [
         {
-          "expr": "tier0_paper_farm_tca_mean_is_bps{scope=\"combined\"} or tier0_paper_farm_tca_mean_is_bps_bps{scope=\"combined\"}",
+          "expr": "tier0_paper_farm_combined_tca_mean_is_bps",
           "legendFormat": "Combined Mean IS (bps)",
           "refId": "A"
         },
         {
-          "expr": "tier0_paper_farm_tca_p95_is_bps{scope=\"combined\"} or tier0_paper_farm_tca_p95_is_bps_bps{scope=\"combined\"}",
+          "expr": "tier0_paper_farm_combined_tca_p95_is_bps",
           "legendFormat": "Combined P95 IS (bps)",
           "refId": "B"
         },
         {
-          "expr": "tier0_paper_farm_extended_hours_protected_ratio{scope=\"combined\"}",
+          "expr": "tier0_paper_farm_combined_extended_hours_protected_ratio",
           "legendFormat": "24/5 Ext-Hours Protected Ratio",
           "refId": "C"
         }
@@ -101,7 +105,7 @@
       "title": "Prometheus Scrape Targets Up",
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [{"expr": "up", "legendFormat": "Target Up ({{job}})", "refId": "A"}]
+      "targets": [{"expr": "up{exported_job=\"\"}", "legendFormat": "Target Up ({{job}})", "refId": "A"}]
     }
   ]
 }

@@ -21,8 +21,13 @@ strategy(
     max_labels_count=200
 )
 
+import TradingView/ta/10 as tvta
+import TradingView/TechnicalRating/3 as tvtr
+
 // ============================================================================
 // Tier-0 SOTA — Native Strategy Tester & Webhook Strategy (Pine Script v6)
+// Official Upstreams: TradingView/ta/10 (STD;Relative%1Volume%1at%1Time, STD;UP_DOWN_Volume),
+//                     TradingView/TechnicalRating/3 (STD;Technical%1Ratings%1Strategy), STD;VWAP v48.0
 // Parity: NautilusTrader v2 SignalExecutionStrategy (src/tier0_sota/engine.py)
 //         1000rpm/3000rpm Venue Order Handles (IBKR_PAPER_4002 / ALPACA_PAPER_1000 / ALPACA_PAPER_200)
 //         Immutable Risk Kernel (src/tier0_sota/risk.py: Rule-612 <= 2.00%, -1.50% DD Fuse)
@@ -101,11 +106,11 @@ i_etb_short        = input.bool(true, "Symbol Shortable & Easy-To-Borrow (ETB)",
 i_early_close_1300 = input.bool(false, "XNYS Half-Day Early Close (13:00 ET RTH End)", group=grp_omni)
 i_use_mkt_reg      = input.bool(true, "Enforce Causal Multi-Feed Market Regime", group=grp_omni)
 i_vix_def          = input.float(25.0, "VIX Crash-Defensive Threshold", minval=15.0, maxval=60.0, step=0.5, group=grp_omni)
-i_mkt_sym          = input.symbol("AMEX:SPY", "Broad Market Regime Feed", group=grp_omni)
-i_qqq_sym          = input.symbol("NASDAQ:QQQ", "Growth / Nasdaq Regime Feed", group=grp_omni)
-i_semi_sym         = input.symbol("NASDAQ:SOXX", "Semiconductor Regime Feed", group=grp_omni)
-i_rsp_sym          = input.symbol("AMEX:RSP", "Equal-Weight Breadth Feed", group=grp_omni)
-i_vix_sym          = input.symbol("CBOE:VIX", "Volatility Regime Feed (VIX)", group=grp_omni)
+i_mkt_sym          = input.string("AMEX:SPY", "Broad Market Regime Feed", group=grp_omni)
+i_qqq_sym          = input.string("NASDAQ:QQQ", "Growth / Nasdaq Regime Feed", group=grp_omni)
+i_semi_sym         = input.string("NASDAQ:SOXX", "Semiconductor Regime Feed", group=grp_omni)
+i_rsp_sym          = input.string("AMEX:RSP", "Equal-Weight Breadth Feed", group=grp_omni)
+i_vix_sym          = input.string("TVC:VIX", "Volatility Regime Feed (VIX)", group=grp_omni)
 
 // ── 2. Risk Kernel, Lossless Trailing, Auto-Reverse & Re-Entry ──────────────
 grp_fsm = "02 · Risk Kernel, 4-Tier R-Lock & Auto-Reverse"
@@ -113,6 +118,8 @@ i_max_dd_pct    = input.float(1.50, "Latched Session Max Drawdown Fuse (%)", min
 i_sched_ovr     = input.string("AUTO_NATR", "Sim Trailing Schedule (Bridge Enforces AUTO_NATR)", options=["AUTO_NATR", "tight_near_lossless", "baseline", "wide_natr_adaptive"], group=grp_fsm)
 i_fee_bps_side  = input.float(4.0, "Est Fee/Slippage (bps/side)", minval=0.0, maxval=25.0, step=0.5, group=grp_fsm)
 i_spread_bps    = input.float(2.0, "Spread Buffer (bps)", minval=0.0, maxval=20.0, step=0.5, group=grp_fsm)
+i_est_spread_bps = input.float(5.0, "Est Spread for Non-Noise Min-Trail (bps)", minval=0.0, maxval=50.0, step=0.5, group=grp_fsm)
+i_use_nn_trail  = input.bool(true, "Enforce Per-Symbol Non-Noise Min-Trail Floor", group=grp_fsm)
 i_use_fast_be   = input.bool(false, "Cap BE Trigger with Fast Override (Off = Exact Engine Parity)", group=grp_fsm)
 i_fast_be_pct   = input.float(0.20, "Fast Lossless BE Trigger (%)", minval=0.10, maxval=1.00, step=0.05, group=grp_fsm)
 i_prog_lock     = input.bool(true, "Enable 4-Tier Progressive R-Lock (+1R/+2R/+3R)", group=grp_fsm)
@@ -129,6 +136,7 @@ i_rvol_base     = input.float(1.5, "Base Min RVOL", minval=1.0, maxval=10.0, ste
 i_ext_mult      = input.float(2.0, "Extreme Move ATR Multiple", minval=1.0, maxval=5.0, step=0.25, group=grp_sig)
 i_uv_z_min      = input.float(2.0, "Unusual Volume Z-Score Min", minval=1.0, maxval=6.0, step=0.25, group=grp_sig)
 i_uv_vel_min    = input.float(1.8, "3-Bar Volume Velocity Min", minval=1.1, maxval=5.0, step=0.1, group=grp_sig)
+i_pre_ign_en    = input.bool(true, "Enable Premarket Early Ignition (04:00-09:30 ET)", group=grp_sig)
 i_show_rungs    = input.bool(true, "Plot Lossless BE + 1R/2R/3R Profit Rungs", group=grp_sig)
 i_show_diag     = input.bool(true, "Show Strategy Telemetry HUD (Top-Right)", group=grp_sig)
 i_show_ord_hud  = input.bool(true, "Show Copy-Ready TV Order Preset HUD (Bottom-Right)", group=grp_sig)
@@ -185,6 +193,9 @@ is_ext       = is_pre or is_after
 sess_label = not is_24x5_open ? "CLOSED" : is_rth ? "RTH" : is_pre ? "PRE_MARKET" : is_after ? "AFTER_HOURS" : "OVERNIGHT"
 order_type = is_rth ? "STOP_MARKET" : "STOP_LIMIT"
 collar_bps = is_rth ? 0 : is_ext ? 35 : 50
+sess_exec_mech   = not is_24x5_open ? "SESSION_CLOSED_HOLD_GTC_STOP" : is_rth ? "NATIVE_BROKER_STOP_MARKET_RATCHET" : is_ext ? "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT" : "SYNTHETIC_BOATS_COLLARED_LIMIT"
+sess_order_badge = not is_24x5_open ? "CLOSED · HOLD_GTC_STOP" : is_rth ? "RTH STOP_MARKET 0bp (Native Ratchet)" : is_ext ? (is_pre ? "PRE " : "AH ") + "35bp SYNTHETIC_COLLARED_LIMIT" : "OVERNIGHT 50bp SYNTHETIC_COLLARED_LIMIT"
+sess_noise_bps   = is_rth ? 0.0 : is_ext ? 5.0 : 10.0
 
 // ── 5. Reg-NMS Rule-612 Tick Quantization & Collared Limits ─────────────────
 rule612_tick(float px) =>
@@ -248,7 +259,8 @@ natr_out   = math.min(1.0, math.max(0.000001, math.round(nz(natr_pct, 0.015), 6)
 vol_safe   = nz(volume, 0.0)
 vol_sma    = ta.sma(vol_safe, i_rvol_len)
 vol_std    = ta.stdev(vol_safe, i_rvol_len)
-rvol       = vol_sma > 0 ? vol_safe / vol_sma : 1.0
+[tv_cur_vol, tv_past_vol, _] = tvta.relativeVolume(i_rvol_len, "1D", false, false)
+rvol       = not na(tv_past_vol) and tv_past_vol > 0 ? tv_cur_vol / tv_past_vol : (vol_sma > 0 ? vol_safe / vol_sma : 1.0)
 vol_zscore = vol_std > 0 ? (vol_safe - vol_sma) / vol_std : 0.0
 vol_3      = ta.sma(vol_safe, 3)
 vol_buildup_ratio = vol_sma > 0 ? math.max(0.0, math.round(vol_3 / vol_sma, 3)) : 1.0
@@ -256,9 +268,13 @@ vol_buildup_ratio = vol_sma > 0 ? math.max(0.0, math.round(vol_3 / vol_sma, 3)) 
 ema_fast   = ta.ema(close, 9)
 ema_slow   = ta.ema(close, 21)
 ema_50     = ta.ema(close, 50)
-vwap_val   = ta.vwap(hlc3)
-vwap_dev   = ta.stdev(close - vwap_val, 20)
+[_vwap_s, _vwap_u1_s, _] = ta.vwap(hlc3, timeframe.change("D"), 1.0)
+vwap_val    = _vwap_s
+vwap_dev_fb = ta.stdev(close - nz(vwap_val, close), 20)
+vwap_dev    = not na(_vwap_s) and not na(_vwap_u1_s) ? (_vwap_u1_s - _vwap_s) : vwap_dev_fb
 vwap_u2    = not na(vwap_val) and not na(vwap_dev) ? vwap_val + 2.0 * vwap_dev : na
+[tv_rating_all, tv_rating_osc, tv_rating_ma] = tvtr.calcRatingAll()
+tv_rating_lbl = str.replace_all(tvtr.ratingStatus(tv_rating_all), "\n", " ")
 
 auto_sched   = natr_out <= 0.015 ? "tight_near_lossless" : natr_out <= 0.030 ? "baseline" : "wide_natr_adaptive"
 preset_sched = auto_sched
@@ -293,15 +309,16 @@ bench_sym      = is_semi_sym ? i_semi_sym : is_qqq_sym ? i_qqq_sym : i_mkt_sym
 
 int htf_idx = barstate.isrealtime ? 1 : 0
 [mkt_c, mkt_sma, mkt_vwap, mkt_roc, mkt_close_ts] = request.security(
-    ticker.modify(bench_sym, session=session.extended),
+    bench_sym,
     timeframe.period,
     [close, ta.sma(close, 50), ta.vwap(hlc3), (close - close[15]) / math.max(close[15], syminfo.mintick), time_close],
     gaps=barmerge.gaps_off,
-    lookahead=barmerge.lookahead_off
+    lookahead=barmerge.lookahead_off,
+    ignore_invalid_symbol=true
 )
-[spy_c, spy_sma] = request.security(ticker.modify(i_mkt_sym, session=session.extended), "5", [close[htf_idx], ta.sma(close, 50)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[rsp_c, rsp_sma] = request.security(i_rsp_sym, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-vix_last         = request.security(i_vix_sym, "15", close[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[spy_c, spy_sma] = request.security(i_mkt_sym, "5", [close[htf_idx], ta.sma(close, 50)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+[rsp_c, rsp_sma] = request.security(i_rsp_sym, "D", [close[htf_idx], ta.sma(close, 20)[htf_idx]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
+vix_last         = request.security(i_vix_sym, "15", close[htf_idx], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off, ignore_invalid_symbol=true)
 
 mkt_bull     = not na(mkt_c) and not na(mkt_sma) and not na(mkt_vwap) and mkt_c > mkt_sma and mkt_c > mkt_vwap and mkt_roc >= 0.002
 mkt_crash    = not na(mkt_c) and not na(mkt_sma) and not na(mkt_vwap) and mkt_c < mkt_sma and mkt_c < mkt_vwap and mkt_roc <= -0.003
@@ -328,20 +345,35 @@ lo_10     = ta.lowest(low, 10)[1]
 prev_lo5  = ta.lowest(low, 5)[1]
 bar_chg   = close[1] > 0 ? (close - close[1]) / close[1] : 0.0
 
+string ltf_delta = timeframe.isseconds ? "1S" : timeframe.isintraday ? "1" : timeframe.isdaily ? "5" : "60"
+[_, _, _, tv_sess_cvd] = tvta.requestVolumeDelta(ltf_delta, "1D")
 var float sess_open_px   = na
 var float prev_day_close = na
-var float sess_cvd       = 0.0
+var float fallback_cvd   = 0.0
+var float pre_open_px    = na
+var float pre_hi_px      = na
 if timeframe.change("D")
     prev_day_close := nz(close[1], open)
     sess_open_px   := open
-    sess_cvd       := 0.0
-sess_cvd += vol_safe * clv
+    fallback_cvd   := 0.0
+    pre_open_px    := is_pre ? open : na
+    pre_hi_px      := is_pre ? high : na
+if is_pre and not is_pre[1]
+    pre_open_px := open
+    pre_hi_px   := high
+float prev_pre_hi = is_pre ? nz(pre_hi_px[1], hi_10) : hi_10
+if is_pre
+    pre_hi_px := na(pre_hi_px) ? high : math.max(pre_hi_px, high)
+fallback_cvd += vol_safe * clv
+sess_cvd     = nz(tv_sess_cvd, fallback_cvd)
 cvd_ema      = ta.ema(sess_cvd, 9)
 cvd_bull_div = barstate.isconfirmed and not na(prev_lo5) and low <= prev_lo5 and sess_cvd > nz(sess_cvd[5], sess_cvd) and clv > 0.20
 gap_up_pct   = not na(sess_open_px) and not na(prev_day_close) and prev_day_close > 0 ? (sess_open_px - prev_day_close) / prev_day_close : 0.0
+pre_move_pct = not na(prev_day_close) and prev_day_close > 0 ? (close - prev_day_close) / prev_day_close : (not na(pre_open_px) and pre_open_px > 0 ? (close - pre_open_px) / pre_open_px : bar_chg)
 
 is_extreme        = atr_val > 0 and bar_range >= atr_val * i_ext_mult and rvol >= rvol_min
 vol_buildup       = barstate.isconfirmed and ((rvol >= 1.8 and vol_safe > nz(volume[1], 0.0) and nz(volume[1], 0.0) >= vol_sma) or (vol_zscore >= i_uv_z_min and vol_buildup_ratio >= i_uv_vel_min))
+premarket_ignition = barstate.isconfirmed and i_pre_ign_en and is_pre and close > open and close > ema_fast and (na(vwap_val) or close >= vwap_val) and (pre_move_pct >= 0.012 or bar_chg >= 0.008) and (rvol >= math.max(1.5, rvol_min) or vol_buildup or vol_buildup_ratio >= 1.6) and clv >= 0.40 and (na(prev_pre_hi) or close >= prev_pre_hi * 0.998)
 hidden_vol_ratio  = math.max(0.0, math.round(nz(rvol / math.max(0.25, bar_range / math.max(nz(atr_val, syminfo.mintick), syminfo.mintick)), 0.0), 2))
 vwap_pin_absorb   = barstate.isconfirmed and not na(vwap_val) and atr_val > 0 and math.abs(close - vwap_val) <= atr_val * 0.35 and rvol >= 2.0 and bar_range < atr_val * 0.85
 hidden_vol_bull   = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_val * 0.85 and (clv >= 0.60 or (vwap_pin_absorb and clv >= 0.25 and sess_cvd >= cvd_ema))
@@ -355,10 +387,10 @@ parabolic_top     = barstate.isconfirmed and not na(vwap_val) and ((close >= vwa
 
 long_extreme_rev  = is_extreme[1] and close[1] < open[1] and low[1] <= lo_10 and close > open and close > ema_fast
 long_tight_scalp  = barstate.isconfirmed and not na(vwap_val) and close > vwap_val and close > ema_fast and ema_fast > ema_slow and low <= ema_fast and clv >= 0.50 and (rvol >= rvol_min or vol_buildup)
-long_vcp_ep       = vcp_breakout or ep_momentum_burst or pead_drift or ((hidden_vol_bull or cvd_bull_div) and not na(vwap_val) and close > vwap_val and close > ema_fast)
+long_vcp_ep       = premarket_ignition or vcp_breakout or ep_momentum_burst or pead_drift or ((hidden_vol_bull or cvd_bull_div) and not na(vwap_val) and close > vwap_val and close > ema_fast)
 on_liq_ok         = vol_safe > 0 and atr_val > 0 and (rvol >= math.max(1.3, rvol_min) or vol_buildup)
 
-long_by_mode  = resolved_mode == "MINERVINI_VCP_BREAKOUT" ? (vcp_breakout or pead_drift) : resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? (ep_momentum_burst or pead_drift or hidden_vol_bull) : resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER" ? (exhaustion_hammer or long_extreme_rev) : resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? false : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? ((is_inverse_etf and (long_vcp_ep or long_extreme_rev)) or (ep_momentum_burst and rvol >= 4.0)) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? (long_tight_scalp or long_extreme_rev or long_vcp_ep) : resolved_mode == "OVERNIGHT_24X5_IBKR" ? (on_liq_ok and (long_extreme_rev or long_vcp_ep or exhaustion_hammer)) : (long_extreme_rev or long_vcp_ep or exhaustion_hammer)
+long_by_mode  = resolved_mode == "MINERVINI_VCP_BREAKOUT" ? (vcp_breakout or pead_drift or premarket_ignition) : resolved_mode == "STOCKBEE_EP_MOMENTUM_BURST" ? (premarket_ignition or ep_momentum_burst or pead_drift or hidden_vol_bull) : resolved_mode == "STOCKBEE_EXHAUSTION_HAMMER" ? (exhaustion_hammer or long_extreme_rev) : resolved_mode == "PARABOLIC_EXHAUSTION_SHORT" ? false : resolved_mode == "CRASH_DEFENSIVE_INVERSE" ? ((is_inverse_etf and (long_vcp_ep or long_extreme_rev)) or (ep_momentum_burst and rvol >= 4.0)) : resolved_mode == "LOSSLESS_TIGHT_SCALP" ? (long_tight_scalp or long_extreme_rev or long_vcp_ep) : resolved_mode == "OVERNIGHT_24X5_IBKR" ? (on_liq_ok and (long_extreme_rev or long_vcp_ep or exhaustion_hammer)) : (long_extreme_rev or long_vcp_ep or exhaustion_hammer)
 
 short_crash_align = eff_regime == -1 and not na(vwap_val) and close < vwap_val and close < ema_fast and close < open and rvol >= rvol_min
 short_peak_rev    = eff_regime != 1 and not na(vwap_val[1]) and (parabolic_top[1] or (is_extreme[1] and close[1] > open[1] and high[1] >= hi_10 and close[1] >= vwap_val[1] * (1.0 + natr_out))) and close < open and (close < low[1] or (not na(vwap_val) and close < vwap_val))
@@ -371,9 +403,33 @@ rev_short_mode          = can_direct_short ? "DIRECT_SHORT_ETB" : i_etb_short ? 
 long_rev_raw  = barstate.isconfirmed and is_24x5_open and (eff_regime != -1 or (ep_momentum_burst and rvol >= 4.0)) and long_by_mode
 short_rev_raw = barstate.isconfirmed and is_24x5_open and can_direct_short and short_by_mode
 
-setup_archetype  = ep_momentum_burst ? "EARLY_EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_BREAKOUT" : pead_drift ? "PEAD_DRIFT" : exhaustion_hammer ? "EXHAUSTION_HAMMER" : (hidden_vol_bull or (vol_buildup and hidden_vol_ratio >= 2.0)) ? "HIDDEN_VOL_ACCUM" : parabolic_top ? "PARABOLIC_TOP" : short_crash_align ? "CRASH_ALIGNMENT" : short_peak_rev ? "PEAK_REVERSAL" : vcp_coil ? "VCP_COIL" : "EXTREME_REVERSAL"
-fast_sell_climax = barstate.isconfirmed and is_24x5_open and i_fast_sell_rev and eff_regime != 1 and (parabolic_top or (close < open and close < ema_fast and close < low[1] and not na(vwap_val) and (close < vwap_val or high[1] >= vwap_val[1] * (1.0 + natr_out)) and rvol >= math.max(1.2, rvol_min * 0.7)))
-peak_confirmed   = barstate.isconfirmed and (short_peak_rev or fast_sell_climax)
+setup_archetype    = (premarket_ignition or ep_momentum_burst) ? "EARLY_EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_BREAKOUT" : pead_drift ? "PEAD_DRIFT" : exhaustion_hammer ? "EXHAUSTION_HAMMER" : (hidden_vol_bull or (vol_buildup and hidden_vol_ratio >= 2.0)) ? "HIDDEN_VOL_ACCUM" : parabolic_top ? "PARABOLIC_TOP" : short_crash_align ? "CRASH_ALIGNMENT" : short_peak_rev ? "PEAK_REVERSAL" : vcp_coil ? "VCP_COIL" : "EXTREME_REVERSAL"
+potential_category = premarket_ignition ? "PREMARKET_EARLY_IGNITION" : ep_momentum_burst ? "EP_MOMENTUM_BURST" : vcp_breakout ? "VCP_STAGE2_BREAKOUT" : pead_drift ? "PEAD_DRIFT" : exhaustion_hammer ? "EXHAUSTION_HAMMER" : (hidden_vol_bull or (vol_buildup and hidden_vol_ratio >= 2.0)) ? "DARKPOOL_ACCUMULATION" : (parabolic_top or short_peak_rev) ? "PARABOLIC_PEAK_REVERSAL" : short_crash_align ? "CRASH_INVERSE_HEDGE" : vol_buildup ? "SUDDEN_VOLUME_SURGE" : "EXTREME_MOVER_WATCH"
+fast_sell_climax   = barstate.isconfirmed and is_24x5_open and i_fast_sell_rev and eff_regime != 1 and (parabolic_top or (close < open and close < ema_fast and close < low[1] and not na(vwap_val) and (close < vwap_val or high[1] >= vwap_val[1] * (1.0 + natr_out)) and rvol >= math.max(1.2, rvol_min * 0.7)))
+peak_confirmed     = barstate.isconfirmed and (short_peak_rev or fast_sell_climax)
+
+// ── 8b. Per-Symbol, Per-Situation Non-Noise Min-Trail Floor (Exact engine.py Parity) ─
+resolve_situation_trail_mult(string cat, string arch) =>
+    if cat == "PARABOLIC_PEAK_REVERSAL" or arch == "PARABOLIC_TOP" or arch == "PEAK_REVERSAL"
+        0.20
+    else if cat == "CRASH_INVERSE_HEDGE" or arch == "CRASH_ALIGNMENT" or arch == "EXTREME_REVERSAL"
+        0.22
+    else if arch == "EXHAUSTION_HAMMER" or arch == "VCP_COIL"
+        0.25
+    else if cat == "PREMARKET_EARLY_IGNITION"
+        0.28
+    else if cat == "DARKPOOL_ACCUMULATION" or arch == "HIDDEN_VOL_ACCUM"
+        0.32
+    else if cat == "VCP_STAGE2_BREAKOUT" or arch == "VCP_BREAKOUT" or arch == "PEAD_DRIFT"
+        0.35
+    else
+        0.30
+
+float two_tick_pct            = close > 0 ? (2.0 * rule612_tick(close)) / close : 0.0002
+float fee_spread_noise_floor  = (i_fee_bps_side * 2.0 + 2.0 + i_est_spread_bps * 1.5 + sess_noise_bps) / 10000.0
+float sit_trail_mult          = resolve_situation_trail_mult(potential_category, setup_archetype)
+float min_non_noise_trail_pct = math.min(sess_init_cap, math.max(fee_spread_noise_floor, math.max(sit_trail_mult * natr_out, two_tick_pct)))
+float fast_sell_rev_pct       = min_non_noise_trail_pct
 
 resolve_farm_lane(string arch, string sess, string broker) =>
     if sess == "OVERNIGHT" and (broker == "IBKR" or arch == "CRASH_ALIGNMENT" or arch == "PEAK_REVERSAL" or arch == "PARABOLIC_TOP")
@@ -489,6 +545,12 @@ benchmark_ready  = not na(mkt_close_ts) and bench_age_ms >= 0 and bench_age_ms <
 practice_ready   = not i_use_mkt_reg or benchmark_ready
 signal_dir       = not practice_ready or long_rev_raw == short_rev_raw ? 0 : long_rev_raw ? 1 : -1
 
+float cur_bar_best  = cur_pos_dir == 1 ? math.max(nz(best_px, cur_entry), high) : cur_pos_dir == -1 ? math.min(nz(best_px, cur_entry), low) : na
+float cur_leg_risk  = cur_pos_dir != 0 and not na(cur_entry) and not na(init_stop_px) ? math.max(syminfo.mintick, math.abs(cur_entry - init_stop_px)) : na
+float cur_r_mult    = cur_pos_dir != 0 and not na(cur_leg_risk) and not na(cur_bar_best) ? cur_pos_dir * (cur_bar_best - cur_entry) / cur_leg_risk : 0.0
+float cur_peak_pb   = cur_pos_dir == 1 and not na(cur_bar_best) and cur_bar_best > 0 ? math.max(0.0, (cur_bar_best - close) / cur_bar_best) : cur_pos_dir == -1 and not na(cur_bar_best) and cur_bar_best > 0 ? math.max(0.0, (close - cur_bar_best) / cur_bar_best) : 0.0
+peak_hit_exhaustion = barstate.isconfirmed and is_24x5_open and i_fast_sell_rev and cur_pos_dir == 1 and not na(cur_leg_risk) and ((cur_r_mult >= 2.5 and cur_peak_pb >= min_non_noise_trail_pct and close < open) or (parabolic_top and cur_r_mult >= 1.5 and clv <= -0.25 and cur_peak_pb >= min_non_noise_trail_pct))
+fast_sell_nn_trend  = barstate.isconfirmed and is_24x5_open and cur_pos_dir != 0 and be_armed and cur_peak_pb >= fast_sell_rev_pct and ((cur_pos_dir == 1 and close < open and close < ema_fast) or (cur_pos_dir == -1 and close > open and close > ema_fast))
 bool flattened_rev = false
 
 if dd_tripped
@@ -498,12 +560,16 @@ if dd_tripped
     pending_rev_dir := 0
 else if barstate.isconfirmed and is_24x5_open
     if cur_pos_dir != 0
-        bool climax_flip = cur_pos_dir == 1 and fast_sell_climax and can_direct_short
+        bool climax_exit = cur_pos_dir == 1 and (fast_sell_climax or peak_hit_exhaustion)
+        bool climax_flip = climax_exit and can_direct_short
         bool opp_sig     = i_auto_reverse and (signal_dir == -cur_pos_dir or climax_flip)
         if opp_sig
             // Flatten-first auto-reverse (never flips directly without closing first)
-            strategy.close(cur_pos_dir == 1 ? "T0_LONG" : "T0_SHORT", comment="AUTO_REV_FLATTEN", disable_alert=true)
+            strategy.close(cur_pos_dir == 1 ? "T0_LONG" : "T0_SHORT", comment=peak_hit_exhaustion ? "PEAK_CLIMAX_FLATTEN" : "AUTO_REV_FLATTEN", disable_alert=true)
             pending_rev_dir := climax_flip ? -1 : signal_dir
+            flattened_rev   := true
+        else if climax_exit
+            strategy.close("T0_LONG", comment="PEAK_CLIMAX_FLATTEN_HEDGE", disable_alert=true)
             flattened_rev   := true
         else
             best_px := cur_pos_dir == 1 ? math.max(nz(best_px, cur_entry), high) : math.min(nz(best_px, cur_entry), low)
@@ -542,6 +608,8 @@ else if barstate.isconfirmed and is_24x5_open
                             float lock1 = inward_stop(math.max(0.0001, cur_entry + cur_pos_dir * 0.45 * leg_risk), cur_pos_dir)
                             if cur_pos_dir * (best_px - lock1) > 0
                                 next_stop := cur_pos_dir == 1 ? math.max(next_stop, lock1) : math.min(next_stop, lock1)
+                    if i_use_nn_trail
+                        eff_trail_pct := fast_sell_nn_trend ? min_non_noise_trail_pct : math.min(sess_init_cap, math.max(eff_trail_pct, min_non_noise_trail_pct))
                     float trail_stop = inward_stop(best_px * (1.0 - cur_pos_dir * eff_trail_pct), cur_pos_dir)
                     if cur_pos_dir * (best_px - trail_stop) <= 0
                         float tick = cur_pos_dir == 1 and best_px <= 1.0 ? 0.0001 : rule612_tick(best_px)
@@ -599,7 +667,9 @@ plot(i_show_rungs and cur_pos_dir != 0 ? rung_1r  : na, "+1R Target",   color=co
 plot(i_show_rungs and cur_pos_dir != 0 ? rung_2r  : na, "+2R Target",   color=color.new(color.lime, 55), style=plot.style_linebr, linewidth=1)
 plot(i_show_rungs and cur_pos_dir != 0 ? rung_3r  : na, "+3R Target",   color=color.new(color.rgb(16, 185, 129), 45), style=plot.style_linebr, linewidth=1)
 
-plotshape(flattened_rev, title="Auto-Reverse Flatten", style=shape.flag, location=location.abovebar, color=color.orange, size=size.tiny)
+plotshape(flattened_rev,       title="Auto-Reverse Flatten",     style=shape.flag,      location=location.abovebar, color=color.orange, size=size.tiny)
+plotshape(premarket_ignition,  title="Premarket Early Ignition", style=shape.labelup,   location=location.belowbar, color=color.new(color.aqua, 10), text="PRE", textcolor=color.black, size=size.tiny)
+plotshape(peak_hit_exhaustion, title="Peak-Hit Climax Reverse",  style=shape.labeldown, location=location.abovebar, color=color.new(color.fuchsia, 10), text="PK", textcolor=color.white, size=size.tiny)
 bgcolor(i_show_bg ? (dd_tripped ? color.new(color.maroon, 82) : eff_regime == -1 ? color.new(color.red, 92) : vcp_coil ? color.new(color.aqua, 94) : na) : na, title="Regime / DD / VCP Tint")
 
 // ── 12. Strategy Telemetry HUD (Top-Right) & Order Preset HUD (Bottom-Right) ─
@@ -620,7 +690,8 @@ build_order_card() =>
     float l2 = inward_stop(ref_e + dir * 1.35 * r_unit, dir)
     float t3 = outward_limit(ref_e + dir * 3.0 * r_unit, dir)
     float l3 = inward_stop(ref_e + dir * 2.35 * r_unit, dir)
-    float f_rev = inward_stop(ref_e * (dir == 1 ? 0.9960 : 1.0040), dir)
+    float rev_base = live_leg and not na(best_px) ? best_px : ref_e
+    float f_rev = inward_stop(rev_base * (1.0 - dir * fast_sell_rev_pct), dir)
     float r_budget = raw_regime == -1 ? 0.0025 : 0.0050
     int s25 = size_by_risk(25000.0, ref_e, ref_init, r_budget, 0.15)
     int s100 = size_by_risk(100000.0, ref_e, ref_init, r_budget, 0.15)
@@ -648,8 +719,8 @@ build_order_card() =>
         s100
     )
 
-var table shud = table.new(position.top_right, 2, 11, border_width=1, border_color=color.new(color.gray, 55))
-var table ohud = table.new(position.bottom_right, 2, 12, border_width=1, border_color=color.new(color.gray, 55))
+var table shud = table.new(position.top_right, 2, 13, border_width=1, border_color=color.new(color.gray, 55))
+var table ohud = table.new(position.bottom_right, 2, 13, border_width=1, border_color=color.new(color.gray, 55))
 
 if barstate.islast and i_show_diag
     float win_rate = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100.0 : 0.0
@@ -660,12 +731,12 @@ if barstate.islast and i_show_diag
 
     table.cell(shud, 0, 0,  "Strategy Mode",   bgcolor=color.new(color.navy, 35), text_color=color.white, text_size=size.small)
     table.cell(shud, 1, 0,  resolved_mode + " [strategy]", bgcolor=color.new(color.navy, 55), text_color=color.aqua, text_size=size.small)
-    table.cell(shud, 0, 1,  "Macro Regime",    bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(shud, 1, 1,  reg_txt + " | eff=" + str.tostring(eff_regime), bgcolor=raw_regime == -1 ? color.new(color.red, 55) : raw_regime == 1 ? color.new(color.green, 65) : color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+    table.cell(shud, 0, 1,  "Macro / TV Rate", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(shud, 1, 1,  reg_txt + " | TV " + tv_rating_lbl + " (" + str.tostring(tv_rating_all, "0.00") + ")", bgcolor=raw_regime == -1 ? color.new(color.red, 55) : raw_regime == 1 ? color.new(color.green, 65) : color.new(color.gray, 80), text_color=color.white, text_size=size.small)
     table.cell(shud, 0, 2,  "24/5 Session",    bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(shud, 1, 2,  sess_label + " · " + order_type + " (" + str.tostring(collar_bps, "0") + "bp)", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
-    table.cell(shud, 0, 3,  "Sched / Tier",    bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(shud, 1, 3,  active_schedule + " [" + tier_tag + "] · NATR " + str.tostring(natr_out * 100.0, "0.00") + "%", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(shud, 1, 2,  sess_order_badge,  bgcolor=is_rth ? color.new(color.gray, 85) : color.new(color.navy, 55), text_color=is_rth ? color.white : color.aqua, text_size=size.small)
+    table.cell(shud, 0, 3,  "Sched / NN-Min",  bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(shud, 1, 3,  active_schedule + " [" + tier_tag + "] · NN-Min " + str.tostring(min_non_noise_trail_pct * 100.0, "0.00") + "%", bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(shud, 0, 4,  "Daily DD Fuse",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(shud, 1, 4,  dd_txt,            bgcolor=dd_tripped ? color.new(color.red, 35) : color.new(color.green, 75), text_color=color.white, text_size=size.small)
     table.cell(shud, 0, 5,  "Trades / Win%",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
@@ -680,6 +751,10 @@ if barstate.islast and i_show_diag
     table.cell(shud, 1, 9,  "RVOL " + str.tostring(rvol, "0.0") + "x · VBR " + str.tostring(vol_buildup_ratio, "0.0") + "x · HVR " + str.tostring(hidden_vol_ratio, "0.##"), bgcolor=vol_buildup ? color.new(color.teal, 55) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(shud, 0, 10, "Webhook Guard",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(shud, 1, 10, (did_reverse ? "[FLIP] " : "") + "tier0.tv-alert.v1 · qty=1 · semi_auto=false", bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
+    table.cell(shud, 0, 11, "Early Ign / Cat", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(shud, 1, 11, (premarket_ignition ? "PRE-IGNITION [LIVE] · " : is_pre ? "PRE-WATCH · " : "") + potential_category, bgcolor=premarket_ignition ? color.new(color.teal, 45) : color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(shud, 0, 12, "1000rpm Rapid",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(shud, 1, 12, str.tostring(vh.max_rpm, "0") + "rpm (" + str.tostring(vh.cadence_secs, "0.##") + "s) · Re=" + str.tostring(i_cooldown_sec, "0") + "s · PeakRev=" + (peak_confirmed or peak_hit_exhaustion ? "ARMED" : "READY"), bgcolor=peak_confirmed or peak_hit_exhaustion ? color.new(color.fuchsia, 55) : color.new(color.navy, 55), text_color=color.aqua, text_size=size.small)
 
 if barstate.islast and i_show_ord_hud
     OrderPresetCard card = build_order_card()
@@ -700,8 +775,8 @@ if barstate.islast and i_show_ord_hud
     table.cell(ohud, 1, 2,  lane_str,           bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(ohud, 0, 3,  "Route / Setup",    bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(ohud, 1, 3,  card.route_mode + (pair_sym != "" ? " [" + pair_sym + "]" : "") + " · " + setup_archetype, bgcolor=color.new(color.gray, 85), text_color=color.aqua, text_size=size.small)
-    table.cell(ohud, 0, 4,  "Order / TIF",      bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
-    table.cell(ohud, 1, 4,  card.order_type + " (" + str.tostring(card.collar_bps, "0") + "bp) · " + card.tif, bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
+    table.cell(ohud, 0, 4,  "Order / 24x5",     bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ohud, 1, 4,  card.order_type + " (" + str.tostring(card.collar_bps, "0") + "bp) · " + (is_rth ? "NATIVE_RATCHET" : is_ext ? "SYNTHETIC_COLLARED_LIMIT" : "BOATS_COLLARED_LIMIT"), bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(ohud, 0, 5,  "Entry / Collar",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(ohud, 1, 5,  ent_str,            bgcolor=color.new(color.gray, 85), text_color=color.white, text_size=size.small)
     table.cell(ohud, 0, 6,  "Initial SL (R612)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
@@ -716,3 +791,5 @@ if barstate.islast and i_show_ord_hud
     table.cell(ohud, 1, 10, "Tgt " + str.tostring(card.t3r, "0.####") + " -> Lock " + str.tostring(card.l3r, "0.####") + " | Rev " + str.tostring(card.fast_rev, "0.####"), bgcolor=color.new(color.green, 70), text_color=color.white, text_size=size.small)
     table.cell(ohud, 0, 11, "Size ($25k/$100k)",bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(ohud, 1, 11, str.tostring(card.sh_25k, "0") + " / " + str.tostring(card.sh_100k, "0") + " sh · semi_auto=false" + s5_tag, bgcolor=color.new(color.orange, 70), text_color=color.white, text_size=size.small)
+    table.cell(ohud, 0, 12, "NN-Min / Adopt",   bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(ohud, 1, 12, "NN-Min " + str.tostring(min_non_noise_trail_pct * 100.0, "0.00") + "% (x" + str.tostring(sit_trail_mult, "0.##") + ") · 24/5 Auto-Adopt", bgcolor=color.new(color.teal, 55), text_color=color.white, text_size=size.small)

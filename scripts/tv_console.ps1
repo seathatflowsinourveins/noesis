@@ -107,6 +107,44 @@ function tv-presets {
     }
 }
 
+function tv-layout {
+    [CmdletBinding()]
+    param(
+        [string]$OutDir = $script:Tier0PackDir
+    )
+    $quickPath = Join-Path $OutDir 'TV_LAYOUT_AND_PRESET_QUICKSTART.md'
+    if (-not (Test-Path -LiteralPath $quickPath)) {
+        tv-tickets -OutDir $OutDir | Out-Null
+    }
+    if (Test-Path -LiteralPath $quickPath) {
+        Get-Content -LiteralPath $quickPath -Encoding UTF8
+    }
+}
+
+function tv-mcp-status {
+    [CmdletBinding()]
+    param()
+    Invoke-Tier0Python -Arguments @('-B', (Join-Path $script:Tier0RepoRoot 'scripts\nautilus_mcp_server.py'), '--smoke')
+    if ($LASTEXITCODE -ne 0) { throw "nautilus_mcp_server --smoke exited with code $LASTEXITCODE" }
+    Write-Host "[MCP-TV-OFFICIAL] Streamable HTTP + OAuth 2.1 (user scope): https://mcp.tradingview.com/mcp" -ForegroundColor Cyan
+    Write-Host "[MCP-PINE-LOCAL]  Zero-CDP MIT Pine v6 docs/validator: uvx --from pinescript-mcp pinescript-mcp" -ForegroundColor Cyan
+}
+
+function tv-watchlist-payload {
+    [CmdletBinding()]
+    param(
+        [string]$OutDir = $script:Tier0PackDir,
+        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA'
+    )
+    $payloadPath = Join-Path $OutDir 'tv_watchlist_sync_payload.json'
+    if (-not (Test-Path -LiteralPath $payloadPath)) {
+        tv-tickets -OutDir $OutDir -Venue $Venue | Out-Null
+    }
+    if (Test-Path -LiteralPath $payloadPath) {
+        Get-Content -LiteralPath $payloadPath -Encoding UTF8
+    }
+}
+
 function tv-sync-pine {
     [CmdletBinding()]
     param(
@@ -264,6 +302,37 @@ open(r'$tmp', 'w', encoding='utf-8').write(json.dumps(payload))
     }
 }
 
+function tv-prune-stale {
+    [CmdletBinding()]
+    param(
+        [string]$ManifestDir = $script:Tier0Manifest,
+        [string]$StagedPath  = (Join-Path $script:Tier0PackDir 'staged_tv_presets.json')
+    )
+    Invoke-Tier0Python -Arguments @('-B', '-m', 'tier0_sota.tv.bridge', '--prune-stale', '--staged-path', $StagedPath, '--manifest-dir', $ManifestDir)
+    if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.bridge --prune-stale exited with code $LASTEXITCODE" }
+}
+
+function tv-preset-setup {
+    [CmdletBinding()]
+    param(
+        [string]$ManifestDir = $script:Tier0Manifest,
+        [string]$OutDir      = $script:Tier0PackDir,
+        [ValidateSet('ALPACA', 'IBKR')][string]$Venue = 'ALPACA',
+        [ValidateSet('', 'IBKR_PAPER_4002', 'ALPACA_PAPER_200', 'ALPACA_PAPER_1000')][string]$VenueProfile = 'ALPACA_PAPER_1000',
+        [ValidateRange(1, 10)][int]$MaxStage = 3,
+        [switch]$PruneOnly
+    )
+    if ($PruneOnly) {
+        tv-prune-stale -ManifestDir $ManifestDir -StagedPath (Join-Path $OutDir 'staged_tv_presets.json')
+        return
+    }
+    $effVp = if ($Venue -eq 'IBKR' -and $VenueProfile -eq 'ALPACA_PAPER_1000') { 'IBKR_PAPER_4002' } else { $VenueProfile }
+    $pArgs = @('-B', '-m', 'tier0_sota.tv.tickets', '--preset-setup', '--manifest-dir', $ManifestDir, '--out-dir', $OutDir, '--venue', $Venue, '--max-stage', "$MaxStage")
+    if ($effVp) { $pArgs += @('--venue-profile', $effVp) }
+    Invoke-Tier0Python -Arguments $pArgs
+    if ($LASTEXITCODE -ne 0) { throw "tier0_sota.tv.tickets --preset-setup exited with code $LASTEXITCODE" }
+}
+
 function tv-confirm-paper {
     [CmdletBinding()]
     param(
@@ -376,4 +445,4 @@ function tv-e2e {
     }
 }
 
-Write-Host "[TV-SOTA] Loaded: tv-land | tv-tickets | tv-presets | tv-handles | tv-stage | tv-ingest | tv-confirm-paper | tv-sync-pine | tv-copy-omni | tv-copy-strategy | tv-copy-regime | tv-copy-darkpool | tv-copy-watchlist | tv-portals | tv-e2e" -ForegroundColor Cyan
+Write-Host "[TV-SOTA] Loaded: tv-land | tv-tickets | tv-presets | tv-preset-setup | tv-prune-stale | tv-layout | tv-watchlist-payload | tv-mcp-status | tv-handles | tv-stage | tv-ingest | tv-confirm-paper | tv-sync-pine | tv-copy-omni | tv-copy-strategy | tv-copy-regime | tv-copy-darkpool | tv-copy-watchlist | tv-portals | tv-e2e" -ForegroundColor Cyan

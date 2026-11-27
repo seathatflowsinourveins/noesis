@@ -131,6 +131,13 @@
       "layer": "L4",
       "decision": "excluded_spdx_and_loopback",
       "reason": "Commercial cloud webhook relays (TradersPost proprietary commercial SaaS webhook relay — explicitly distinct from MIT TradersPost/pine-mcp Pine docs MCP — plus 3Commas, CrossTrade, PickMyTrade, Autoview) violate SPDX OSI firewall, loopback isolation, and semi_auto_confirmed=false."
+    },
+    {
+      "slug": "raw-unfiltered-alpaca-mcp-server",
+      "spdx": "MIT",
+      "layer": "L4",
+      "decision": "rejected_raw_unfiltered_in_repo",
+      "reason": "Explicitly rejected as raw unfiltered broker MCP inside repo L4 at upstream-map.toml:141 so immutable src/tier0_sota/risk.py, repo 4-stdio-MCP parity, and live_execution_enabled=False are never bypassed; in-repo broker operations stay mediated via alpacahq/alpaca-py + local nautilus-engine FastMCP (any first-party alpacahq/alpaca-mcp-server usage is strictly isolated off-repo with fail-closed ALPACA_PAPER_TRADE=True guards)."
     }
   ],
   "active_winners_by_layer": {
@@ -148,7 +155,8 @@
         "pydantic/pydantic",
         "gerrymanoim/exchange_calendars",
         "dgunning/edgartools",
-        "mortada/fredapi"
+        "mortada/fredapi",
+        "tobymao/sqlglot"
       ],
       "artifacts": ["src/tier0_sota/discovery.py", "src/tier0_sota/live/paper_farm.py", "src/tier0_sota/tv/bridge.py"]
     },
@@ -161,7 +169,9 @@
         "stumpy-dev/stumpy",
         "lightgbm-org/LightGBM",
         "catboost/catboost",
-        "shap/shap"
+        "shap/shap",
+        "NorskRegnesentral/skchange",
+        "mmschlk/shapiq"
       ],
       "artifacts": ["src/tier0_sota/discovery.py"]
     },
@@ -187,7 +197,8 @@
         "ml4t/diagnostic",
         "bashtage/arch",
         "statsmodels/statsmodels",
-        "oxfordcontrol/Clarabel.rs (clarabel)"
+        "oxfordcontrol/Clarabel.rs (clarabel)",
+        "scikit-learn-contrib/MAPIE"
       ],
       "artifacts": ["src/tier0_sota/research.py"]
     },
@@ -286,12 +297,17 @@
       "name": "Institutional UI & Visual Analytics",
       "winners": [
         "openbq-org/finos-workspace",
-        "openbq-org/finos-workspace-plugins",
+        "openbq-org/finos-workspace-plugins (ag-grid@2.3.0, plotly-charts@2.5.0, @finos-workspace/mermaid@1.0.0)",
         "openbq-org/OpenBB",
         "openbq-org/backends-for-openbb",
         "perspective-dev/perspective",
         "tradingview/lightweight-charts",
         "ag-grid/ag-grid (ag-grid-community MIT)"
+      ],
+      "approved_finos_plugins": [
+        "ag-grid@2.3.0",
+        "plotly-charts@2.5.0",
+        "@finos-workspace/mermaid@1.0.0"
       ],
       "watches": ["rerun-io/rerun", "uwdata/mosaic", "finos/FDC3", "evidence-dev/evidence"],
       "artifacts": [
@@ -326,7 +342,7 @@
         {"slug": "vortex-data/vortex", "spdx": "Apache-2.0", "trigger": "lake > 100 GB/run"},
         {"slug": "apache/iceberg-python", "alias": "pyiceberg", "spdx": "Apache-2.0", "trigger": "multi-writer ACID Parquet table snapshots"},
         {"slug": "lancedb/lancedb", "spdx": "Apache-2.0", "trigger": "multimodal SEC filings"},
-        {"slug": "tobymao/sqlglot", "spdx": "MIT", "trigger": "PIT SQL static transpilation"},
+        {"slug": "tobymao/sqlglot", "spdx": "MIT", "status": "graduated", "graduated_to": "L1", "version": "30.35.0", "adr": "ADR-0028", "trigger": "PIT SQL static transpilation (GRADUATED to active L1 in ADR-0028: validate_pit_duckdb_sql in src/tier0_sota/discovery.py)"},
         {"slug": "dlt-hub/dlt", "spdx": "Apache-2.0", "trigger": "declarative PIT ingest pipelines"}
       ]
     },
@@ -339,9 +355,9 @@
         {"slug": "amazon-science/chronos-forecasting", "alias": "Chronos-2", "trigger": "L5 proof + pre-wall audit"},
         {"slug": "DataDog/toto", "alias": "Toto", "trigger": "time-series foundation eval"},
         {"slug": "SalesforceAIResearch/gift-eval", "alias": "GIFT-Eval", "trigger": "time-series benchmark gate"},
-        {"slug": "mmschlk/shapiq", "alias": "shapiq", "trigger": "interaction Shapley attribution"},
+        {"slug": "mmschlk/shapiq", "alias": "shapiq", "spdx": "MIT", "status": "graduated", "graduated_to": "L2", "version": "1.8.0", "adr": "ADR-0028", "trigger": "interaction Shapley attribution (GRADUATED to active L2 in ADR-0028: compute_shapiq_interactions in src/tier0_sota/discovery.py)"},
         {"slug": "evidentlyai/evidently", "alias": "evidently", "trigger": "production feature drift"},
-        {"slug": "NorskRegnesentral/skchange", "alias": "skchange", "trigger": "online changepoint upgrade"}
+        {"slug": "NorskRegnesentral/skchange", "alias": "skchange", "spdx": "BSD-3-Clause", "status": "graduated", "graduated_to": "L2", "version": "0.18.0", "adr": "ADR-0028", "trigger": "online changepoint upgrade (GRADUATED to active L2 in ADR-0028: detect_skchange_regime_anomalies in src/tier0_sota/discovery.py)"}
       ]
     },
     "L13": {
@@ -354,7 +370,7 @@
         {"slug": "DoubleML/doubleml-for-py", "alias": "DoubleML", "trigger": "causal factor neutralization"},
         {"slug": "meta-pytorch/botorch", "alias": "BoTorch", "trigger": "multi-objective Bayesian HPO"},
         {"slug": "meta/Ax", "alias": "Ax", "trigger": "adaptive experimentation"},
-        {"slug": "scikit-learn-contrib/MAPIE", "alias": "MAPIE", "trigger": "conformal prediction intervals"}
+        {"slug": "scikit-learn-contrib/MAPIE", "alias": "MAPIE", "spdx": "BSD-3-Clause", "status": "graduated", "graduated_to": "L5", "version": "1.6.0", "adr": "ADR-0028", "trigger": "conformal prediction intervals (GRADUATED to active L5 in ADR-0028: fit_conformal_excursion_intervals in src/tier0_sota/research.py, clamped <= 2.00%)"}
       ]
     },
     "L14": {
@@ -365,14 +381,14 @@
         {"slug": "grafana/loki", "trigger": "24/5 centralized logs"},
         {"slug": "grafana/tempo", "trigger": "distributed OTel trace storage"},
         {"slug": "grafana/pyroscope", "trigger": "continuous Rust/Python profiling"},
-        {"slug": "prometheus/alertmanager", "spdx": "Apache-2.0", "status": "admitted_profile_gated", "compose_profile": "alerting", "artifacts": ["docker/compose.sota.yml", "docker/prometheus.yml", "docker/prometheus_rules.yml", "docker/alertmanager.yml"], "trigger": "24/5 alert routing"},
+        {"slug": "prometheus/alertmanager", "spdx": "Apache-2.0", "status": "admitted_profile_gated", "compose_profile": "alerting", "version": "0.28.1", "recipe": "just alerting-up", "port": 9093, "live_verified": true, "inhibit_rules_count": 2, "prometheus_rules_count": 15, "artifacts": ["docker/compose.sota.yml", "docker/prometheus.yml", "docker/prometheus_rules.yml", "docker/alertmanager.yml"], "adr": "ADR-0028", "trigger": "24/5 alert routing with critical/down inhibit_rules"},
         {"slug": "langfuse/langfuse", "trigger": "LLM trace scaling beyond MLflow"}
       ]
     },
     "L15": {
       "name": "Formal Verification, Sandboxes, Red-Teaming, Evolution & Agent Protocols",
       "candidates": [
-        {"slug": "pschanely/CrossHair", "spdx": "MIT", "trigger": "symbolic execution on risk.py"},
+        {"slug": "pschanely/CrossHair", "spdx": "MIT", "status": "admitted_isolated_uvx_cli", "recipe": "just crosshair", "zero_mypy_in_uv_lock": true, "artifacts": ["evals/symbolic_risk_crosshair.py"], "adr": "ADR-0028", "trigger": "symbolic execution on risk.py (ADMITTED via isolated uvx CLI in ADR-0028: 5 PEP-316 contracts + 30 parity cases, 0 counterexamples, 0 mypy in uv.lock)"},
         {"slug": "boxed/mutmut", "spdx": "BSD-3-Clause", "trigger": "isolated temp-copy mutation testing on risk.py"},
         {"slug": "opengrep/opengrep", "spdx": "LGPL-2.1", "trigger": "OSI cross-file SAST beyond ast-grep + CodeQL (replaces non-OSI Semgrep rules)"},
         {"slug": "sigstore/cosign", "trigger": "container artifact signing"},
@@ -399,7 +415,60 @@
         {"slug": "pydantic/pydantic-ai", "trigger": "typed agent orchestration"},
         {"slug": "upstash/context7", "trigger": "live versioned library docs MCP"},
         {"slug": "vectorize-io/hindsight", "trigger": "long-horizon agent memory"},
-        {"slug": "alpacahq/alpaca-mcp-server", "mode": "paper-only", "trigger": "paper-api.alpaca.markets MCP"},
+        {
+          "slug": "alpacahq/alpaca-mcp-server",
+          "spdx": "MIT",
+          "pypi": "alpaca-mcp-server==2.4.1",
+          "mode": "paper-only",
+          "endpoint": "https://paper-api.alpaca.markets",
+          "status": "admitted_off_repo_paper_plugin",
+          "plugin_name": "alpaca-sota-mcp",
+          "plugin_path": "~/.gemini/config/plugins/alpaca-sota-mcp/",
+          "tools_count": 72,
+          "repo_mcp_parity_impact": "none (off-repo global Antigravity plugin via runtime fnox exec --profile paper; preserves exact 4-stdio-MCP parity across all 5 repo configs and zero pyproject.toml/uv.lock addition)",
+          "fail_closed_guards": [
+            "ALPACA_PAPER_TRADE=True",
+            "LIVE_EXECUTION_ENABLED=false",
+            "refuses AK* live key prefix, ALPACA_PAPER_TRADE=False, LIVE_EXECUTION_ENABLED=true, and api.alpaca.markets (exit 78)",
+            "passive ss check for forbidden live/CDP ports 4001/7496/8798/8796/9223",
+            "24/5 lossless trailing & Decimal risk sizing stay locked inside src/tier0_sota/risk.py + nautilus-engine + NautilusTrader v2"
+          ],
+          "upstream_map_repo_policy": "raw-unfiltered-alpaca-mcp-server explicitly rejected inside repo L4 at upstream-map.toml:141 so immutable src/tier0_sota/risk.py & live_execution_enabled=False are never bypassed; in-repo MCP remains local nautilus-engine FastMCP",
+          "live_smoke_receipt": "/mnt/z/sota-data/manifests/alpaca_mcp_smoke_receipt.json",
+          "trigger": "Official first-party paper-api.alpaca.markets MCP (MIT, PyPI 2.4.1) isolated as off-repo paper-only plugin"
+        },
+        {
+          "slug": "alpacahq/alpaca-skills",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "Official Alpaca Trading/Broker API SKILL.md pack (outside UPSTREAM_SKILLS_LOCK.json unless promoted via ADR-0018 4-gate protocol)"
+        },
+        {
+          "slug": "nautechsystems/nautilus_agents",
+          "spdx": "LGPL-3.0",
+          "status": "earned_trigger_watch",
+          "trigger": "Official Rust Agents SDK for NautilusTrader (must remain strictly off synchronous execution hot path per no-llm-on-execution-hot-path)"
+        },
+        {
+          "slug": "nautechsystems/nautilus_engineering",
+          "spdx": "LGPL-3.0",
+          "status": "reference_only_watch",
+          "trigger": "Official NautilusTrader engineering standards, lint & pre-commit reference"
+        },
+        {
+          "slug": "pinecoders/awesome-pinescript",
+          "spdx": "MIT",
+          "zero_cdp": true,
+          "status": "reference_only_watch",
+          "trigger": "Curated MIT Pine Script reference directory (distinct from PineCoders GPL-2.0/GPL-3.0 repos excluded from src/)"
+        },
+        {
+          "slug": "pinecoders/pynescript",
+          "spdx": "LGPL-3.0",
+          "zero_cdp": true,
+          "status": "earned_trigger_watch",
+          "trigger": "Python ANTLR4 Pine Script AST parser (watch-only; defer unless local offline AST linting beyond official TradingView MCP & pinescript-mcp is earned)"
+        },
         {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "status": "reference_only_defer", "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"},
         {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "invocation": "uvx pinescript-mcp", "role": "zero_cdp_local_pine_v6_companion_mcp", "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"},
         {"slug": "TradersPost/pine-mcp", "spdx": "MIT", "zero_cdp": true, "npm": "pinescript-mcp-server", "invocation": "npx -y pinescript-mcp-server", "role": "zero_cdp_local_pine_v6_docs_companion_mcp", "scope_boundary": "MIT Pine Script docs MCP ONLY; TradersPost proprietary commercial SaaS webhook relay remains excluded under SPDX OSI firewall", "trigger": "on-demand zero-CDP MIT Node Pine Script v6 docs companion MCP via npx -y pinescript-mcp-server (Pine docs MCP only; commercial SaaS relay excluded)"},
@@ -424,6 +493,75 @@
           "local_execution_ssot": "nautilus-engine + src/tier0_sota/tv/tickets.py + src/tier0_sota/live/execution.py (paper_only=True, live_execution_enabled=False, qty=1, semi_auto_confirmed=False)",
           "trigger": "Official TradingView first-party hosted Streamable HTTP + OAuth 2.1 MCP for watchlists CRUD, alerts CRUD/logs, and Pine v6 validation/backtest (zero CDP)"
         }
+      ]
+    }
+  },
+  "official_upstream_org_audit": {
+    "verified_date": "2026-11-27",
+    "verification_sources": [
+      "https://api.github.com/orgs/alpacahq/repos?per_page=100",
+      "https://api.github.com/orgs/nautechsystems/repos?per_page=100",
+      "https://api.github.com/orgs/tradingview/repos?per_page=100",
+      "https://api.github.com/orgs/pinecoders/repos?per_page=100",
+      "https://pypi.org/pypi/alpaca-mcp-server/json"
+    ],
+    "alpacahq": {
+      "repos_total": 93,
+      "archived_count": 29,
+      "active_admitted": [
+        {"repo": "alpacahq/alpaca-py", "spdx": "Apache-2.0", "pinned": "0.45.0", "layer": "L4", "role": "Official Python SDK (SIP/BOATS/FINRA TRF/OPRA/Paper Trading)"},
+        {"repo": "alpacahq/alpaca-mcp-server", "spdx": "MIT", "pinned": "2.4.1", "layer": "L15_off_repo_plugin", "role": "Official first-party MCP isolated in off-repo paper-only plugin alpaca-sota-mcp (72 tools, ALPACA_PAPER_TRADE=True)"}
+      ],
+      "active_watches": [
+        {"repo": "alpacahq/alpaca-skills", "spdx": "Apache-2.0", "role": "Official Alpaca SKILL.md pack (deferred outside UPSTREAM_SKILLS_LOCK.json)"},
+        {"repo": "alpacahq/cli", "spdx": "Apache-2.0", "role": "Go Trading API CLI (redundant with alpaca-py + alpaca-mcp-server)"}
+      ],
+      "excluded_archived_or_legacy": [
+        {"repo": "alpacahq/alpaca-trade-api-python", "spdx": "Apache-2.0", "archived": true, "reason": "Archived deprecated predecessor to alpaca-py"},
+        {"repo": "alpacahq/pylivetrader", "spdx": "Apache-2.0", "archived": false, "reason": "Legacy stale (2022) zipline-interface runner; zipline banned"},
+        {"repo": "alpacahq/alpaca-backtrader-api", "spdx": "Apache-2.0", "archived": false, "reason": "Banned backtrader engine integration"},
+        {"repo": "alpacahq/alpaca-zipline", "spdx": "NONE", "archived": false, "reason": "Unlicensed legacy zipline integration; zipline banned"},
+        {"repo": "alpacahq/backtrader", "spdx": "GPL-3.0", "archived": true, "reason": "Archived GPL-3.0 fork of banned backtrader"},
+        {"repo": "alpacahq/Lean", "spdx": "Apache-2.0", "archived": true, "reason": "Archived rejected L3 engine overlap"},
+        {"repo": "alpacahq/example-hftish", "spdx": "NONE", "archived": false, "reason": "Unlicensed sample repo (also example-scalping, Momentum-Trading-Example)"}
+      ]
+    },
+    "nautechsystems": {
+      "repos_total": 6,
+      "archived_count": 2,
+      "active_admitted": [
+        {"repo": "nautechsystems/nautilus_trader", "spdx": "LGPL-3.0", "pinned": "2.0.0rc9", "layer": "L3", "role": "Single-engine Rust-native Sim == Paper == Live execution, BacktestEngine/SANDBOX SSOT & built-in InteractiveBrokers adapter (:4002 paper-only)"}
+      ],
+      "active_watches": [
+        {"repo": "nautechsystems/nautilus_agents", "spdx": "LGPL-3.0", "role": "Official Rust Agents SDK (earned-trigger watch; strictly off synchronous execution hot path)"},
+        {"repo": "nautechsystems/nautilus_engineering", "spdx": "LGPL-3.0", "role": "Official NautilusTrader engineering standards & lint/pre-commit reference"}
+      ],
+      "excluded_archived_or_unlicensed": [
+        {"repo": "nautechsystems/nautilus_ibapi", "spdx": "NONE", "archived": true, "reason": "Archived IB API mirror superseded by native nautilus_trader InteractiveBrokers adapter"},
+        {"repo": "nautechsystems/nautilus_experiments", "spdx": "NONE", "archived": true, "reason": "Archived experimental scratch repo"}
+      ]
+    },
+    "tradingview_and_pinecoders": {
+      "tradingview_repos_total": 39,
+      "pinecoders_repos_total": 16,
+      "active_admitted": [
+        {"repo": "tradingview/lightweight-charts", "spdx": "Apache-2.0", "layer": "L10", "role": "Official HTML5 Canvas charting v5"},
+        {"repo": "tradingview/fancy-canvas", "spdx": "MIT", "layer": "L10", "role": "Official canvas helper for lightweight-charts"},
+        {"repo": "tradingview/mcp-official", "spdx": "Platform-OAuth-2.1", "layer": "L15_off_repo_plugin", "role": "Official first-party https://mcp.tradingview.com/mcp (zero CDP, watchlists/alerts/Pine v6)"},
+        {"repo": "paulieb89/pinescript-mcp", "spdx": "MIT", "pinned": "0.7.7", "layer": "L15_off_repo_plugin", "role": "Zero-CDP MIT local Pine v6 docs/syntax companion MCP"},
+        {"repo": "TradingView/ta/10 + TradingView/TechnicalRating/3 + STD;VWAP", "spdx": "Official-Pine-StdLib", "layer": "L3_Pine_v6", "role": "Official TradingView Pine Script v6 libraries imported in pine/*.pine"}
+      ],
+      "verified_osi_references": [
+        {"repo": "pinecoders/awesome-pinescript", "spdx": "MIT", "role": "Curated MIT Pine Script reference directory"},
+        {"repo": "pinecoders/pinescript-enums", "spdx": "MPL-2.0", "role": "Reference Pine enum conventions"},
+        {"repo": "pinecoders/pynescript", "spdx": "LGPL-3.0", "role": "ANTLR4 Pine Script AST parser (watch-only)"},
+        {"repo": "pinecoders/pynecore", "spdx": "Apache-2.0", "role": "Pine-compatible Python runtime (excluded from src/ to preserve NautilusTrader v2 single-engine L3 SSOT)"},
+        {"repo": "trugurpala/pinescriptv6", "spdx": "MIT", "role": "Reference-only Pine Script v6 Markdown docs repo (zero CDP; deferred unless runnable package ships)"}
+      ],
+      "excluded_firewall": [
+        "GPL-2.0 / GPL-3.0 strong copyleft PineCoders repos excluded from src/: pinecoders/pine-utils (GPL-3.0), pinecoders/tradingview-pinescript-indicators (GPL-3.0), pinecoders/pinescript-cheatsheet (GPL-3.0), pinecoders/pine-script-mode (GPL-2.0), pinecoders/vim-pine-script (GPL-2.0), pinecoders/sublime-pine (GPL-3.0)",
+        "NOASSERTION / non-OSI / proprietary: folknor/pine-tools (NOASSERTION), pinecoders/pine-script-syntax-highlighting (archived NOASSERTION), tradingview/charting_library (Proprietary-Commercial), revanthpobala/pinescript-vscode-extension (Modified-MIT-Non-OSI), tradingview/yahoo_datafeed (unlicensed + banned Yahoo)",
+        "CDP :9223 & ToU scrapers: atilaahmettaner/tradingview-mcp, tradesdontlie/tradingview-mcp, python-tradingview-ta, TradingView-Screener, tvdatafeed, TradingView-API, tradingview-scraper"
       ]
     }
   }

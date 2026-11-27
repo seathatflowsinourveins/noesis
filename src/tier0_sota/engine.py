@@ -57,6 +57,7 @@ __all__ = [
     "compute_collared_entry_limit_price",
     "compute_collared_limit_price",
     "compute_dynamic_trailing_stop",
+    "compute_non_noise_min_trail_spec",
     "compute_progressive_trailing_stop",
     "get_session_protection_profile",
     "inspect_venue_capability",
@@ -598,6 +599,171 @@ def compute_progressive_trailing_stop(
 def compute_dynamic_trailing_stop(**kw: Any) -> Decimal:
     """Monotonic Rule-612 trailing stop returning the new stop price."""
     return compute_progressive_trailing_stop(**kw)[0]
+
+
+_PCT_Q6 = Decimal("0.000001")
+_ARCHETYPE_TRAIL_MULTS: dict[str, Decimal] = {
+    "PARABOLIC_TOP": Decimal("0.20"),
+    "PARABOLIC_PEAK_REVERSAL": Decimal("0.20"),
+    "PEAK_REVERSAL": Decimal("0.20"),
+    "LOSSLESS_TIGHT_SCALP": Decimal("0.20"),
+    "CRASH_ALIGNMENT": Decimal("0.22"),
+    "CRASH_INVERSE_HEDGE": Decimal("0.22"),
+    "CRASH_HEDGE_INVERSE": Decimal("0.22"),
+    "EXTREME_REVERSAL": Decimal("0.22"),
+    "EXHAUSTION_HAMMER": Decimal("0.25"),
+    "VCP_COIL": Decimal("0.25"),
+    "PREMARKET_EARLY_IGNITION": Decimal("0.28"),
+    "TECHNICAL_BREAKOUT_LEADER": Decimal("0.28"),
+    "EARLY_EP_MOMENTUM_BURST": Decimal("0.30"),
+    "EP_MOMENTUM_BURST": Decimal("0.30"),
+    "SUDDEN_VOLUME_SURGE": Decimal("0.30"),
+    "EXTREME_MOVER_WATCH": Decimal("0.30"),
+    "HIDDEN_VOL_ACCUM": Decimal("0.32"),
+    "DARKPOOL_ACCUMULATION": Decimal("0.32"),
+    "VCP_BREAKOUT": Decimal("0.35"),
+    "VCP_STAGE2_BREAKOUT": Decimal("0.35"),
+    "PEAD_DRIFT": Decimal("0.35"),
+}
+_SESSION_NOISE_BPS: dict[SessionOrClosed, Decimal] = {
+    "RTH": Decimal("0"),
+    "PRE_MARKET": Decimal("5"),
+    "AFTER_HOURS": Decimal("5"),
+    "OVERNIGHT": Decimal("10"),
+    "CLOSED": Decimal("10"),
+}
+_SESSION_EXECUTION_MECHANISM: dict[SessionOrClosed, tuple[str, str]] = {
+    "RTH": ("NATIVE_BROKER_STOP_MARKET_RATCHET", "STOP_MARKET_REPLACE_RATCHET"),
+    "PRE_MARKET": ("SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT", "LIMIT_EXTENDED_HOURS_COLLARED"),
+    "AFTER_HOURS": ("SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT", "LIMIT_EXTENDED_HOURS_COLLARED"),
+    "OVERNIGHT": ("SYNTHETIC_BOATS_COLLARED_LIMIT", "LIMIT_OVERNIGHT_COLLARED"),
+    "CLOSED": ("SESSION_CLOSED_HOLD_GTC_STOP", "HOLD_RESTING_GTC_STOP"),
+}
+
+
+def _dec_nonneg(
+    value: Decimal | int | float | str, name: str, *, strict_pos: bool = False
+) -> Decimal:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric, got bool {value!r}")
+    dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    if not dec.is_finite() or (dec <= _ZERO if strict_pos else dec < _ZERO):
+        op = "> 0" if strict_pos else ">= 0"
+        raise ValueError(f"{name} must be finite and {op}, got {value!r}")
+    return dec
+
+
+def compute_non_noise_min_trail_spec(
+    *,
+    symbol: str,
+    entry_price: Decimal | int | float | str,
+    side: Side,
+    session: SessionOrClosed | str,
+    natr_pct: Decimal | int | float | str,
+    spread_bps: Decimal | int | float | str = Decimal("5"),
+    archetype: str = "EARLY_EP_MOMENTUM_BURST",
+    venue_profile: str = "ALPACA_PAPER_1000",
+    cost_bps_per_side: Decimal | int | float | str = Decimal("4.0"),
+) -> dict[str, Any]:
+    """Compute exact Decimal per-symbol, per-situation 24/5 non-noise lossless trailing spec."""
+    sym = str(symbol).strip().upper()
+    if not sym:
+        raise ValueError("symbol must be non-empty")
+    if side not in ("LONG", "SHORT"):
+        raise ValueError(f"Unsupported side: {side!r}")
+    entry_d = _dec_nonneg(entry_price, "entry_price", strict_pos=True)
+    natr_d = _dec_nonneg(natr_pct, "natr_pct")
+    spread_d = _dec_nonneg(spread_bps, "spread_bps")
+    cost_d = _dec_nonneg(cost_bps_per_side, "cost_bps_per_side")
+
+    sched_key, sp_map = select_pooled_trailing_schedule(natr_d)
+    prof = get_session_protection_profile(session, sp_map)
+    venue_prof = _resolve_venue(venue_profile)
+    venue_handle = build_venue_order_handle_spec(
+        venue_prof.venue_id, session=prof.session, trailing_schedule=sched_key
+    )
+    cap, initial_stop = _hard_stop(entry_d, side, prof)
+    raw_risk_pct = abs(entry_d - initial_stop) / entry_d
+    initial_risk_pct = raw_risk_pct.quantize(_PCT_Q6, rounding=ROUND_CEILING)
+
+    rule612_tick = _rk.tick_size_for(entry_d)
+    raw_tick_pct = rule612_tick / entry_d
+    rule612_tick_pct = raw_tick_pct.quantize(_PCT_Q6, rounding=ROUND_CEILING)
+    two_tick_pct = Decimal("2") * raw_tick_pct
+
+    session_noise_bps = _SESSION_NOISE_BPS[prof.session]
+    fee_and_spread_noise_floor = (
+        (cost_d * Decimal("2") + Decimal("2") + spread_d * Decimal("1.5") + session_noise_bps)
+        / _BPS_DIV
+    ).quantize(_PCT_Q6, rounding=ROUND_CEILING)
+    arch_key = str(archetype).strip().upper() or "EARLY_EP_MOMENTUM_BURST"
+    situation_mult = _ARCHETYPE_TRAIL_MULTS.get(arch_key, Decimal("0.30"))
+    raw_trail = max(fee_and_spread_noise_floor, situation_mult * natr_d, two_tick_pct)
+    non_noise_min_trail_pct = min(cap, raw_trail.quantize(_PCT_Q6, rounding=ROUND_CEILING))
+    fast_sell_non_noise_reversal_pct = non_noise_min_trail_pct
+
+    peak_climax_r_mult = Decimal("2.5")
+    peak_climax_reverse_trigger_pct = (peak_climax_r_mult * raw_risk_pct).quantize(
+        _PCT_Q6, rounding=ROUND_CEILING
+    )
+    reverse_side: Side = "SHORT" if side == "LONG" else "LONG"
+    if side == "LONG":
+        reverse_leg_routing = (
+            "INVERSE_HEDGE_SOXS_SQQQ"
+            if prof.session == "OVERNIGHT" and venue_prof.broker == "ALPACA"
+            else "DIRECT_SHORT_ETB_OR_INVERSE_HEDGE_SOXS_SQQQ"
+        )
+    else:
+        reverse_leg_routing = "DIRECT_LONG_REVERSAL"
+
+    execution_mechanism, broker_exit_order = _SESSION_EXECUTION_MECHANISM[prof.session]
+    overnight_routing_venue = "IBKR_PAPER_4002" if side == "SHORT" else "ALPACA_PAPER_1000"
+    rapid_reentry_policy: dict[str, Any] = {
+        "reentry_cooldown_secs": 60,
+        "rpm_budget_available": int(venue_handle["entry_modify_rpm_budget"]),
+        "max_rpm": int(venue_handle["max_rpm"]),
+        "exit_reserve_rpm": int(venue_handle["exit_reserve_rpm"]),
+        "trailing_modify_cadence_secs": float(venue_handle["trailing_modify_cadence_secs"]),
+        "reentry_max_attempts_per_session": 3,
+        "exit_reserve_protected": True,
+    }
+    return {
+        "schema_version": "tier0.non-noise-min-trail.v1",
+        "symbol": sym,
+        "side": side,
+        "entry_price": entry_d,
+        "session": prof.session,
+        "archetype": arch_key,
+        "venue_profile": venue_prof.venue_id,
+        "trailing_schedule": sched_key,
+        "natr_pct": natr_d,
+        "spread_bps": spread_d,
+        "initial_max_loss_pct": cap,
+        "initial_stop_price": initial_stop,
+        "initial_risk_pct": initial_risk_pct,
+        "fee_and_spread_noise_floor": fee_and_spread_noise_floor,
+        "rule612_tick_pct": rule612_tick_pct,
+        "situation_mult": situation_mult,
+        "non_noise_min_trail_pct": non_noise_min_trail_pct,
+        "fast_sell_non_noise_reversal_pct": fast_sell_non_noise_reversal_pct,
+        "peak_climax_r_multiple": peak_climax_r_mult,
+        "peak_climax_reverse_trigger_pct": peak_climax_reverse_trigger_pct,
+        "peak_climax_pullback_trigger_pct": non_noise_min_trail_pct,
+        "auto_reverse_policy": "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE",
+        "reverse_side": reverse_side,
+        "reverse_leg_routing": reverse_leg_routing,
+        "execution_mechanism": execution_mechanism,
+        "order_type": prof.order_mode,
+        "broker_exit_order": broker_exit_order,
+        "collar_bps": prof.limit_collar_bps,
+        "limit_collar_pct": prof.limit_collar_pct,
+        "extended_hours": bool(prof.outside_rth),
+        "overnight_routing_venue": overnight_routing_venue,
+        "rapid_reentry_policy": rapid_reentry_policy,
+        "paper_only": venue_prof.environment == "PAPER",
+        "live_execution_enabled": venue_prof.live_execution_enabled,
+        "executable_now": bool(venue_handle["executable_now"]),
+    }
 
 
 def _to_increment(px: Decimal, inc: Decimal, *, up: bool) -> Decimal:

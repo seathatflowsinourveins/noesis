@@ -417,3 +417,172 @@ def test_skfolio_clarabel_portfolio_optimization_and_causal_ml_discovery(tmp_pat
             manifest_dir=tmp_path / "manifests2",
             lake_root=no_l1_lake,
         )
+
+
+def test_crosshair_symbolic_risk_contracts_and_parity() -> None:
+    import shutil
+
+    from evals.symbolic_risk_crosshair import (
+        compute_non_noise_min_trail_contract,
+        enforce_exit_rate_reserve,
+        evaluate_daily_drawdown_fuse,
+        quantize_rule_612_stop,
+        size_position_by_risk,
+        verify_runtime_parity_with_risk_and_engine,
+    )
+
+    assert quantize_rule_612_stop(1_000_000, True) == 980_000
+    assert quantize_rule_612_stop(1_000_000, False) == 1_020_000
+    assert size_position_by_risk(10_000_000, 1_000_000, 980_000) == 200
+    assert size_position_by_risk(10_000_000, 1_000_000, 1_000_000) == 0
+    assert evaluate_daily_drawdown_fuse(10_000_000, -150_000, 0, 500_000, 0) == (False, False)
+    assert enforce_exit_rate_reserve(1000, 900) == (False, True, 100)
+    stop_t, cap_ppm, trail_ppm = compute_non_noise_min_trail_contract(1_356_500, True, 120, 5, 0, 4)
+    assert stop_t < 1_356_500 and cap_ppm == 15_000 and 0 < trail_ppm <= cap_ppm
+
+    rep = verify_runtime_parity_with_risk_and_engine()
+    assert rep["ok"] is True
+    assert rep["risk_sha256_match"] is True
+    assert rep["contracts_count"] == 5
+    assert rep["engine_parity_checked"] is True
+    assert rep["runtime_parity_cases_checked"] >= 30
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "evals" / "symbolic_risk_crosshair.py")],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "CROSSHAIR_CONTRACT_PARITY_OK=1" in proc.stdout
+
+    # Run live isolated uvx crosshair check locally when uvx + cached/online crosshair-tool works
+    uvx_exe = shutil.which("uvx")
+    if uvx_exe is not None and os.environ.get("TIER0_SKIP_UVX_CROSSHAIR", "0") != "1":
+        env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+        ch_proc = subprocess.run(
+            [
+                uvx_exe,
+                "--from",
+                "crosshair-tool",
+                "crosshair",
+                "check",
+                "--per_condition_timeout=10",
+                "evals/symbolic_risk_crosshair.py",
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        combined = f"{ch_proc.stdout}\n{ch_proc.stderr}".lower()
+        offline_err = any(
+            tok in combined
+            for tok in ("failed to download", "dns error", "connection refused", "network")
+        )
+        if not offline_err:
+            assert ch_proc.returncode == 0, f"CrossHair failed:\n{ch_proc.stdout}\n{ch_proc.stderr}"
+
+
+def test_scanner_sec_pit_catalysts_and_frontier_telemetry_wiring(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    from datetime import UTC, datetime
+
+    import pytest
+    from dagster import AssetsDefinition
+    from scripts.run_compounding_reflection import run_compounding_reflection
+
+    from tier0_sota.definitions import defs, frontier_trigger_telemetry
+    from tier0_sota.live.scanner import enrich_sec_pit_catalysts
+
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+
+    # 1. Fail-closed offline PIT SEC catalyst enrichment excludes future filings
+    sec_map, sec_meta = enrich_sec_pit_catalysts(
+        ["NVDA", "SOXL"],
+        now_utc=datetime(2026, 10, 15, 15, 0, tzinfo=UTC),
+        offline_filings={
+            "NVDA": [
+                {
+                    "form": "8-K",
+                    "filed": "2026-10-10",
+                    "accepted_at_utc": "2026-10-10T20:15:00+00:00",
+                    "items": "2.02,9.01",
+                },
+                {
+                    "form": "8-K",
+                    "filed": "2026-10-20",
+                    "accepted_at_utc": "2026-10-20T20:15:00+00:00",
+                    "items": "2.02",
+                },
+            ]
+        },
+        allow_network=False,
+    )
+    assert sec_meta["pit_safe"] is True
+    assert sec_meta["allow_network"] is False
+    assert sec_meta["excluded_future_filings"] == 1
+    assert sec_map["NVDA"]["sec_catalyst_score"] > 0.0
+    assert sec_map["NVDA"]["sec_catalyst_summary"]["recent_8k_count"] == 1
+    assert sec_map["NVDA"]["sec_catalyst_summary"]["excluded_future_filings"] == 1
+    assert sec_map["SOXL"]["sec_catalyst_score"] == 0.0
+
+    # 2. Frontier trigger telemetry & reflection consume Phase 5 manifests + Alertmanager status
+    monkeypatch.setenv("TIER0_DATA_ROOT", str(tmp_path))
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    (manifests_dir / "starred_frontier_landscape_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.starred-frontier-landscape.v1",
+                "generated_at_utc": "2026-11-27T06:50:00+00:00",
+                "all_ok": True,
+                "graduated_packages": ["mapie", "skchange", "shapiq", "sqlglot"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "l15_supply_chain_and_formal_audit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.l15-formal-supply-chain-audit.v1",
+                "generated_at_utc": "2026-11-27T06:50:00+00:00",
+                "overall_ok": True,
+                "alertmanager_9093_healthy": True,
+                "z3_formal_proofs": {"all_unsat": True, "proofs_count": 5},
+                "crosshair": {"ok": True, "contracts_count": 5},
+                "inspect_ai": {"ok": True, "samples_count": 7},
+                "skills_lock": {"parity_ok": True, "skills_count": 46},
+                "alertmanager": {"healthy_9093": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    asset_names = [
+        a.key.to_user_string() for a in (defs.assets or []) if isinstance(a, AssetsDefinition)
+    ]
+    assert len(asset_names) == 8
+
+    ft_rep = frontier_trigger_telemetry()
+    assert isinstance(ft_rep, dict)
+    assert ft_rep["alertmanager_9093_healthy"] is True
+    starred_s = ft_rep["starred_frontier_landscape"]
+    assert isinstance(starred_s, dict)
+    assert starred_s["present"] is True
+    assert starred_s["all_engines_ok"] is True
+    l15_s = ft_rep["l15_formal_supply_chain_audit"]
+    assert isinstance(l15_s, dict)
+    assert l15_s["present"] is True
+    assert l15_s["crosshair_ok"] is True
+    triggers = ft_rep["triggers"]
+    assert isinstance(triggers, dict)
+    assert triggers["l14_alertmanager_9093_live"] is True
+    assert triggers["l15_crosshair_symbolic_verified"] is True
+
+    refl_rep = run_compounding_reflection(offline=True, manifest_dir=manifests_dir)
+    assert refl_rep["alertmanager_9093_healthy"] is True
+    assert refl_rep["starred_frontier_landscape"]["present"] is True
+    assert refl_rep["l15_formal_supply_chain_audit"]["crosshair_ok"] is True

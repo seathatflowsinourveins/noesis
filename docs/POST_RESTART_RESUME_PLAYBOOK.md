@@ -34,7 +34,7 @@ What `just resume` executes (`scripts/preflight_resume.ps1 -Reconcile` on Window
 1. Verifies `0` forbidden live broker ports (`:4001`, `:7496`, `:8798`, `:8796`) and default WSL2 distro == `Noesis-SOTA`.
 2. Ensures all 4 WSL2 systemd units are active (`tier0-duckdb-ui`, `tier0-openbb-backend`, `tier0-ollama-docker-bridge`, `tier0-openbb-docker-bridge`), brings up `docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d`, and reconciles OmniRoute (`http://127.0.0.1:20128/api/health`).
 3. Probes all `15/15` local portals on `127.0.0.1`, including real `otelcol_*` metrics on `:9464/metrics` and `Server: Caddy` on `:8793`.
-4. Verifies Disk-Z environment variables, AGY native MCP config, `8/8` Windows + WSL2 byte-identical Global Charter SHA-256 (`057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c`), `risk.py` SHA-256, git status & origin (`seathatflowsinourveins/noesis`), Paper Farm preflight readiness, OmniRoute OAuth readiness, and unrestricted native Claude Code / Orca multi-account readiness (`0` global API-key overrides).
+4. Verifies Disk-Z environment variables, AGY native MCP config, `8/8` Windows + WSL2 byte-identical Global Charter SHA-256 (`9fa037355c3942201e3c0813acaa7b01c590e6294cd5e85787ae1bdcef55a7b8`), `risk.py` SHA-256, git status & origin (`seathatflowsinourveins/noesis`), Paper Farm preflight readiness, OmniRoute OAuth readiness, and unrestricted native Claude Code / Orca multi-account readiness (`0` global API-key overrides).
 5. Atomically writes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` (`schema_version: "tier0.workstation-preflight-resume.v1"`, `verdict: "PASS"`).
 
 For a read-only check anytime without restarting services:

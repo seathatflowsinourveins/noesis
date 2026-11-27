@@ -73,7 +73,10 @@ from tier0_sota.engine import (  # noqa: E402
     select_pooled_trailing_schedule,
     validate_venue_order_capability,
 )
-from tier0_sota.live.paper_farm import resolve_alpaca_paper_venue_profile  # noqa: E402
+from tier0_sota.live.paper_farm import (  # noqa: E402
+    build_symbol_24x5_session_presets,
+    resolve_alpaca_paper_venue_profile,
+)
 from tier0_sota.risk import (  # noqa: E402
     MAX_STOP_LOSS_PCT,
     Side,
@@ -268,6 +271,8 @@ _ADMITTED_WATCHLIST_SCHEMAS = frozenset(
         "tier0.live-lane-preset-bundle.v1",
         "tier0.tv-compounding-manifest.v1",
         "tier0.tv-engine-coordination.v1",
+        "tier0.tv-order-presets.v1",
+        "tier0.staged-tv-presets.v1",
     }
 )
 
@@ -326,6 +331,52 @@ def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, A
         )
         if coord is not None:
             tv_sync["tv_engine_coordination"] = coord
+        staged_doc = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "staged_tv_presets.json"
+        )
+        if staged_doc is not None:
+            staged_rows = [
+                row
+                for row in (staged_doc.get("presets") or ())
+                if isinstance(row, Mapping) and row.get("symbol")
+            ]
+            tv_sync["staged_tv_presets_count"] = len(staged_rows)
+            tv_sync["staged_tv_presets"] = [
+                {
+                    "alert_id": row.get("alert_id"),
+                    "symbol": row.get("symbol"),
+                    "side": row.get("side"),
+                    "session": row.get("session"),
+                    "venue_profile": row.get("venue_profile"),
+                    "order_type": row.get("order_type"),
+                    "min_trailing_pct": row.get("min_trailing_pct"),
+                    "semi_auto_confirmed": bool(row.get("semi_auto_confirmed", False)),
+                    "sessions_covered": sorted(
+                        (row.get("session_order_presets") or {}).keys()
+                        if isinstance(row.get("session_order_presets"), Mapping)
+                        else ()
+                    ),
+                }
+                for row in staged_rows
+            ]
+        order_presets_doc = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_order_presets.json"
+        )
+        if order_presets_doc is not None:
+            cards = order_presets_doc.get("symbol_order_cards") or ()
+            tv_sync["tv_order_presets_count"] = len(cards)
+            tv_sync["tv_order_presets_venue_profile"] = order_presets_doc.get("venue_profile")
+            tv_sync["tv_order_presets_sessions"] = sorted(SESSION_PROTECTION_24X5.keys())
+        wl_sync = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_watchlist_sync_payload.json"
+        )
+        if wl_sync is not None and isinstance(wl_sync.get("watchlists"), Mapping):
+            wl_map = wl_sync["watchlists"]
+            tv_sync["watchlist_sync_payload_counts"] = {
+                str(k): int(v.get("symbol_count") or 0)
+                for k, v in wl_map.items()
+                if isinstance(v, Mapping)
+            }
         if tv_sync:
             res["tv_sync"] = tv_sync
     return res
@@ -453,6 +504,59 @@ def _stage_minimal_order_preset(
     handle_spec = build_venue_order_handle_spec(
         resolved_vp, session=prof.session, trailing_schedule=req_sched
     )
+    route_side: Side = "LONG" if out_side == "BUY" else "SHORT"
+    raw_px = src.get("trigger_price") or src.get("entry_price") or src.get("price") or "100.00"
+    ref_px = Decimal(str(raw_px))
+    if not ref_px.is_finite() or ref_px <= Decimal("0"):
+        raise ValueError(f"Invalid reference price: {raw_px!r}")
+    alp_vp = resolved_vp if resolved_vp in ("ALPACA_PAPER_200", "ALPACA_PAPER_1000") else None
+    alp_rpm = (
+        1000 if alp_vp == "ALPACA_PAPER_1000" else (200 if alp_vp == "ALPACA_PAPER_200" else None)
+    )
+    cal_trail = src.get("min_trailing_pct")
+    session_presets = build_symbol_24x5_session_presets(
+        symbol=sym,
+        side=route_side,
+        ref_price=ref_px,
+        natr_pct=natr,
+        spread_bps=src.get("spread_bps"),
+        calibrated_min_trailing_pct=cal_trail,
+        alpaca_venue_profile=alp_vp,
+        alpaca_max_rpm=alp_rpm,
+        inverse_hedge_symbol=(str(src.get("pair_symbol") or "").strip().upper() or None),
+    )
+    active_sp = session_presets[prof.session]
+    r_locks: dict[str, Any] = {
+        "be_plus_fee_price": active_sp["be_plus_fee_price"],
+        "lock_at_1r": active_sp["lock_at_1r"],
+        "lock_at_2r": active_sp["lock_at_2r"],
+        "lock_at_3r": active_sp["lock_at_3r"],
+        "fast_sell_non_noise_reverse_trigger": active_sp["fast_sell_non_noise_reverse_trigger"],
+    }
+    momentum_reason = {
+        k: v
+        for k, v in (
+            (
+                "calibrated_category",
+                str(src.get("calibrated_category") or src.get("setup_archetype") or "").strip()
+                or None,
+            ),
+            ("rvol", float(src["rvol"]) if src.get("rvol") is not None else None),
+            (
+                "darkpool_trf_ratio",
+                float(src["darkpool_trf_ratio"])
+                if src.get("darkpool_trf_ratio") is not None
+                else None,
+            ),
+            (
+                "technical_alignment_score",
+                float(src["technical_alignment_score"])
+                if src.get("technical_alignment_score") is not None
+                else None,
+            ),
+        )
+        if v is not None
+    }
     norm_preset: dict[str, Any] = {
         "symbol": sym,
         "qty": 1,
@@ -463,13 +567,20 @@ def _stage_minimal_order_preset(
         "order_type": order_type,
         "limit_collar_bps": collar,
         "trailing_schedule": req_sched,
+        "min_trailing_pct": float(active_sp["min_trailing_pct"]),
+        "r_lock_levels": r_locks,
+        "session_order_presets": session_presets,
         "auto_reverse": bool(src.get("auto_reverse", True)),
+        "auto_reverse_policy": "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE",
         "auto_reentry": bool(src.get("auto_reentry", True)),
         "reentry_cooldown_secs": cd,
+        "paper_only": True,
         "semi_auto_confirmed": False,
         "live_execution_enabled": False,
         "order_handle_spec": handle_spec,
     }
+    if momentum_reason:
+        norm_preset["momentum_trigger_reason"] = momentum_reason
     if src.get("darkpool_trf_ratio") is not None:
         trf_v = float(src["darkpool_trf_ratio"])
         if not 0.0 <= trf_v <= 1.0:
@@ -564,6 +675,8 @@ def stage_semi_auto_order_preset(
             staged_with_handle = {
                 **staged,
                 "venue_profile": resolved_vp,
+                "paper_only": True,
+                "live_execution_enabled": False,
                 "order_handle_spec": build_venue_order_handle_spec(
                     resolved_vp,
                     session=str(staged.get("session") or "RTH"),

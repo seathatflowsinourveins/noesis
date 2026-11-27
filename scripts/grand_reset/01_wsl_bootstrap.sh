@@ -67,6 +67,8 @@ mkdir -p \
 
 if command -v codebase-memory-mcp >/dev/null 2>&1; then
   codebase-memory-mcp config set ui_enabled false >/dev/null 2>&1 || true
+  codebase-memory-mcp config set watcher_enabled false >/dev/null 2>&1 || true
+  codebase-memory-mcp config set auto_watch false >/dev/null 2>&1 || true
 fi
 
 "$PY" - "$WSL_VENV" "$REPO_ROOT" "$DATA_ROOT" "$STATE_ROOT" <<'PYEOF'

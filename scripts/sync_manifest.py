@@ -114,6 +114,8 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "docker/alertmanager.yml",
         "docker/dagster.yaml",
         "docker/workspace.yaml",
+        "docker/grafana/dashboards/tier0-workstation-telemetry.json",
+        "docker/grafana/dashboards/tier0-order-presets-momentum.json",
     ],
     "L7": [
         ".github/workflows/ci.yml",
@@ -130,6 +132,7 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         ".gitleaks.toml",
         ".pre-commit-config.yaml",
         "evals/formal_risk_z3.py",
+        "evals/symbolic_risk_crosshair.py",
         "scripts/sync_manifest.py",
         "scripts/check.ps1",
         "scripts/check.sh",
@@ -141,7 +144,10 @@ LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
         "tests/test_architecture_manifest.py",
         "tests/test_grand_reset_kit.py",
         "tests/test_formal_and_evals.py",
+        "tests/test_starred_frontier_landscape.py",
+        "tests/test_stage4_drills.py",
         "scripts/run_compounding_reflection.py",
+        "scripts/run_stage4_drills.py",
     ],
     "L8": [
         "evals/__init__.py",
@@ -216,6 +222,8 @@ ENTRYPOINT_CANDIDATES: dict[str, str] = {
     "mcp_server": "scripts/nautilus_mcp_server.py",
     "orca_account_failover": "scripts/orca_account_failover.py",
     "formal_risk_z3": "evals/formal_risk_z3.py",
+    "symbolic_risk_crosshair": "evals/symbolic_risk_crosshair.py",
+    "stage4_drills": "scripts/run_stage4_drills.py",
     "inspect_safety_eval": "evals/tier0_inspect_eval.py",
     "grand_reset_00": "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
     "grand_reset_01": "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
@@ -1749,7 +1757,8 @@ def build_llm_harness_manifest(
             "workflow_audit": "zizmor --offline .github/workflows",
             "supply_chain_scan": (
                 "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL "
-                "--exit-code 1 --skip-dirs .venv,.git,site,.claude/skills ."
+                "--exit-code 1 --skip-dirs "
+                ".venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis ."
             ),
             "secret_scan": (
                 "gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner"

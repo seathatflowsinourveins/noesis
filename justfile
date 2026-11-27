@@ -69,6 +69,20 @@ ast:
 z3:
     {{uv_run}} python evals/formal_risk_z3.py
 
+# Run ADR-0020 Stage-4 automated K3/K4/3-way failure drills (paper-only, deterministic)
+stage4-drills *args:
+    {{uv_run}} python scripts/run_stage4_drills.py {{args}}
+
+# Run isolated L15 pschanely/CrossHair symbolic PEP-316 contract proofs on risk.py & engine.py (zero mypy in uv.lock)
+[unix]
+crosshair:
+    PYTHONPATH="$PWD/src" uvx --from crosshair-tool crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py
+
+# Run isolated L15 pschanely/CrossHair symbolic PEP-316 contract proofs on risk.py & engine.py (zero mypy in uv.lock)
+[windows]
+crosshair:
+    $env:PYTHONPATH = Join-Path $PWD 'src'; uvx --from crosshair-tool crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py; exit $LASTEXITCODE
+
 # Smoke-test all 10 FastMCP stdio tools offline
 mcp-smoke:
     {{uv_run}} python scripts/nautilus_mcp_server.py --smoke
@@ -104,6 +118,16 @@ tv-land venue="ALPACA": scan
 [windows]
 tv-land venue="ALPACA": scan
     pwsh -NoProfile -ExecutionPolicy Bypass -Command ". ./scripts/tv_console.ps1 -Venue '{{venue}}'; tv-tickets -Venue '{{venue}}' | Out-Null; tv-sync-pine; tv-audit"
+
+# Run unified 24/5 Half-Auto Order Preset setup (prune stale/executed alerts -> refresh 4-session presets -> stage fresh unlocked movers)
+[unix]
+tv-preset-setup venue="ALPACA":
+    TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" bash scripts/tv_console.sh preset-setup "{{venue}}"
+
+# Run unified 24/5 Half-Auto Order Preset setup (prune stale/executed alerts -> refresh 4-session presets -> stage fresh unlocked movers)
+[windows]
+tv-preset-setup venue="ALPACA":
+    pwsh -NoProfile -ExecutionPolicy Bypass -Command ". ./scripts/tv_console.ps1 -Venue '{{venue}}'; tv-preset-setup -Venue '{{venue}}'"
 
 # Run TradingView Half-Auto E2E verification (ruff, ty, Pine v6 parity & pytest)
 tv-e2e:
@@ -148,7 +172,7 @@ zizmor:
 
 # Scan repository misconfigurations & secrets with Trivy
 trivy:
-    trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills .
+    trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .
 
 # Run full supply-chain & workflow security gates (gitleaks + zizmor + trivy)
 security: gitleaks zizmor trivy
@@ -178,6 +202,10 @@ agent-scan:
 # Start WSL2/Docker hosted SOTA research stack (-p docker)
 docker-up:
     {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml up -d'" } else { "docker compose -p docker -f docker/compose.sota.yml up -d" } }}
+
+# Start L14 profile-gated Prometheus Alertmanager (:9093) for 24/5 alert routing (-p docker --profile alerting)
+alerting-up:
+    {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml --profile alerting up -d alertmanager'" } else { "TIER0_REPO_ROOT=\"${TIER0_REPO_ROOT:-$PWD}\" TIER0_DATA_ROOT=\"${TIER0_DATA_ROOT:-/mnt/z/sota-data}\" TIER0_STATE_ROOT=\"${TIER0_STATE_ROOT:-$HOME/tier0-sota-state}\" docker compose -p docker -f docker/compose.sota.yml --profile alerting up -d alertmanager" } }}
 
 # Stop hosted SOTA research stack (-p docker)
 docker-down:
@@ -210,6 +238,34 @@ account-switch:
 # Run Dual-Flywheel compounding self-reflection & strategy Optuna/Inspect/DSPy/MLflow loop
 reflect *args:
     {{uv_run}} python scripts/run_compounding_reflection.py {{args}}
+
+# Run causal pre-wall early-mover Optuna/MLflow compounding & NVDA premarket historical audit
+compound-early-movers *args:
+    {{uv_run}} python scripts/run_early_mover_compounding.py {{if args == "" { "--once" } else { args }}}
+
+# Run one fail-closed paper-only non-stop compounding cycle (systemd/Dagster single-tick entrypoint)
+[unix]
+compounding-loop-once *args:
+    test -z "$(ss -lntH | grep -E ':(4001|7496|8798|8796)\b' || true)"
+    FNOX_AGE_KEY_FILE="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/src" TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" TIER0_ALPACA_RPM="${TIER0_ALPACA_RPM:-1000}" {{uv_prefix}}fnox exec --profile paper -- uv run --no-sync python scripts/run_nonstop_compounding_loop.py --once {{args}}
+
+# Run one fail-closed paper-only non-stop compounding cycle (systemd/Dagster single-tick entrypoint)
+[windows]
+compounding-loop-once *args:
+    $keyFile = if ($env:FNOX_AGE_KEY_FILE) { $env:FNOX_AGE_KEY_FILE } else { Join-Path $HOME '.config\fnox\age.txt' }; $env:FNOX_AGE_KEY_FILE = $keyFile; $env:PYTHONDONTWRITEBYTECODE = '1'; $env:PYTHONPATH = Join-Path $PWD 'src'; $env:TIER0_ALPACA_RPM = if ($env:TIER0_ALPACA_RPM) { $env:TIER0_ALPACA_RPM } else { '1000' }; fnox exec --profile paper -- uv run --no-sync python scripts/run_nonstop_compounding_loop.py --once {{args}}; exit $LASTEXITCODE
+
+# Inspect latest non-stop compounding loop manifest and native systemd timers
+[unix]
+compounding-loop-status:
+    @echo "=== systemd timers ==="
+    @systemctl is-active tier0-compounding-loop.timer tier0-paper-farm-observe.timer || true
+    @echo "=== nonstop_compounding_loop_status.json ==="
+    @cat "${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests/nonstop_compounding_loop_status.json"
+
+# Inspect latest non-stop compounding loop manifest
+[windows]
+compounding-loop-status:
+    Get-Content -Raw (Join-Path (if ($env:TIER0_DATA_ROOT) { $env:TIER0_DATA_ROOT } else { 'Z:\sota-data' }) 'manifests\nonstop_compounding_loop_status.json')
 
 # Validate declarative fnox + age encrypted secret profiles (default, data, paper, live)
 fnox-check:

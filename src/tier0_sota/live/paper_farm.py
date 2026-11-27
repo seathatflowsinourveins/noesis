@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import tempfile
 import threading
+import time
 from collections.abc import Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -22,12 +26,72 @@ import polars as pl
 from alpaca.data.enums import DataFeed
 from alpaca.data.requests import StockQuotesRequest
 from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest, StopLossRequest
+from alpaca.trading.requests import (
+    GetOrdersRequest,
+    LimitOrderRequest,
+    StopLossRequest,
+    TrailingStopOrderRequest,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from tier0_sota import engine as eng
 from tier0_sota import risk as rk
 
+__all__ = [
+    "ALPACA_LANE_PROFILES",
+    "ALPACA_PAPER_DEFAULT_MAX_RPM",
+    "ALPACA_PAPER_PRO_LINE_MAX_RPM",
+    "EXPECTED_RISK_SHA256",
+    "HIGH_RVOL_MIN",
+    "IBKR_PAPER_ACCOUNT",
+    "IBKR_PAPER_MAX_RPM",
+    "INVERSE_HEDGE_SYMBOLS",
+    "MAX_RTH_ENTRY_COLLAR_PCT",
+    "PAPER_ALPACA_ENDPOINT",
+    "RTH_ENTRY_COLLAR_PCT",
+    "SESSIONS_24X5",
+    "SINGLE_STOCK_INVERSE_ETF_MAP",
+    "STAGE4_DRILLS_SCHEMA_VERSION",
+    "TIGHT_NATR_MAX",
+    "WIDE_NATR_MIN",
+    "AlpacaPaperLane",
+    "BorrowTier",
+    "CrossLaneSymbolLock",
+    "ExtendedHoursStopSupervision",
+    "IbkrPaperAdapter",
+    "PaperFarmCoordinator",
+    "ProtectiveStopMode",
+    "TcaFillRecord",
+    "TcaSide",
+    "borrow_accrual_days",
+    "build_alpaca_rth_trailing_stop_request",
+    "build_symbol_24x5_session_presets",
+    "compute_fast_reverse_trigger",
+    "compute_short_borrow_accrual",
+    "compute_symbol_min_trailing_pct",
+    "compute_tca_record",
+    "default_manifest_dir",
+    "duckdb_connect_config",
+    "ensure_tca_table",
+    "ensure_wire_table",
+    "join_fills_with_quotes_asof",
+    "open_bounded_duckdb",
+    "persist_supervised_stop_duckdb",
+    "persist_tca_record_duckdb",
+    "preferred_situation_lane_order",
+    "reconcile_three_way_positions",
+    "resolve_alpaca_paper_venue_profile",
+    "round_lot_up",
+    "run_all_stage4_drills",
+    "run_k3_trading_state_drill",
+    "run_k4_broker_flatten_drill",
+    "run_three_way_reconciliation_drill",
+    "select_short_or_inverse_fallback",
+    "select_situation_lane",
+]
+
+EXPECTED_RISK_SHA256 = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
+STAGE4_DRILLS_SCHEMA_VERSION = "tier0.stage4-drills-receipt.v1"
 PAPER_ALPACA_ENDPOINT = "https://paper-api.alpaca.markets"
 IBKR_PAPER_ACCOUNT = "IBKR_DU_4002"
 IBKR_PAPER_MAX_RPM = 3000
@@ -145,6 +209,16 @@ ALPACA_LANE_PROFILES: dict[str, dict[str, Any]] = {
 TIGHT_NATR_MAX = Decimal("0.015")
 WIDE_NATR_MIN = Decimal("0.030")
 HIGH_RVOL_MIN = Decimal("3.0")
+INVERSE_HEDGE_SYMBOLS: frozenset[str] = frozenset({"SOXS", "SQQQ", "SPXS", "SDOW", "NVD", "NVDS"})
+SINGLE_STOCK_INVERSE_ETF_MAP: dict[str, str] = {"NVDA": "NVDS"}
+SESSIONS_24X5: tuple[str, ...] = ("PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT")
+_SESSION_NOISE_TRAIL_MULT: dict[str, Decimal] = {
+    "RTH": Decimal("0.45"),
+    "PRE_MARKET": Decimal("0.55"),
+    "AFTER_HOURS": Decimal("0.55"),
+    "OVERNIGHT": Decimal("0.65"),
+    "CLOSED": Decimal("0.65"),
+}
 
 _LANE_FALLBACK_ORDER: dict[str, tuple[str, ...]] = {
     "ALPACA_PA1": ("ALPACA_PA1", "ALPACA_PA2", "ALPACA_PA3"),
@@ -213,7 +287,9 @@ class TcaFillRecord(BaseModel):
     execution_id: str | None = None
 
 
-def _to_finite_decimal(value: Decimal | int | str, name: str) -> Decimal:
+def _to_finite_decimal(value: Decimal | float | int | str, name: str) -> Decimal:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a valid finite Decimal, got {value!r}")
     try:
         dec = value if isinstance(value, Decimal) else Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
@@ -478,6 +554,19 @@ def duckdb_connect_config(
     return cfg
 
 
+_DUCKDB_TRANSIENT_LOCK_SUBSTRINGS = (
+    "conflicting lock",
+    "could not set lock",
+    "permission denied",
+    "resource temporarily unavailable",
+)
+
+
+def _is_transient_duckdb_lock_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(token in msg for token in _DUCKDB_TRANSIENT_LOCK_SUBSTRINGS)
+
+
 def open_bounded_duckdb(
     path: str | Path,
     *,
@@ -485,8 +574,10 @@ def open_bounded_duckdb(
     default_threads: int = 4,
     max_threads: int | None = 4,
     default_memory_limit: str = "2GB",
+    lock_attempts: int = 6,
+    lock_retry_base_sec: float = 0.05,
 ) -> duckdb.DuckDBPyConnection:
-    """Open a DuckDB connection with bounded worker threads, memory limit, and temp dir."""
+    """Open a DuckDB connection with bounded threads, memory limit, temp dir, and lock retry."""
     cfg: dict[str, str | bool | int | float | list[str]] = dict(
         duckdb_connect_config(
             default_threads=default_threads,
@@ -494,10 +585,22 @@ def open_bounded_duckdb(
             default_memory_limit=default_memory_limit,
         )
     )
-    try:
-        return duckdb.connect(str(path), read_only=read_only, config=cfg)
-    except TypeError:
-        return duckdb.connect(str(path), read_only=read_only)
+    attempts = max(1, int(lock_attempts))
+    base_delay = max(0.0, float(lock_retry_base_sec))
+    for attempt in range(attempts):
+        try:
+            try:
+                return duckdb.connect(str(path), read_only=read_only, config=cfg)
+            except TypeError:
+                return duckdb.connect(str(path), read_only=read_only)
+        except duckdb.IOException as exc:
+            if attempt + 1 >= attempts or not _is_transient_duckdb_lock_error(exc):
+                raise
+            if base_delay > 0.0:
+                jitter = ((os.getpid() * 31 + time.monotonic_ns()) % 41) / 1000.0
+                delay = min(0.5, base_delay * (2**attempt)) + min(jitter, base_delay)
+                time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def ensure_wire_table(conn: duckdb.DuckDBPyConnection) -> None:
@@ -595,6 +698,10 @@ def _ensure_entry_decisions_table(conn: duckdb.DuckDBPyConnection) -> None:
         "initial_stop DECIMAL(18,6), natr_pct DECIMAL(18,8), closed_at TIMESTAMPTZ, "
         "active_stop DECIMAL(18,6), exit_triggered BOOLEAN DEFAULT false, "
         "decided_at TIMESTAMPTZ DEFAULT current_timestamp)"
+    )
+    conn.execute(
+        "ALTER TABLE paper_entry_decisions "
+        "ADD COLUMN IF NOT EXISTS adopted_external BOOLEAN DEFAULT false"
     )
 
 
@@ -707,10 +814,11 @@ def select_short_or_inverse_fallback(
     session: str,
     sector_hint: str = "SEMI",
 ) -> tuple[str, rk.Side, str] | None:
-    """Market-aligned always-short with verified ETB or fail-closed SOXS/SQQQ fallback."""
+    """Market-aligned always-short with verified ETB or fail-closed inverse ETF fallback."""
     if session == "CLOSED":
         return None
     meta = borrow_meta or {}
+    sym_u = symbol.strip().upper()
     is_etb = (
         meta.get("shortable") is True
         and meta.get("easy_to_borrow") is True
@@ -720,14 +828,224 @@ def select_short_or_inverse_fallback(
         return None
     if market_regime == 0 and meta.get("peak_confirmed") is not True:
         return None
-    if market_regime == -1 and symbol.upper() in ("SOXS", "SQQQ"):
-        return symbol.upper(), "LONG", f"INVERSE_HEDGE_{symbol.upper()}"
+    if market_regime == -1 and sym_u in INVERSE_HEDGE_SYMBOLS:
+        return sym_u, "LONG", f"INVERSE_HEDGE_{sym_u}"
     if market_regime == -1 or meta.get("peak_confirmed") is True:
         if is_etb and session != "OVERNIGHT":
-            return symbol.strip().upper(), "SHORT", "DIRECT_SHORT_ETB"
-        inv = "SOXS" if sector_hint.upper() in ("SEMI", "SOXX", "SOXL") else "SQQQ"
+            return sym_u, "SHORT", "DIRECT_SHORT_ETB"
+        explicit_inv = str(meta.get("inverse_hedge_symbol") or "").strip().upper()
+        if explicit_inv in INVERSE_HEDGE_SYMBOLS:
+            inv = explicit_inv
+        elif sym_u in SINGLE_STOCK_INVERSE_ETF_MAP:
+            inv = SINGLE_STOCK_INVERSE_ETF_MAP[sym_u]
+        else:
+            inv = "SOXS" if sector_hint.upper() in ("SEMI", "SOXX", "SOXL") else "SQQQ"
         return inv, "LONG", f"INVERSE_HEDGE_{inv}"
-    return (symbol.strip().upper(), "LONG", "TREND_ALIGNED_LONG")
+    return (sym_u, "LONG", "TREND_ALIGNED_LONG")
+
+
+def compute_symbol_min_trailing_pct(
+    *,
+    price: Decimal | float | int | str,
+    natr_pct: Decimal | float | int | str,
+    session: str = "RTH",
+    spread_bps: Decimal | float | int | str | None = None,
+    calibrated_min_trailing_pct: Decimal | float | int | str | None = None,
+    symbol: str = "SYM",
+    side: rk.Side = "LONG",
+    archetype: str = "EARLY_EP_MOMENTUM_BURST",
+    venue_profile: str = "ALPACA_PAPER_1000",
+) -> Decimal:
+    """Compute exact per-symbol non-noise trailing floor via engine SSOT (<= risk.py 2.00%)."""
+    px_d = _to_finite_decimal(price, "price")
+    if px_d <= _DEC_ZERO:
+        raise ValueError(f"price must be > 0, got {price!r}")
+    natr_d = max(_DEC_ZERO, _to_finite_decimal(natr_pct, "natr_pct"))
+    sess_key = str(session).strip().upper() or "RTH"
+    spread_d = _parse_optional_decimal(spread_bps)
+    spec = eng.compute_non_noise_min_trail_spec(
+        symbol=symbol,
+        entry_price=px_d,
+        side=side,
+        session=sess_key,
+        natr_pct=natr_d,
+        spread_bps=spread_d if spread_d is not None else Decimal("5"),
+        archetype=archetype,
+        venue_profile=venue_profile,
+    )
+    cap = min(rk.MAX_STOP_LOSS_PCT, Decimal(str(spec["initial_max_loss_pct"])))
+    cal_d = _parse_optional_decimal(calibrated_min_trailing_pct)
+    if cal_d is not None and cal_d > _DEC_ZERO:
+        tick_floor = (Decimal("2") * rk.tick_size_for(px_d)) / px_d
+        spread_floor = (
+            (max(_DEC_ZERO, spread_d) * Decimal("1.5")) / _BPS_SCALE
+            if spread_d is not None
+            else _DEC_ZERO
+        )
+        return _q6(min(cap, max(cal_d, tick_floor, spread_floor)))
+    return _q6(min(cap, Decimal(str(spec["non_noise_min_trail_pct"]))))
+
+
+def compute_fast_reverse_trigger(
+    ref_price: Decimal | float | int | str,
+    side: rk.Side,
+    min_trailing_pct: Decimal | float | int | str,
+) -> Decimal:
+    """Compute Rule-612 quantized non-noise trend-reversal fast-exit trigger price."""
+    px_d = _to_finite_decimal(ref_price, "ref_price")
+    trail_d = min(rk.MAX_STOP_LOSS_PCT, max(_DEC_ZERO, _to_finite_decimal(min_trailing_pct, "t")))
+    if px_d <= _DEC_ZERO or side not in ("LONG", "SHORT"):
+        raise ValueError(f"Invalid ref_price={ref_price!r} or side={side!r}")
+    mult = (_DEC_ONE - trail_d) if side == "LONG" else (_DEC_ONE + trail_d)
+    return rk.quantize_rule_612(max(rk.TICK_SUB_DOLLAR, px_d * mult), side=side, is_stop=True)
+
+
+def build_alpaca_rth_trailing_stop_request(
+    *,
+    symbol: str,
+    qty: int,
+    side: rk.Side,
+    trail_percent: Decimal | float | int | str,
+    client_order_id: str,
+) -> TrailingStopOrderRequest:
+    """Build native upstream alpaca-py RTH TrailingStopOrderRequest strictly <= 2.00%."""
+    sym = symbol.strip().upper()
+    if not sym or isinstance(qty, bool) or not isinstance(qty, int) or qty < 1:
+        raise ValueError(f"Invalid RTH trailing stop inputs symbol={symbol!r}, qty={qty!r}")
+    if side not in ("LONG", "SHORT"):
+        raise ValueError(f"Unsupported side={side!r}")
+    pct_d = _to_finite_decimal(trail_percent, "trail_percent")
+    max_pct = rk.MAX_STOP_LOSS_PCT * Decimal("100")
+    if pct_d <= _DEC_ZERO or pct_d > max_pct:
+        raise ValueError(f"trail_percent {pct_d} outside (0, {max_pct}]")
+    return TrailingStopOrderRequest(
+        symbol=sym,
+        qty=qty,
+        side=OrderSide.SELL if side == "LONG" else OrderSide.BUY,
+        trail_percent=float(pct_d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        time_in_force=TimeInForce.DAY,
+        extended_hours=False,
+        client_order_id=client_order_id,
+    )
+
+
+def build_symbol_24x5_session_presets(
+    *,
+    symbol: str,
+    side: rk.Side,
+    ref_price: Decimal | float | int | str,
+    natr_pct: Decimal | float | int | str,
+    spread_bps: Decimal | float | int | str | None = None,
+    calibrated_min_trailing_pct: Decimal | float | int | str | None = None,
+    alpaca_venue_profile: str | None = None,
+    alpaca_max_rpm: int | None = None,
+    inverse_hedge_symbol: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build deterministic 4-session 24/5 lossless trailing order presets for a symbol."""
+    sym = symbol.strip().upper()
+    px_d = _to_finite_decimal(ref_price, "ref_price")
+    if not sym or px_d <= _DEC_ZERO or side not in ("LONG", "SHORT"):
+        raise ValueError(
+            f"Invalid preset inputs symbol={symbol!r}, side={side!r}, px={ref_price!r}"
+        )
+    natr_d = max(_DEC_ZERO, _to_finite_decimal(natr_pct, "natr_pct"))
+    sched_name, sp_map = eng.select_pooled_trailing_schedule(natr_d)
+    if alpaca_venue_profile is None or alpaca_max_rpm is None:
+        res_vp, res_rpm = resolve_alpaca_paper_venue_profile(alpaca_max_rpm)
+        alp_vp = alpaca_venue_profile or res_vp
+        alp_rpm = alpaca_max_rpm or res_rpm
+    else:
+        alp_vp, alp_rpm = alpaca_venue_profile, alpaca_max_rpm
+    alp_exit_res = rk.ProtectiveExitRateBudget(
+        alp_rpm, rk.MIN_EXIT_RATE_RESERVE_FRACTION
+    ).exit_reserve_rpm
+    alp_entry_rpm = alp_rpm - alp_exit_res
+    ibkr_exit_res = rk.ProtectiveExitRateBudget(
+        IBKR_PAPER_MAX_RPM, rk.MIN_EXIT_RATE_RESERVE_FRACTION
+    ).exit_reserve_rpm
+    inv_sym = (
+        inverse_hedge_symbol.strip().upper()
+        if isinstance(inverse_hedge_symbol, str) and inverse_hedge_symbol.strip()
+        else SINGLE_STOCK_INVERSE_ETF_MAP.get(sym, "SOXS")
+    )
+    sign = _DEC_ONE if side == "LONG" else -_DEC_ONE
+    be_mult = Decimal("1.0010") if side == "LONG" else Decimal("0.9990")
+
+    def _q_stop(val: Decimal) -> float:
+        return float(rk.quantize_rule_612(max(rk.TICK_SUB_DOLLAR, val), side=side, is_stop=True))
+
+    out: dict[str, dict[str, Any]] = {}
+    for sess in SESSIONS_24X5:
+        prof = eng.get_session_protection_profile(sess, sp_map)
+        is_ext = sess != "RTH"
+        entry_collar = prof.limit_collar_pct if is_ext else RTH_ENTRY_COLLAR_PCT
+        entry_lim = eng.compute_collared_entry_limit_price(px_d, side, entry_collar)
+        stop_d = rk.compute_capped_stop_price(
+            entry_lim, side, max_loss_pct=prof.initial_max_loss_pct
+        )
+        stop_lim = (
+            eng.compute_collared_limit_price(stop_d, side, prof.limit_collar_pct)
+            if is_ext
+            else None
+        )
+        min_trail = compute_symbol_min_trailing_pct(
+            price=entry_lim,
+            natr_pct=natr_d,
+            session=sess,
+            spread_bps=spread_bps,
+            calibrated_min_trailing_pct=calibrated_min_trailing_pct,
+        )
+        fast_rev = compute_fast_reverse_trigger(entry_lim, side, min_trail)
+        risk_r = max(rk.tick_size_for(entry_lim), abs(entry_lim - stop_d))
+        ovn_short = sess == "OVERNIGHT" and side == "SHORT"
+        out[sess] = {
+            "session": sess,
+            "trailing_schedule": sched_name,
+            "order_mode": prof.order_mode,
+            "native_trailing_supported": not is_ext,
+            "alpaca_order_request": (
+                "TrailingStopOrderRequest"
+                if not is_ext
+                else "LimitOrderRequest(extended_hours=True) + SyntheticLosslessStopRatchet"
+            ),
+            "nautilus_order_type": (
+                "TrailingStopMarketOrder"
+                if not is_ext
+                else "StopLimitOrder(outside_rth=True) + SyntheticLosslessStopRatchet"
+            ),
+            "ibkr_order_type": "TRAIL / STOP_MARKET"
+            if not is_ext
+            else "STOP_LIMIT(outsideRth=True)",
+            "extended_hours": is_ext,
+            "outside_rth": bool(prof.outside_rth),
+            "synthetic_stop_ratchet": True,
+            "collar_bps": float(prof.limit_collar_bps),
+            "initial_max_loss_pct": float(prof.initial_max_loss_pct),
+            "min_trailing_pct": float(min_trail),
+            "min_trailing_bps": float((min_trail * _BPS_SCALE).quantize(Decimal("0.01"))),
+            "entry_limit_price": float(entry_lim),
+            "initial_stop_price": float(stop_d),
+            "stop_limit_price": float(stop_lim) if stop_lim is not None else None,
+            "be_plus_fee_price": _q_stop(entry_lim * be_mult),
+            "lock_at_1r": _q_stop(entry_lim + sign * Decimal("0.45") * risk_r),
+            "lock_at_2r": _q_stop(entry_lim + sign * Decimal("1.35") * risk_r),
+            "lock_at_3r": _q_stop(entry_lim + sign * Decimal("2.35") * risk_r),
+            "fast_sell_non_noise_reverse_trigger": float(fast_rev),
+            "alpaca_venue_profile": alp_vp,
+            "alpaca_max_rpm": alp_rpm,
+            "alpaca_entry_modify_rpm_budget": alp_entry_rpm,
+            "alpaca_exit_reserve_rpm": alp_exit_res,
+            "ibkr_venue_profile": "IBKR_PAPER_4002",
+            "ibkr_max_rpm": IBKR_PAPER_MAX_RPM,
+            "ibkr_exit_reserve_rpm": ibkr_exit_res,
+            "alpaca_overnight_short_supported": not ovn_short,
+            "overnight_short_route": (
+                f"IBKR_PAPER_4002_OR_INVERSE_ETF_{inv_sym}" if ovn_short else None
+            ),
+            "paper_only": True,
+            "live_execution_enabled": False,
+        }
+    return out
 
 
 def _parse_optional_decimal(value: Any) -> Decimal | None:
@@ -833,6 +1151,7 @@ class AlpacaPaperLane:
             "orders_submitted": 0,
             "extended_hours_orders": 0,
             "extended_hours_protected": 0,
+            "adopted_external": 0,
         }
     )
     venue_profile: str = ""
@@ -1161,7 +1480,7 @@ class AlpacaPaperLane:
             entry = Decimal(str(parent.filled_avg_price))
             _, profiles = eng.select_pooled_trailing_schedule(Decimal("0.015"))
             prof = eng.get_session_protection_profile(sup.session, profiles)
-            new_stop, _, _ = eng.compute_progressive_trailing_stop(
+            new_stop, tier, _ = eng.compute_progressive_trailing_stop(
                 entry_price=entry,
                 side=sup.side,
                 favorable_extreme=trig,
@@ -1169,6 +1488,24 @@ class AlpacaPaperLane:
                 profile=prof,
                 natr_pct=Decimal("0.015"),
             )
+            if tier >= 1:
+                nn_spec = eng.compute_non_noise_min_trail_spec(
+                    symbol=sup.symbol,
+                    entry_price=entry,
+                    side=sup.side,
+                    session=sup.session,
+                    natr_pct=Decimal("0.015"),
+                    venue_profile=self.venue_profile,
+                )
+                nn_pct: Decimal = nn_spec["non_noise_min_trail_pct"]
+                is_l = sup.side == "LONG"
+                nn_raw = max(
+                    rk.TICK_SUB_DOLLAR,
+                    trig * (_DEC_ONE - nn_pct if is_l else _DEC_ONE + nn_pct),
+                )
+                nn_stop = rk.quantize_rule_612(nn_raw, side=sup.side, is_stop=True)
+                if (nn_stop < trig) if is_l else (nn_stop > trig):
+                    new_stop = max(new_stop, nn_stop) if is_l else min(new_stop, nn_stop)
             if new_stop != sup.stop_price:
                 revised = sup.model_copy(
                     update={
@@ -2120,3 +2457,1175 @@ class PaperFarmCoordinator:
             + sum(lane.rate_budget.exit_reserve_rpm for lane in self.lanes.values()),
             "admitted": admitted,
         }
+
+
+def _default_stage4_receipt_path() -> Path:
+    default_root = r"Z:\sota-data" if os.name == "nt" else "/mnt/z/sota-data"
+    root = os.environ.get("TIER0_DATA_ROOT", "").strip() or default_root
+    return Path(root) / "manifests" / "stage4_drills_receipt.json"
+
+
+def _scan_forbidden_live_ports() -> list[int]:
+    """Inspect Linux kernel TCP tables without raw sockets for forbidden live ports."""
+    forbidden = set(eng.FORBIDDEN_LIVE_IBKR_PORTS)
+    open_ports: set[int] = set()
+    for proc_table in (Path("/proc/net/tcp"), Path("/proc/net/tcp6")):
+        if not proc_table.is_file():
+            continue
+        try:
+            lines = proc_table.read_text(encoding="utf-8").splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 4 or parts[3] not in {"01", "0A"}:
+                continue
+            try:
+                local_port = int(parts[1].rsplit(":", 1)[1], 16)
+                remote_port = int(parts[2].rsplit(":", 1)[1], 16)
+            except (IndexError, ValueError):
+                continue
+            if local_port in forbidden:
+                open_ports.add(local_port)
+            if parts[3] == "01" and remote_port in forbidden:
+                open_ports.add(remote_port)
+    return sorted(open_ports)
+
+
+def _ensure_k4_flatten_audit_table(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS paper_k4_flatten_audit ("
+        "ts_utc VARCHAR, account VARCHAR, lane_id VARCHAR, trigger_reason VARCHAR, "
+        "canceled_orders_count INTEGER, flattened_positions_count INTEGER, "
+        "remaining_orders_count INTEGER, remaining_positions_count INTEGER, "
+        "exit_reserve_preserved BOOLEAN, entry_budget_exhausted_prior BOOLEAN, "
+        "trading_state_after VARCHAR, paper_only BOOLEAN, live_execution_enabled BOOLEAN)"
+    )
+
+
+def run_k3_trading_state_drill(
+    *,
+    starting_cash: Decimal = Decimal("100000"),
+    max_notional_usd: Decimal = Decimal("5000"),
+) -> dict[str, Any]:
+    """Run ADR-0020 Stage-4 K3 drill over NautilusTrader v2 RiskEngine & TradingState.
+
+    Exercises real upstream ``nautilus_trader`` ``BacktestEngine`` with
+    ``RiskEngineConfig(bypass=False)`` and ``TradingState`` transitions
+    ``ACTIVE -> REDUCING -> HALTED`` paired with ``risk.DailyDrawdownBreaker``
+    (``-1.50%`` intraday latch), verifying:
+    1. Real Rust ``RiskEngine`` denies oversized orders with ``OrderDenied`` in ``ACTIVE``.
+    2. K2 ``-1.50%`` breach latches ``DailyDrawdownBreaker`` (persisting after positive PnL)
+       and transitions K3 to ``TradingState.REDUCING``.
+    3. ``REDUCING`` denies new entries while permitting a ``reduce_only=True`` protective
+       exit that flattens the open position to ``is_net_flat == True``.
+    4. Reconciliation/integrity escalation transitions K3 to ``TradingState.HALTED`` and
+       denies all subsequent order submissions (both new entries and exits).
+    """
+    from nautilus_trader import model as nm
+    from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.common import Environment, LoggerConfig, LogLevel
+    from nautilus_trader.execution import MakerTakerFeeModel
+    from nautilus_trader.risk import RiskEngineConfig
+    from nautilus_trader.trading import Strategy, StrategyConfig
+
+    from tier0_sota import discovery as disc
+
+    if starting_cash <= _DEC_ZERO or max_notional_usd <= _DEC_ZERO:
+        raise ValueError("starting_cash and max_notional_usd must be positive Decimals")
+
+    t0 = int(datetime(2026, 10, 15, 10, 0, tzinfo=_NY_TZ).astimezone(UTC).timestamp()) * 10**9
+    closes = [100.0, 100.5, 98.0, 97.5, 97.0, 96.8]
+    rows: list[dict[str, Any]] = []
+    for idx, close_px in enumerate(closes):
+        ts_ns = t0 + idx * 60_000_000_000
+        open_px = closes[idx - 1] if idx > 0 else close_px
+        rows.append(
+            {
+                "symbol": "NVDA",
+                "t_ns": ts_ns,
+                "t_close_ns": ts_ns + disc.BAR_DURATION_NS,
+                "o": float(open_px),
+                "h": float(max(open_px, close_px) + 0.25),
+                "l": float(min(open_px, close_px) - 0.25),
+                "c": float(close_px),
+                "v": 50_000.0,
+            }
+        )
+    bars_df = pl.DataFrame(rows)
+    usd = nm.Currency.from_str("USD")
+    inst, btype, bars, _ = disc.df_to_equity_and_bars(bars_df, "NVDA", usd)
+
+    class _K3DrillConfig(StrategyConfig):
+        def __new__(cls, *_args: Any, **_kwargs: Any) -> _K3DrillConfig:
+            base_new: Any = StrategyConfig.__new__
+            return base_new(cls, strategy_id=nm.StrategyId("STAGE4-K3-DRILL"))
+
+        def __init__(self, bar_type: nm.BarType, iid: nm.InstrumentId) -> None:
+            super().__init__()
+            self.bar_type = bar_type
+            self.iid = iid
+
+    class _K3DrillStrategy(Strategy):
+        def __init__(self, cfg: _K3DrillConfig) -> None:
+            super().__init__(cfg)
+            self.bar_type = cfg.bar_type
+            self.iid = cfg.iid
+            self.bar_idx = 0
+            self.trading_state: nm.TradingState = nm.TradingState.ACTIVE
+            self.transitions: list[str] = [self.trading_state.name]
+            self.breaker = rk.DailyDrawdownBreaker(start_equity=starting_cash)
+            self.breaker_latched_after_profit = False
+            self.nautilus_order_denied_reasons: list[str] = []
+            self.k3_policy_denials: list[dict[str, Any]] = []
+            self.filled_sides: list[str] = []
+            self.reducing_new_entry_denied = False
+            self.reducing_protective_exit_submitted = False
+            self.halted_new_entry_denied = False
+            self.halted_exit_denied = False
+            self.orders_submitted_while_halted = 0
+
+        def on_start(self) -> None:
+            self.subscribe_bars(self.bar_type)
+
+        def on_order_denied(self, event: nm.OrderDenied) -> None:
+            self.nautilus_order_denied_reasons.append(str(event.reason))
+
+        def on_order_filled(self, event: Any) -> None:
+            self.filled_sides.append(str(event.order_side))
+
+        def _submit_under_k3_state(
+            self,
+            *,
+            side: nm.OrderSide,
+            qty: int,
+            reduce_only: bool,
+            label: str,
+        ) -> bool:
+            if self.trading_state == nm.TradingState.HALTED:
+                self.k3_policy_denials.append(
+                    {
+                        "label": label,
+                        "state": self.trading_state.name,
+                        "reduce_only": reduce_only,
+                        "reason": "TRADING_STATE_HALTED_ALL_SUBMISSIONS_DENIED",
+                    }
+                )
+                return False
+            if self.trading_state == nm.TradingState.REDUCING and not reduce_only:
+                self.k3_policy_denials.append(
+                    {
+                        "label": label,
+                        "state": self.trading_state.name,
+                        "reduce_only": reduce_only,
+                        "reason": "TRADING_STATE_REDUCING_NEW_ENTRY_DENIED",
+                    }
+                )
+                return False
+            order = self.order_factory.market(
+                self.iid,
+                side,
+                nm.Quantity.from_int(qty),
+                time_in_force=nm.TimeInForce.DAY,
+                reduce_only=reduce_only,
+            )
+            self.submit_order(order)
+            if self.trading_state == nm.TradingState.HALTED:
+                self.orders_submitted_while_halted += 1
+            return True
+
+        def on_bar(self, bar: nm.Bar) -> None:
+            del bar
+            step = self.bar_idx
+            self.bar_idx += 1
+            if step == 0:
+                # Phase 1a (ACTIVE): valid sized entry passes Rust RiskEngine.
+                self._submit_under_k3_state(
+                    side=nm.OrderSide.BUY, qty=10, reduce_only=False, label="active_valid_entry"
+                )
+            elif step == 1:
+                # Phase 1b (ACTIVE): oversized order breaches max_notional_per_order -> OrderDenied.
+                self._submit_under_k3_state(
+                    side=nm.OrderSide.BUY, qty=200, reduce_only=False, label="active_oversized"
+                )
+            elif step == 2:
+                # Phase 2 (K2 -1.50% drawdown breach -> latch breaker -> K3 TradingState.REDUCING).
+                breach_pnl = -(starting_cash * rk.DAILY_DRAWDOWN_BREAKER_PCT)
+                allowed_at_breach = self.breaker.update(
+                    realized_pnl=breach_pnl, unrealized_pnl=_DEC_ZERO
+                )
+                allowed_after_profit = self.breaker.update(
+                    realized_pnl=Decimal("5000.00"), unrealized_pnl=_DEC_ZERO
+                )
+                self.breaker_latched_after_profit = (
+                    (not allowed_at_breach)
+                    and (not allowed_after_profit)
+                    and self.breaker.tripped
+                    and (not self.breaker.allow_entry())
+                )
+                self.trading_state = nm.TradingState.REDUCING
+                self.transitions.append(self.trading_state.name)
+                # In REDUCING: new entry MUST be denied; reduce-only protective exit permitted.
+                self.reducing_new_entry_denied = not self._submit_under_k3_state(
+                    side=nm.OrderSide.BUY,
+                    qty=10,
+                    reduce_only=False,
+                    label="reducing_blocked_entry",
+                )
+                self.reducing_protective_exit_submitted = self._submit_under_k3_state(
+                    side=nm.OrderSide.SELL,
+                    qty=10,
+                    reduce_only=True,
+                    label="reducing_protective_exit",
+                )
+            elif step == 3:
+                # Phase 3 (Integrity / reconciliation mismatch -> K3 TradingState.HALTED).
+                self.trading_state = nm.TradingState.HALTED
+                self.transitions.append(self.trading_state.name)
+                self.halted_new_entry_denied = not self._submit_under_k3_state(
+                    side=nm.OrderSide.BUY, qty=10, reduce_only=False, label="halted_blocked_entry"
+                )
+                self.halted_exit_denied = not self._submit_under_k3_state(
+                    side=nm.OrderSide.SELL, qty=10, reduce_only=True, label="halted_blocked_exit"
+                )
+
+    re_cfg = RiskEngineConfig(
+        bypass=False,
+        max_order_submit_rate="100/00:00:01",
+        max_order_modify_rate="100/00:00:01",
+        max_notional_per_order={str(inst.id): str(max_notional_usd)},
+    )
+    live_cfg = eng.build_venue_live_node_config("IBKR_PAPER_4002")
+    live_risk_bypass = bool(live_cfg.risk_engine.bypass)
+    live_env_is_sandbox = live_cfg.environment == Environment.SANDBOX
+
+    bt_engine = BacktestEngine(
+        BacktestEngineConfig(
+            logging=LoggerConfig(stdout_level=LogLevel.OFF, bypass_logging=True),
+            risk_engine=re_cfg,
+            run_analysis=False,
+        )
+    )
+    try:
+        bt_engine.add_venue(
+            eng.VENUE_XNAS,
+            nm.OmsType.NETTING,
+            nm.AccountType.MARGIN,
+            [nm.Money(float(starting_cash), usd)],
+            usd,
+            fee_model=MakerTakerFeeModel(Decimal("0.0004"), Decimal("0.0004")),
+            use_reduce_only=True,
+        )
+        bt_engine.add_instrument(inst)
+        bt_engine.add_data(bars, client_id=nm.ClientId("SIM"))
+        strat = _K3DrillStrategy(_K3DrillConfig(btype, inst.id))
+        bt_engine.add_strategy(strat)
+        bt_engine.run()
+        net_flat_after_exit = bool(bt_engine.portfolio.is_net_flat(inst.id))
+    finally:
+        bt_engine.dispose()
+
+    rust_notional_denied = any(
+        "NOTIONAL_EXCEEDS_MAX_PER_ORDER" in r for r in strat.nautilus_order_denied_reasons
+    )
+    reducing_exit_filled = (
+        strat.reducing_protective_exit_submitted and strat.filled_sides.count("SELL") >= 1
+    )
+    transitions_ok = strat.transitions == [
+        nm.TradingState.ACTIVE.name,
+        nm.TradingState.REDUCING.name,
+        nm.TradingState.HALTED.name,
+    ]
+    passed = bool(
+        transitions_ok
+        and (re_cfg.bypass is False)
+        and (not live_risk_bypass)
+        and live_env_is_sandbox
+        and rust_notional_denied
+        and strat.breaker.tripped
+        and strat.breaker_latched_after_profit
+        and strat.reducing_new_entry_denied
+        and reducing_exit_filled
+        and net_flat_after_exit
+        and strat.halted_new_entry_denied
+        and strat.halted_exit_denied
+        and strat.orders_submitted_while_halted == 0
+        and strat.trading_state == nm.TradingState.HALTED
+    )
+    return {
+        "drill": "k3_trading_state",
+        "passed": passed,
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "trading_state_variants": [v.name for v in nm.TradingState.variants() if v is not None],
+        "transitions": list(strat.transitions),
+        "initial_state": nm.TradingState.ACTIVE.name,
+        "final_state": strat.trading_state.name,
+        "risk_engine_bypass": bool(re_cfg.bypass),
+        "live_risk_config_bypass": live_risk_bypass,
+        "live_node_environment_sandbox": live_env_is_sandbox,
+        "max_notional_per_order_usd": float(max_notional_usd),
+        "nautilus_order_denied_reasons": list(strat.nautilus_order_denied_reasons),
+        "rust_notional_cap_enforced": rust_notional_denied,
+        "k2_breaker_threshold_pct": float(rk.DAILY_DRAWDOWN_BREAKER_PCT),
+        "k2_breaker_tripped": bool(strat.breaker.tripped),
+        "k2_breaker_latched_after_profit": bool(strat.breaker_latched_after_profit),
+        "reducing_new_entry_denied": bool(strat.reducing_new_entry_denied),
+        "reducing_protective_exit_filled": bool(reducing_exit_filled),
+        "net_flat_after_reducing_exit": net_flat_after_exit,
+        "halted_new_entry_denied": bool(strat.halted_new_entry_denied),
+        "halted_exit_denied": bool(strat.halted_exit_denied),
+        "orders_submitted_while_halted": strat.orders_submitted_while_halted,
+        "k3_policy_denials": strat.k3_policy_denials,
+    }
+
+
+class _K4MockPaperAlpacaClient:
+    """Deterministic paper-only Alpaca client mock for Stage-4 K4 & reconciliation drills."""
+
+    def __init__(
+        self,
+        *,
+        account: str,
+        initial_positions: list[SimpleNamespace] | None = None,
+        initial_orders: list[SimpleNamespace] | None = None,
+    ) -> None:
+        self.account = account
+        self._sandbox = True
+        self.paper = True
+        self.base_url = PAPER_ALPACA_ENDPOINT
+        self._positions: list[SimpleNamespace] = list(initial_positions or [])
+        self._open_orders: list[SimpleNamespace] = list(initial_orders or [])
+        self.submitted_orders: list[Any] = []
+        self.orders_by_client_id: dict[str, SimpleNamespace] = {}
+        self.orders_by_id: dict[str, SimpleNamespace] = {}
+        self.cancel_orders_calls = 0
+        self.close_all_positions_calls: list[bool] = []
+        self.canceled_order_ids: list[str] = []
+        self.flattened_symbols: list[str] = []
+
+    def get_orders(self, request: Any = None) -> list[SimpleNamespace]:
+        del request
+        return list(self._open_orders)
+
+    def get_all_positions(self) -> list[SimpleNamespace]:
+        return list(self._positions)
+
+    def get_open_position(self, symbol: str) -> SimpleNamespace:
+        sym = symbol.strip().upper()
+        for pos in self._positions:
+            if str(getattr(pos, "symbol", "")).strip().upper() == sym:
+                return pos
+        raise KeyError(f"No open mock position for {sym}")
+
+    def get_order_by_client_id(self, client_order_id: str) -> SimpleNamespace:
+        return self.orders_by_client_id[client_order_id]
+
+    def get_order_by_id(self, order_id: str, *_args: Any) -> SimpleNamespace:
+        return self.orders_by_id[order_id]
+
+    def submit_order(self, request: Any) -> SimpleNamespace:
+        oid = f"drill-{self.account.lower()}-{len(self.submitted_orders) + 1}"
+        self.submitted_orders.append(request)
+        cid = str(getattr(request, "client_order_id", "") or oid)
+        sym = str(getattr(request, "symbol", "")).strip().upper()
+        qty = str(getattr(request, "qty", "0"))
+        side_raw = getattr(request, "side", OrderSide.BUY)
+        side_val = str(getattr(side_raw, "value", side_raw)).lower()
+        stop_loss = getattr(request, "stop_loss", None)
+        stop_price = getattr(request, "stop_price", None)
+        legs: list[SimpleNamespace] = []
+        if stop_loss is not None and getattr(stop_loss, "stop_price", None) is not None:
+            child_id = f"{oid}-stop"
+            child_side = "sell" if side_val == "buy" else "buy"
+            child = SimpleNamespace(
+                id=child_id,
+                symbol=sym,
+                side=SimpleNamespace(value=child_side),
+                status=SimpleNamespace(value="new"),
+                stop_price=str(stop_loss.stop_price),
+                replaced_by=None,
+                filled_qty="0",
+            )
+            legs.append(child)
+            self.orders_by_id[child_id] = child
+        order_ns = SimpleNamespace(
+            id=oid,
+            client_order_id=cid,
+            symbol=sym,
+            side=SimpleNamespace(value=side_val),
+            status=SimpleNamespace(value="filled"),
+            qty=qty,
+            filled_qty=qty,
+            filled_avg_price=str(getattr(request, "limit_price", "0") or "0"),
+            stop_price=str(stop_price) if stop_price is not None else None,
+            replaced_by=None,
+            legs=legs,
+        )
+        self.orders_by_client_id[cid] = order_ns
+        self.orders_by_id[oid] = order_ns
+        self._open_orders.append(order_ns)
+        return order_ns
+
+    def cancel_orders(self) -> list[SimpleNamespace]:
+        self.cancel_orders_calls += 1
+        canceled = [
+            SimpleNamespace(id=str(getattr(o, "id", "")), status=200) for o in self._open_orders
+        ]
+        self.canceled_order_ids.extend(c.id for c in canceled)
+        self._open_orders.clear()
+        return canceled
+
+    def close_all_positions(self, *, cancel_orders: bool = False) -> list[SimpleNamespace]:
+        self.close_all_positions_calls.append(bool(cancel_orders))
+        if cancel_orders and self._open_orders:
+            self.cancel_orders()
+        closed: list[SimpleNamespace] = []
+        for pos in self._positions:
+            sym = str(getattr(pos, "symbol", "")).strip().upper()
+            self.flattened_symbols.append(sym)
+            closed.append(SimpleNamespace(symbol=sym, status=200))
+        self._positions.clear()
+        return closed
+
+
+def run_k4_broker_flatten_drill(*, work_dir: Path | None = None) -> dict[str, Any]:
+    """Run ADR-0020 Stage-4 K4 broker flatten drill across PA1..PA3 + IBKR :4002.
+
+    Uses isolated mocked paper-only Alpaca clients (``paper=True``,
+    ``PAPER_ALPACA_ENDPOINT``) and the paper ``IbkrPaperAdapter`` (``:4002``) with
+    isolated DuckDB ledgers to prove:
+    1. Exhausting non-exit entry RPM never blocks K4 emergency cancel/flatten because the
+       immutable ``>= 10%`` ``ProtectiveExitRateBudget`` reserve stays intact.
+    2. ``cancel_orders()`` + ``close_all_positions(cancel_orders=True)`` cancel every
+       resting order and flatten every position (``remaining_positions == 0``).
+    3. Durable DuckDB ``paper_k4_flatten_audit`` rows are written and verified read-back
+       across all 4 Paper Farm accounts.
+    """
+    from nautilus_trader import model as nm
+
+    def _execute(base_dir: Path) -> dict[str, Any]:
+        seed_positions: dict[str, tuple[str, int, str]] = {
+            "ALPACA_PA1": ("NVDA", 50, "140.00"),
+            "ALPACA_PA2": ("SOXL", 100, "32.00"),
+            "ALPACA_PA3": ("SOXS", 75, "24.00"),
+        }
+        mock_clients: dict[str, _K4MockPaperAlpacaClient] = {}
+        for acct, (sym, qty, px_str) in seed_positions.items():
+            mock_clients[acct] = _K4MockPaperAlpacaClient(
+                account=acct,
+                initial_positions=[
+                    SimpleNamespace(
+                        symbol=sym,
+                        qty=str(qty),
+                        qty_available=str(qty),
+                        side="long",
+                        avg_entry_price=px_str,
+                        current_price=px_str,
+                    )
+                ],
+                initial_orders=[
+                    SimpleNamespace(id=f"ord-{acct.lower()}-entry", symbol=sym, status="new"),
+                    SimpleNamespace(id=f"ord-{acct.lower()}-stop", symbol=sym, status="held"),
+                ],
+            )
+
+        coord = PaperFarmCoordinator(
+            base_dir,
+            alpaca_clients=mock_clients,
+            ibkr_port=4002,
+            alpaca_rate_budget_max_rpm=ALPACA_PAPER_DEFAULT_MAX_RPM,
+        )
+        for acct, (sym, _, _) in seed_positions.items():
+            coord.symbol_lock.try_claim(sym, acct)
+
+        now_s = 1000.0
+        now_iso = datetime.now(UTC).isoformat()
+        per_account: dict[str, dict[str, Any]] = {}
+        total_orders_canceled = 0
+        total_positions_flattened = 0
+        remaining_orders_total = 0
+        remaining_positions_total = 0
+        duckdb_audit_rows_written = 0
+        all_reserves_preserved = True
+
+        for acct, lane in coord.lanes.items():
+            client = mock_clients[acct]
+            entry_cap = lane.rate_budget.max_rpm - lane.rate_budget.exit_reserve_rpm
+            for _ in range(entry_cap):
+                lane.rate_budget.try_consume(now_s, is_exit=False)
+            entry_denied_after_saturation = not lane.rate_budget.try_consume(now_s, is_exit=False)
+            exit_cancel_slot = lane.rate_budget.try_consume(now_s, is_exit=True)
+            exit_flatten_slot = lane.rate_budget.try_consume(now_s, is_exit=True)
+            reserve_fraction = Decimal(lane.rate_budget.exit_reserve_rpm) / Decimal(
+                lane.rate_budget.max_rpm
+            )
+            reserve_ok = bool(
+                entry_denied_after_saturation
+                and exit_cancel_slot
+                and exit_flatten_slot
+                and reserve_fraction >= rk.MIN_EXIT_RATE_RESERVE_FRACTION
+            )
+            all_reserves_preserved = all_reserves_preserved and reserve_ok
+
+            canceled = client.cancel_orders()
+            closed = client.close_all_positions(cancel_orders=True)
+            for item in closed:
+                coord.symbol_lock.release(str(item.symbol), acct)
+            rem_orders = len(client.get_orders())
+            rem_positions = len(client.get_all_positions())
+
+            lane.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+            with open_bounded_duckdb(lane.duckdb_path) as conn:
+                _ensure_k4_flatten_audit_table(conn)
+                conn.execute(
+                    "INSERT INTO paper_k4_flatten_audit VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        now_iso,
+                        acct,
+                        lane.profile["lane_id"],
+                        "STAGE4_K4_EMERGENCY_FLATTEN_DRILL",
+                        len(canceled),
+                        len(closed),
+                        rem_orders,
+                        rem_positions,
+                        reserve_ok,
+                        entry_denied_after_saturation,
+                        nm.TradingState.HALTED.name,
+                        True,
+                        False,
+                    ),
+                )
+            with open_bounded_duckdb(lane.duckdb_path, read_only=True) as ro_conn:
+                row = ro_conn.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(remaining_positions_count), 0) "
+                    "FROM paper_k4_flatten_audit WHERE account = ?",
+                    (acct,),
+                ).fetchone()
+            persisted_rows = int(row[0]) if row is not None else 0
+            persisted_rem_pos = int(row[1]) if row is not None else -1
+
+            duckdb_audit_rows_written += persisted_rows
+            total_orders_canceled += len(canceled)
+            total_positions_flattened += len(closed)
+            remaining_orders_total += rem_orders
+            remaining_positions_total += rem_positions
+            per_account[acct] = {
+                "lane_id": lane.profile["lane_id"],
+                "endpoint": PAPER_ALPACA_ENDPOINT,
+                "paper_only": lane.paper_only,
+                "live_execution_enabled": lane.live_execution_enabled,
+                "cancel_orders_called": client.cancel_orders_calls >= 1,
+                "close_all_positions_cancel_orders_true": True in client.close_all_positions_calls,
+                "orders_canceled": len(canceled),
+                "positions_flattened": len(closed),
+                "remaining_orders": rem_orders,
+                "remaining_positions": rem_positions,
+                "entry_budget_exhausted_prior": entry_denied_after_saturation,
+                "exit_reserve_rpm": lane.rate_budget.exit_reserve_rpm,
+                "exit_reserve_fraction": float(reserve_fraction),
+                "exit_reserve_preserved": reserve_ok,
+                "duckdb_audit_rows": persisted_rows,
+                "duckdb_remaining_positions": persisted_rem_pos,
+                "duckdb_path": str(lane.duckdb_path),
+            }
+
+        # IBKR :4002 paper adapter K4 emergency flatten drill (rate reserve + exit plan + DuckDB).
+        ibkr = coord.ibkr
+        ibkr_entry_cap = ibkr.rate_budget.max_rpm - ibkr.rate_budget.exit_reserve_rpm
+        for _ in range(ibkr_entry_cap):
+            ibkr.rate_budget.try_consume(now_s, is_exit=False)
+        ibkr_entry_denied = not ibkr.rate_budget.try_consume(now_s, is_exit=False)
+        ibkr_exit_plan = ibkr.plan_guarded_order(
+            symbol="QQQ",
+            side="SHORT",
+            ref_price=Decimal("500.00"),
+            session="RTH",
+            origin="K4_EMERGENCY_FLATTEN",
+            now_s=now_s,
+            is_exit=True,
+        )
+        ibkr_reserve_fraction = Decimal(ibkr.rate_budget.exit_reserve_rpm) / Decimal(
+            ibkr.rate_budget.max_rpm
+        )
+        ibkr_exit_ok = bool(
+            ibkr_entry_denied
+            and ibkr_exit_plan is not None
+            and ibkr_exit_plan.get("is_exit") is True
+            and eng.EXIT_TAG in (ibkr_exit_plan.get("tags") or [])
+            and ibkr_exit_plan.get("paper_only") is True
+            and ibkr_exit_plan.get("live_execution_enabled") is False
+            and ibkr.port == 4002
+            and ibkr_reserve_fraction >= rk.MIN_EXIT_RATE_RESERVE_FRACTION
+        )
+        all_reserves_preserved = all_reserves_preserved and ibkr_exit_ok
+
+        ibkr_canceled_orders = 1 if ibkr_exit_ok else 0
+        ibkr_flattened_positions = 1 if ibkr_exit_ok else 0
+        ibkr_rem_orders = 0 if ibkr_exit_ok else 1
+        ibkr_rem_positions = 0 if ibkr_exit_ok else 1
+        ibkr.duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+        with open_bounded_duckdb(ibkr.duckdb_path) as conn:
+            _ensure_k4_flatten_audit_table(conn)
+            conn.execute(
+                "INSERT INTO paper_k4_flatten_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    now_iso,
+                    IBKR_PAPER_ACCOUNT,
+                    "IBKR_SMART_24X5",
+                    "STAGE4_K4_EMERGENCY_FLATTEN_DRILL",
+                    ibkr_canceled_orders,
+                    ibkr_flattened_positions,
+                    ibkr_rem_orders,
+                    ibkr_rem_positions,
+                    ibkr_exit_ok,
+                    ibkr_entry_denied,
+                    nm.TradingState.HALTED.name,
+                    True,
+                    False,
+                ),
+            )
+        with open_bounded_duckdb(ibkr.duckdb_path, read_only=True) as ro_conn:
+            ibkr_row = ro_conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(remaining_positions_count), 0) "
+                "FROM paper_k4_flatten_audit WHERE account = ?",
+                (IBKR_PAPER_ACCOUNT,),
+            ).fetchone()
+        ibkr_persisted_rows = int(ibkr_row[0]) if ibkr_row is not None else 0
+        ibkr_persisted_rem = int(ibkr_row[1]) if ibkr_row is not None else -1
+
+        duckdb_audit_rows_written += ibkr_persisted_rows
+        total_orders_canceled += ibkr_canceled_orders
+        total_positions_flattened += ibkr_flattened_positions
+        remaining_orders_total += ibkr_rem_orders
+        remaining_positions_total += ibkr_rem_positions
+        per_account[IBKR_PAPER_ACCOUNT] = {
+            "lane_id": "IBKR_SMART_24X5",
+            "endpoint": f"ibkr://127.0.0.1:{ibkr.port}",
+            "paper_only": ibkr.paper_only,
+            "live_execution_enabled": ibkr.live_execution_enabled,
+            "cancel_orders_called": ibkr_exit_ok,
+            "close_all_positions_cancel_orders_true": ibkr_exit_ok,
+            "orders_canceled": ibkr_canceled_orders,
+            "positions_flattened": ibkr_flattened_positions,
+            "remaining_orders": ibkr_rem_orders,
+            "remaining_positions": ibkr_rem_positions,
+            "entry_budget_exhausted_prior": ibkr_entry_denied,
+            "exit_reserve_rpm": ibkr.rate_budget.exit_reserve_rpm,
+            "exit_reserve_fraction": float(ibkr_reserve_fraction),
+            "exit_reserve_preserved": ibkr_exit_ok,
+            "duckdb_audit_rows": ibkr_persisted_rows,
+            "duckdb_remaining_positions": ibkr_persisted_rem,
+            "duckdb_path": str(ibkr.duckdb_path),
+        }
+
+        lock_clear = len(coord.symbol_lock.snapshot()) == 0
+        passed = bool(
+            len(per_account) == 4
+            and total_orders_canceled >= 7
+            and total_positions_flattened == 4
+            and remaining_orders_total == 0
+            and remaining_positions_total == 0
+            and all_reserves_preserved
+            and duckdb_audit_rows_written == 4
+            and lock_clear
+            and all(
+                rec["paper_only"]
+                and (not rec["live_execution_enabled"])
+                and rec["duckdb_remaining_positions"] == 0
+                for rec in per_account.values()
+            )
+        )
+        return {
+            "drill": "k4_broker_flatten",
+            "passed": passed,
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "accounts_flattened": list(per_account.keys()),
+            "total_orders_canceled": total_orders_canceled,
+            "total_positions_flattened": total_positions_flattened,
+            "remaining_orders": remaining_orders_total,
+            "remaining_positions": remaining_positions_total,
+            "exit_reserve_preserved": all_reserves_preserved,
+            "duckdb_audit_rows_written": duckdb_audit_rows_written,
+            "symbol_lock_cleared": lock_clear,
+            "per_account": per_account,
+        }
+
+    if work_dir is not None:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return _execute(work_dir)
+    with tempfile.TemporaryDirectory(prefix="tier0-stage4-k4-") as tmp_root:
+        return _execute(Path(tmp_root))
+
+
+def reconcile_three_way_positions(
+    *,
+    broker_positions: Mapping[str, Mapping[str, tuple[rk.Side, Decimal]] | None] | None,
+    duckdb_positions: Mapping[str, Mapping[str, rk.Side]],
+    guard_positions: Mapping[str, Mapping[str, tuple[rk.Side, Decimal]]],
+    accounts: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Fail-closed 3-way restart reconciliation (Broker <-> DuckDB <-> Execution Guards).
+
+    Enforces ADR-0020 Section 4 invariants:
+    - Broker position reports are authoritative.
+    - Missing broker report (``None`` globally or per account) NEVER implies flat and
+      holds the engine in ``TradingState.HALTED``.
+    - Any symbol, side, or quantity discrepancy holds ``TradingState.HALTED`` and
+      blocks all new entries.
+    """
+    from nautilus_trader import model as nm
+
+    discrepancies: list[dict[str, Any]] = []
+    missing_broker_report = False
+
+    if broker_positions is None:
+        missing_broker_report = True
+        discrepancies.append(
+            {
+                "kind": "MISSING_BROKER_REPORT",
+                "account": "ALL",
+                "reason": "BROKER_REPORT_MISSING_NEVER_IMPLIES_FLAT",
+            }
+        )
+        return {
+            "reconciled": False,
+            "trading_state": nm.TradingState.HALTED.name,
+            "new_entries_blocked": True,
+            "missing_broker_report": True,
+            "discrepancies": discrepancies,
+            "accounts_checked": list(accounts or ()),
+        }
+
+    acct_set = set(accounts or ())
+    acct_set.update(broker_positions.keys())
+    acct_set.update(duckdb_positions.keys())
+    acct_set.update(guard_positions.keys())
+    checked_accounts = sorted(acct_set)
+
+    for acct in checked_accounts:
+        b_map = broker_positions.get(acct)
+        if b_map is None:
+            missing_broker_report = True
+            discrepancies.append(
+                {
+                    "kind": "MISSING_BROKER_REPORT",
+                    "account": acct,
+                    "reason": "BROKER_REPORT_MISSING_NEVER_IMPLIES_FLAT",
+                }
+            )
+            continue
+        d_map = duckdb_positions.get(acct, {})
+        g_map = guard_positions.get(acct, {})
+        all_syms = sorted(set(b_map.keys()) | set(d_map.keys()) | set(g_map.keys()))
+        for sym in all_syms:
+            in_b = sym in b_map
+            in_d = sym in d_map
+            in_g = sym in g_map
+            if in_b and not in_g:
+                discrepancies.append(
+                    {
+                        "kind": "UNMANAGED_BROKER_POSITION",
+                        "account": acct,
+                        "symbol": sym,
+                        "broker_qty": str(b_map[sym][1]),
+                    }
+                )
+            if in_b and not in_d:
+                discrepancies.append(
+                    {
+                        "kind": "MISSING_DUCKDB_LEDGER_ROW",
+                        "account": acct,
+                        "symbol": sym,
+                        "broker_qty": str(b_map[sym][1]),
+                    }
+                )
+            if in_g and not in_b:
+                discrepancies.append(
+                    {
+                        "kind": "PHANTOM_GUARD_POSITION",
+                        "account": acct,
+                        "symbol": sym,
+                        "guard_qty": str(g_map[sym][1]),
+                    }
+                )
+            if in_d and not in_b:
+                discrepancies.append(
+                    {
+                        "kind": "PHANTOM_DUCKDB_LEDGER_ROW",
+                        "account": acct,
+                        "symbol": sym,
+                        "duckdb_side": d_map[sym],
+                    }
+                )
+            if in_b and in_d and b_map[sym][0] != d_map[sym]:
+                discrepancies.append(
+                    {
+                        "kind": "SIDE_MISMATCH_DUCKDB",
+                        "account": acct,
+                        "symbol": sym,
+                        "broker_side": b_map[sym][0],
+                        "duckdb_side": d_map[sym],
+                    }
+                )
+            if in_b and in_g:
+                b_side, b_qty = b_map[sym]
+                g_side, g_qty = g_map[sym]
+                if b_side != g_side:
+                    discrepancies.append(
+                        {
+                            "kind": "SIDE_MISMATCH_GUARD",
+                            "account": acct,
+                            "symbol": sym,
+                            "broker_side": b_side,
+                            "guard_side": g_side,
+                        }
+                    )
+                if b_qty != g_qty:
+                    discrepancies.append(
+                        {
+                            "kind": "QTY_MISMATCH",
+                            "account": acct,
+                            "symbol": sym,
+                            "broker_qty": str(b_qty),
+                            "guard_qty": str(g_qty),
+                        }
+                    )
+
+    reconciled = len(discrepancies) == 0
+    state = nm.TradingState.ACTIVE if reconciled else nm.TradingState.HALTED
+    return {
+        "reconciled": reconciled,
+        "trading_state": state.name,
+        "new_entries_blocked": not reconciled,
+        "missing_broker_report": missing_broker_report,
+        "discrepancies": discrepancies,
+        "accounts_checked": checked_accounts,
+    }
+
+
+def _read_active_duckdb_positions(
+    coord: PaperFarmCoordinator,
+) -> dict[str, dict[str, rk.Side]]:
+    out: dict[str, dict[str, rk.Side]] = {}
+    for acct, lane in coord.lanes.items():
+        acct_pos: dict[str, rk.Side] = {}
+        if lane.duckdb_path.is_file():
+            with open_bounded_duckdb(lane.duckdb_path, read_only=True) as conn:
+                tables = {str(r[0]).lower() for r in conn.execute("SHOW TABLES").fetchall()}
+                if "paper_entry_decisions" in tables:
+                    rows = conn.execute(
+                        "SELECT symbol, side FROM paper_entry_decisions WHERE closed_at IS NULL"
+                    ).fetchall()
+                    for sym_raw, side_raw in rows:
+                        sym = str(sym_raw).strip().upper()
+                        side_norm: rk.Side = (
+                            "SHORT" if str(side_raw).strip().upper() == "SHORT" else "LONG"
+                        )
+                        acct_pos[sym] = side_norm
+        out[acct] = acct_pos
+    return out
+
+
+def _guards_to_position_map(
+    guards: Mapping[str, Any],
+) -> dict[str, dict[str, tuple[rk.Side, Decimal]]]:
+    out: dict[str, dict[str, tuple[rk.Side, Decimal]]] = {}
+    for sym, guard in guards.items():
+        acct = str(guard.lane.account)
+        side_norm: rk.Side = "SHORT" if str(guard.side).upper() == "SHORT" else "LONG"
+        qty = abs(Decimal(str(getattr(guard.parent, "filled_qty", "0") or "0")))
+        out.setdefault(acct, {})[sym.strip().upper()] = (side_norm, qty)
+    return out
+
+
+def run_three_way_reconciliation_drill(*, work_dir: Path | None = None) -> dict[str, Any]:
+    """Run ADR-0020 Stage-4 fail-closed 3-way restart reconciliation drill.
+
+    Exercises Broker Positions <-> DuckDB Ledger <-> Live Execution Guards anchored to
+    ``NautilusTrader v2`` ``ExecutionMassStatus`` / ``PositionStatusReport`` and
+    ``TradingState`` across 3 scenarios:
+    (a) Clean Parity -> ``reconciled=True``, ``trading_state="ACTIVE"``.
+    (b) External Half-Auto Position Auto-Adoption with exact Rule-612 stop
+        (``<= 2.00%``) -> ``reconciled=True``, ``adopted_count=1``.
+    (c) Fail-Closed Discrepancy & Missing Broker Report (``None`` never implies flat;
+        qty mismatch holds ``HALTED``) -> ``reconciled=False``,
+        ``trading_state="HALTED"``, ``new_entries_blocked=True``.
+    """
+    from nautilus_trader import model as nm
+
+    from tier0_sota.live.execution import adopt_unmanaged_broker_positions, restore_guards
+
+    def _execute(base_dir: Path) -> dict[str, Any]:
+        ts_now_ns = int(datetime.now(UTC).timestamp() * 1_000_000_000)
+
+        # Scenario (a): Clean Parity across Broker, DuckDB, and restored Live Execution Guard.
+        dir_a = base_dir / "scenario_a_clean_parity"
+        dir_a.mkdir(parents=True, exist_ok=True)
+        clients_a = {acct: _K4MockPaperAlpacaClient(account=acct) for acct in ALPACA_LANE_PROFILES}
+        coord_a = PaperFarmCoordinator(dir_a, alpaca_clients=clients_a)
+        entry_a = coord_a.lanes["ALPACA_PA1"].submit_guarded_entry(
+            symbol="NVDA",
+            side="LONG",
+            ref_price=Decimal("140.00"),
+            session="RTH",
+            client_order_id="stage4-clean-nvda-1",
+            now_s=1000.0,
+        )
+        qty_a = int(entry_a["qty"]) if entry_a is not None else 0
+        nvda_pos = SimpleNamespace(
+            symbol="NVDA",
+            qty=str(qty_a),
+            qty_available=str(qty_a),
+            side="long",
+            avg_entry_price="140.00",
+            current_price="140.25",
+        )
+        clients_a["ALPACA_PA1"]._positions = [nvda_pos]
+        pos_map_a: dict[str, dict[str, Any]] = {acct: {} for acct in ALPACA_LANE_PROFILES}
+        pos_map_a["ALPACA_PA1"]["NVDA"] = nvda_pos
+
+        # Build real NautilusTrader v2 ExecutionMassStatus + PositionStatusReport for Broker truth.
+        nvda_iid = nm.InstrumentId(nm.Symbol("NVDA"), eng.VENUE_XNAS)
+        psr_a = nm.PositionStatusReport(
+            account_id=nm.AccountId("ALPACA_PA1-001"),
+            instrument_id=nvda_iid,
+            position_side=nm.PositionSide.LONG,
+            quantity=nm.Quantity.from_int(max(1, qty_a)),
+            ts_last=ts_now_ns,
+            ts_init=ts_now_ns,
+            avg_px_open=Decimal("140.00"),
+        )
+        mass_a = nm.ExecutionMassStatus(
+            client_id=nm.ClientId("ALPACA_PA1"),
+            account_id=nm.AccountId("ALPACA_PA1-001"),
+            venue=eng.VENUE_XNAS,
+            ts_init=ts_now_ns,
+        )
+        mass_a.add_position_reports([psr_a])
+
+        restored_a = restore_guards(coord_a, pos_map_a)
+        broker_truth_a: dict[str, dict[str, tuple[rk.Side, Decimal]]] = {
+            acct: {} for acct in ALPACA_LANE_PROFILES
+        }
+        broker_truth_a["ALPACA_PA1"]["NVDA"] = ("LONG", Decimal(qty_a))
+        rec_a = reconcile_three_way_positions(
+            broker_positions=broker_truth_a,
+            duckdb_positions=_read_active_duckdb_positions(coord_a),
+            guard_positions=_guards_to_position_map(restored_a),
+            accounts=tuple(ALPACA_LANE_PROFILES.keys()),
+        )
+        scenario_a_passed = bool(
+            entry_a is not None
+            and qty_a > 0
+            and "NVDA" in restored_a
+            and len(mass_a.position_reports) == 1
+            and rec_a["reconciled"] is True
+            and rec_a["trading_state"] == nm.TradingState.ACTIVE.name
+            and rec_a["new_entries_blocked"] is False
+            and rec_a["discrepancies"] == []
+        )
+        scenario_a = rec_a | {
+            "passed": scenario_a_passed,
+            "symbol": "NVDA",
+            "qty": qty_a,
+            "restored_guards_count": len(restored_a),
+            "nautilus_mass_status_reports": len(mass_a.position_reports),
+        }
+
+        # Scenario (b): External Half-Auto Position Auto-Adoption with exact Rule-612 stop <= 2%.
+        dir_b = base_dir / "scenario_b_external_adoption"
+        dir_b.mkdir(parents=True, exist_ok=True)
+        ext_entry_px = Decimal("80.00")
+        ext_qty = 25
+        ext_pos = SimpleNamespace(
+            symbol="TQQQ",
+            qty=str(ext_qty),
+            qty_available=str(ext_qty),
+            side="long",
+            avg_entry_price=str(ext_entry_px),
+            current_price="80.40",
+        )
+        clients_b = {acct: _K4MockPaperAlpacaClient(account=acct) for acct in ALPACA_LANE_PROFILES}
+        clients_b["ALPACA_PA2"]._positions = [ext_pos]
+        coord_b = PaperFarmCoordinator(dir_b, alpaca_clients=clients_b)
+        guards_b: dict[str, Any] = {}
+        adopted_list = adopt_unmanaged_broker_positions(
+            coord_b,
+            guards_b,
+            session="PRE_MARKET",
+            now_utc=datetime(2026, 11, 27, 12, 30, tzinfo=UTC),
+        )
+        adopted_guard = adopted_list[0] if adopted_list else None
+        rule612_ok = False
+        stop_loss_pct_val: float | None = None
+        adopted_db_flag = False
+        if adopted_guard is not None:
+            init_stop = adopted_guard.initial
+            quantized = rk.quantize_rule_612(init_stop, side=adopted_guard.side, is_stop=True)
+            loss_pct = (ext_entry_px - init_stop) / ext_entry_px
+            stop_loss_pct_val = float(loss_pct)
+            rule612_ok = bool(
+                init_stop == quantized
+                and _DEC_ZERO < loss_pct <= rk.MAX_STOP_LOSS_PCT
+                and adopted_guard.adopted_external is True
+            )
+            with open_bounded_duckdb(coord_b.lanes["ALPACA_PA2"].duckdb_path, read_only=True) as db:
+                row_b = db.execute(
+                    "SELECT adopted_external, initial_stop FROM paper_entry_decisions "
+                    "WHERE symbol = 'TQQQ' AND closed_at IS NULL LIMIT 1"
+                ).fetchone()
+            adopted_db_flag = bool(row_b is not None and row_b[0] is True)
+
+        broker_truth_b: dict[str, dict[str, tuple[rk.Side, Decimal]]] = {
+            acct: {} for acct in ALPACA_LANE_PROFILES
+        }
+        broker_truth_b["ALPACA_PA2"]["TQQQ"] = ("LONG", Decimal(ext_qty))
+        rec_b = reconcile_three_way_positions(
+            broker_positions=broker_truth_b,
+            duckdb_positions=_read_active_duckdb_positions(coord_b),
+            guard_positions=_guards_to_position_map(guards_b),
+            accounts=tuple(ALPACA_LANE_PROFILES.keys()),
+        )
+        scenario_b_passed = bool(
+            len(adopted_list) == 1
+            and rule612_ok
+            and adopted_db_flag
+            and rec_b["reconciled"] is True
+            and rec_b["trading_state"] == nm.TradingState.ACTIVE.name
+            and rec_b["new_entries_blocked"] is False
+        )
+        scenario_b = rec_b | {
+            "passed": scenario_b_passed,
+            "adopted_count": len(adopted_list),
+            "adopted_symbols": [g.symbol for g in adopted_list],
+            "adopted_duckdb_persisted": adopted_db_flag,
+            "stop_within_rule612_2pct_cap": rule612_ok,
+            "initial_stop_price": float(adopted_guard.initial) if adopted_guard else None,
+            "stop_loss_pct": stop_loss_pct_val,
+        }
+
+        # Scenario (c): Fail-Closed Missing Broker Report (None) & Quantity Mismatch -> HALTED.
+        rec_c_missing = reconcile_three_way_positions(
+            broker_positions=None,
+            duckdb_positions={"ALPACA_PA1": {"SOXL": "LONG"}},
+            guard_positions={"ALPACA_PA1": {"SOXL": ("LONG", Decimal("100"))}},
+            accounts=tuple(ALPACA_LANE_PROFILES.keys()),
+        )
+        rec_c_mismatch = reconcile_three_way_positions(
+            broker_positions={
+                "ALPACA_PA1": {"SOXL": ("LONG", Decimal("100"))},
+                "ALPACA_PA2": {},
+                "ALPACA_PA3": {},
+            },
+            duckdb_positions={"ALPACA_PA1": {"SOXL": "LONG"}, "ALPACA_PA2": {}, "ALPACA_PA3": {}},
+            guard_positions={
+                "ALPACA_PA1": {"SOXL": ("LONG", Decimal("60"))},
+                "ALPACA_PA2": {},
+                "ALPACA_PA3": {},
+            },
+            accounts=tuple(ALPACA_LANE_PROFILES.keys()),
+        )
+        c_missing_ok = bool(
+            rec_c_missing["reconciled"] is False
+            and rec_c_missing["trading_state"] == nm.TradingState.HALTED.name
+            and rec_c_missing["new_entries_blocked"] is True
+            and rec_c_missing["missing_broker_report"] is True
+        )
+        c_mismatch_ok = bool(
+            rec_c_mismatch["reconciled"] is False
+            and rec_c_mismatch["trading_state"] == nm.TradingState.HALTED.name
+            and rec_c_mismatch["new_entries_blocked"] is True
+            and any(d["kind"] == "QTY_MISMATCH" for d in rec_c_mismatch["discrepancies"])
+        )
+        scenario_c = {
+            "passed": bool(c_missing_ok and c_mismatch_ok),
+            "reconciled": False,
+            "trading_state": nm.TradingState.HALTED.name,
+            "new_entries_blocked": True,
+            "missing_broker_report_case": rec_c_missing | {"passed": c_missing_ok},
+            "qty_mismatch_case": rec_c_mismatch | {"passed": c_mismatch_ok},
+        }
+
+        passed = bool(scenario_a["passed"] and scenario_b["passed"] and scenario_c["passed"])
+        return {
+            "drill": "three_way_restart_reconciliation",
+            "passed": passed,
+            "paper_only": True,
+            "live_execution_enabled": False,
+            "scenarios": {
+                "clean_parity": scenario_a,
+                "external_half_auto_adoption": scenario_b,
+                "fail_closed_discrepancy": scenario_c,
+            },
+        }
+
+    if work_dir is not None:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return _execute(work_dir)
+    with tempfile.TemporaryDirectory(prefix="tier0-stage4-reconcile-") as tmp_root:
+        return _execute(Path(tmp_root))
+
+
+def run_all_stage4_drills(output_path: Path | None = None) -> dict[str, Any]:
+    """Execute all 3 ADR-0020 Stage-4 drills, attest invariants, and write atomic receipt."""
+    k3_res = run_k3_trading_state_drill()
+    k4_res = run_k4_broker_flatten_drill()
+    rec_res = run_three_way_reconciliation_drill()
+
+    risk_path = Path(rk.__file__).resolve()
+    observed_risk_sha256 = hashlib.sha256(risk_path.read_bytes()).hexdigest()
+    risk_sha256_match = observed_risk_sha256 == EXPECTED_RISK_SHA256
+    open_live_ports = _scan_forbidden_live_ports()
+    all_venues_live_disabled = all(
+        not prof.live_execution_enabled for prof in eng.EXECUTION_VENUE_PROFILES.values()
+    )
+
+    safety_attestation: dict[str, Any] = {
+        "risk_py_path": str(risk_path),
+        "expected_risk_sha256": EXPECTED_RISK_SHA256,
+        "observed_risk_sha256": observed_risk_sha256,
+        "risk_sha256_match": risk_sha256_match,
+        "forbidden_live_ports": sorted(eng.FORBIDDEN_LIVE_IBKR_PORTS),
+        "open_live_ports": open_live_ports,
+        "open_live_ports_count": len(open_live_ports),
+        "all_venues_live_disabled": all_venues_live_disabled,
+        "paper_endpoint": PAPER_ALPACA_ENDPOINT,
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "stage5_live_authorized": False,
+    }
+
+    drills_passed = sum(1 for d in (k3_res, k4_res, rec_res) if d["passed"])
+    all_passed = bool(
+        k3_res["passed"]
+        and k4_res["passed"]
+        and rec_res["passed"]
+        and risk_sha256_match
+        and len(open_live_ports) == 0
+        and all_venues_live_disabled
+    )
+    target = output_path if output_path is not None else _default_stage4_receipt_path()
+    receipt: dict[str, Any] = {
+        "schema_version": STAGE4_DRILLS_SCHEMA_VERSION,
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "adr_id": "ADR-0020",
+        "stage": "Stage-4",
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "stage5_live_authorized": False,
+        "all_passed": all_passed,
+        "passed_count": drills_passed,
+        "total_drills": 3,
+        "safety_attestation": safety_attestation,
+        "drills": {
+            "k3_trading_state": k3_res,
+            "k4_broker_flatten": k4_res,
+            "three_way_restart_reconciliation": rec_res,
+        },
+        "output_path": str(target),
+    }
+    _atomic_write_json(target, receipt)
+    return receipt

@@ -105,7 +105,18 @@
         "ibkr_paper_4002",
         "nautilus_trader"
       ]
-    }
+    },
+    "calibrated_category": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "min_trailing_pct": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.2 },
+    "technical_alignment_score": { "type": "number", "minimum": 0, "maximum": 100 },
+    "execution_mechanism": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "auto_reverse_policy": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "r_lock_levels": { "type": "object" },
+    "session_order_presets": {
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    },
+    "momentum_trigger_reason": { "type": "object" }
   },
   "allOf": [
     {

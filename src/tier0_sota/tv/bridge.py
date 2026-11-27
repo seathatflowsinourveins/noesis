@@ -5,16 +5,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
 import time
-from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -68,6 +70,26 @@ _LIVE_VENUE_PROFILES: frozenset[str] = frozenset(
         "ALPACA_LIVE_ELITE_SMART_ROUTER",
     }
 )
+_PAPER_VENUE_PROFILES: frozenset[str] = frozenset(
+    {
+        "IBKR_PAPER_4002",
+        "ALPACA_PAPER_200",
+        "ALPACA_PAPER_1000",
+    }
+)
+_NY_TZ = ZoneInfo("America/New_York")
+_TV_CLIENT_ORDER_RE = re.compile(r"^noesis-tv-([0-9a-f]{16})$", re.IGNORECASE)
+_HEX_ALERT_ID_RE = re.compile(r"^[0-9a-f]{16}$", re.IGNORECASE)
+_ARCHIVE_STALE_AGE_HOURS = 18.0
+_EXECUTED_STATUS_TOKENS: frozenset[str] = frozenset(
+    {"EXECUTED", "FILLED", "SUBMITTED", "CONFIRMED", "CLOSED", "ACTIVE", "ACCEPTED"}
+)
+_SESSION_EXEC_MECHANISM: dict[str, str] = {
+    "RTH": "NATIVE_BROKER_STOP_MARKET_RATCHET",
+    "PRE_MARKET": "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT",
+    "AFTER_HOURS": "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT",
+    "OVERNIGHT": "SYNTHETIC_BOATS_COLLARED_LIMIT",
+}
 _Source = Literal[
     "tradingview_pine_v6",
     "prewall_lake",
@@ -104,6 +126,7 @@ _DUCKDB_ALTER_STMTS: tuple[str, ...] = (
     "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS script_kind VARCHAR",
     "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS order_preset_id VARCHAR",
     "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS venue_profile VARCHAR",
+    "ALTER TABLE tv_staged_presets ADD COLUMN IF NOT EXISTS status VARCHAR",
 )
 _DUCKDB_INSERT_SQL = (
     "INSERT OR REPLACE INTO tv_staged_presets ("
@@ -112,8 +135,8 @@ _DUCKDB_INSERT_SQL = (
     "data_source, source, staged_at_utc, setup_archetype, macro_regime, rvol, "
     "darkpool_trf_ratio, hidden_volume_ratio, vol_buildup_ratio, "
     "unusual_volume_buildup, peak_confirmed, pair_symbol, action_gate, "
-    "reverse_short_mode, script_kind, order_preset_id, venue_profile) VALUES ("
-    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "reverse_short_mode, script_kind, order_preset_id, venue_profile, status) VALUES ("
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -160,6 +183,14 @@ class TvAlertV1(BaseModel):
     script_kind: _ScriptKind | None = None
     order_preset_id: str | None = Field(default=None, min_length=1, max_length=64)
     data_source: _Source | None = None
+    calibrated_category: str | None = Field(default=None, min_length=1, max_length=64)
+    min_trailing_pct: float | None = Field(default=None, gt=0.0, le=0.20)
+    technical_alignment_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    execution_mechanism: str | None = Field(default=None, min_length=1, max_length=64)
+    auto_reverse_policy: str | None = Field(default=None, min_length=1, max_length=64)
+    r_lock_levels: dict[str, Any] | None = None
+    session_order_presets: dict[str, dict[str, Any]] | None = None
+    momentum_trigger_reason: dict[str, Any] | None = None
 
     @field_validator("trigger_price", "stop_price", "natr_pct", "limit_collar_bps", mode="before")
     @classmethod
@@ -174,6 +205,8 @@ class TvAlertV1(BaseModel):
         "darkpool_trf_ratio",
         "hidden_volume_ratio",
         "vol_buildup_ratio",
+        "min_trailing_pct",
+        "technical_alignment_score",
         mode="before",
     )
     @classmethod
@@ -328,6 +361,7 @@ def persist_tv_presets_duckdb(
     *,
     source: str = "tv_bridge",
     meta_by_alert_id: Mapping[str, Mapping[str, Any]] | None = None,
+    status: str | None = None,
 ) -> None:
     """Batch-persist schema-validated semi-auto TV presets (qty=1, semi_auto_confirmed=False)."""
     if not presets:
@@ -347,6 +381,9 @@ def persist_tv_presets_duckdb(
             )
         aid = str(preset["alert_id"])
         meta = (meta_by_alert_id or {}).get(aid) or {}
+        row_status = (
+            _opt_db_str(status or meta.get("status") or preset.get("status")) or "ACTIVE_STAGED"
+        )
         rows.append(
             (
                 aid,
@@ -378,6 +415,7 @@ def persist_tv_presets_duckdb(
                 _opt_db_str(preset.get("script_kind") or meta.get("script_kind")),
                 _opt_db_str(preset.get("order_preset_id") or meta.get("order_preset_id")),
                 _opt_db_str(preset.get("venue_profile") or meta.get("venue_profile")),
+                row_status,
             )
         )
 
@@ -402,14 +440,17 @@ def persist_tv_preset_duckdb(
     *,
     source: str = "tv_bridge",
     meta: Mapping[str, Any] | None = None,
+    status: str | None = None,
 ) -> None:
     """Persist a schema-validated semi-auto TV preset (qty=1, semi_auto_confirmed=False)."""
     meta_map = {str(preset["alert_id"]): meta} if meta and "alert_id" in preset else None
-    persist_tv_presets_duckdb(duckdb_path, [preset], source=source, meta_by_alert_id=meta_map)
+    persist_tv_presets_duckdb(
+        duckdb_path, [preset], source=source, meta_by_alert_id=meta_map, status=status
+    )
 
 
 def sync_tv_audit_duckdb_snapshot(duckdb_path: Path) -> bool:
-    """Idempotently migrate an existing TV audit DuckDB to 29 cols and export Parquet snapshot."""
+    """Idempotently migrate an existing TV audit DuckDB to 30 cols and export Parquet snapshot."""
     if not duckdb_path.is_file():
         return False
     from tier0_sota.live.paper_farm import open_bounded_duckdb
@@ -431,6 +472,7 @@ def load_tv_audit_summary(duckdb_path: Path) -> dict[str, Any]:
     empty: dict[str, Any] = {
         "audit_rows": 0,
         "by_source": {},
+        "by_status": {},
         "distinct_symbols": [],
         "parquet_snapshot_present": duckdb_path.with_name("tv_staged_presets.parquet").is_file(),
     }
@@ -443,6 +485,7 @@ def load_tv_audit_summary(duckdb_path: Path) -> dict[str, Any]:
             tables = {str(r[0]) for r in conn.execute("SHOW TABLES").fetchall()}
             if "tv_staged_presets" not in tables:
                 return empty
+            col_names = {str(r[0]) for r in conn.execute("DESCRIBE tv_staged_presets").fetchall()}
             total_row = conn.execute(
                 "SELECT COUNT(DISTINCT alert_id) FROM tv_staged_presets"
             ).fetchone()
@@ -450,6 +493,14 @@ def load_tv_audit_summary(duckdb_path: Path) -> dict[str, Any]:
                 "SELECT COALESCE(source, 'unknown'), COUNT(DISTINCT alert_id) "
                 "FROM tv_staged_presets GROUP BY 1 ORDER BY 1"
             ).fetchall()
+            by_status_rows = (
+                conn.execute(
+                    "SELECT COALESCE(status, 'ACTIVE_STAGED'), COUNT(DISTINCT alert_id) "
+                    "FROM tv_staged_presets GROUP BY 1 ORDER BY 1"
+                ).fetchall()
+                if "status" in col_names
+                else []
+            )
             sym_rows = conn.execute(
                 "SELECT DISTINCT symbol FROM tv_staged_presets "
                 "WHERE symbol IS NOT NULL ORDER BY symbol"
@@ -459,8 +510,349 @@ def load_tv_audit_summary(duckdb_path: Path) -> dict[str, Any]:
     return {
         "audit_rows": int(total_row[0]) if total_row and total_row[0] is not None else 0,
         "by_source": {str(src): int(cnt) for src, cnt in by_src_rows},
+        "by_status": {str(st): int(cnt) for st, cnt in by_status_rows},
         "distinct_symbols": [str(r[0]) for r in sym_rows],
         "parquet_snapshot_present": duckdb_path.with_name("tv_staged_presets.parquet").is_file(),
+    }
+
+
+def _resolve_default_paper_venue_profile(venue: str) -> str:
+    vu = venue.strip().upper()
+    if vu == "IBKR":
+        return "IBKR_PAPER_4002"
+    from tier0_sota.live.paper_farm import resolve_alpaca_paper_venue_profile
+
+    return resolve_alpaca_paper_venue_profile()[0]
+
+
+def _build_staged_session_order_presets(
+    *,
+    symbol: str,
+    side: _risk.Side,
+    ref_price: Decimal,
+    natr_pct: Decimal,
+    venue_profile: str,
+    wl_entry: Mapping[str, Any] | None = None,
+    min_trailing_pct: float | None = None,
+    pair_symbol: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build 4-session 24/5 lossless trailing order presets via upstream paper_farm SSOT."""
+    from tier0_sota.live.paper_farm import build_symbol_24x5_session_presets
+
+    spread_bps = (wl_entry or {}).get("spread_bps")
+    cal_trail = (
+        min_trailing_pct
+        if min_trailing_pct is not None
+        else _opt_db_float((wl_entry or {}).get("min_trailing_pct"))
+    )
+    alp_vp = venue_profile if venue_profile in {"ALPACA_PAPER_200", "ALPACA_PAPER_1000"} else None
+    alp_rpm = (
+        1000 if alp_vp == "ALPACA_PAPER_1000" else (200 if alp_vp == "ALPACA_PAPER_200" else None)
+    )
+    return build_symbol_24x5_session_presets(
+        symbol=symbol,
+        side=side,
+        ref_price=ref_price,
+        natr_pct=natr_pct,
+        spread_bps=spread_bps,
+        calibrated_min_trailing_pct=cal_trail,
+        alpaca_venue_profile=alp_vp,
+        alpaca_max_rpm=alp_rpm,
+        inverse_hedge_symbol=pair_symbol,
+    )
+
+
+def _extract_tv_alert_id_from_token(token: Any) -> str | None:
+    if not isinstance(token, str):
+        return None
+    s = token.strip()
+    if not s:
+        return None
+    m = _TV_CLIENT_ORDER_RE.match(s)
+    if m:
+        return m.group(1).lower()
+    return None
+
+
+def _collect_executed_tv_alert_ids(manifest_dir: Path) -> set[str]:
+    """Collect alert_ids already submitted/filled across Paper Farm status JSON & DuckDB ledgers."""
+    executed: set[str] = set()
+    if not manifest_dir.is_dir():
+        return executed
+
+    exec_status_path = manifest_dir / "paper_farm_execution_status.json"
+    if exec_status_path.is_file():
+        try:
+            doc = json.loads(exec_status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            doc = None
+        if isinstance(doc, Mapping):
+            for key in (
+                "active_positions",
+                "recent_orders",
+                "orders",
+                "executed_alerts",
+                "closed_positions",
+            ):
+                bucket = doc.get(key)
+                rows: list[Any] = []
+                if isinstance(bucket, Sequence) and not isinstance(bucket, (str, bytes)):
+                    rows = list(bucket)
+                elif isinstance(bucket, Mapping):
+                    rows = list(bucket.values())
+                for item in rows:
+                    if isinstance(item, str):
+                        aid = _extract_tv_alert_id_from_token(item)
+                        if aid:
+                            executed.add(aid)
+                        elif _HEX_ALERT_ID_RE.match(item.strip()):
+                            executed.add(item.strip().lower())
+                        continue
+                    if not isinstance(item, Mapping):
+                        continue
+                    for cid_key in ("client_order_id", "broker_order_id", "order_id"):
+                        aid = _extract_tv_alert_id_from_token(item.get(cid_key))
+                        if aid:
+                            executed.add(aid)
+                    raw_aid = item.get("alert_id")
+                    if isinstance(raw_aid, str) and _HEX_ALERT_ID_RE.match(raw_aid.strip()):
+                        st = str(item.get("status") or item.get("state") or "").strip().upper()
+                        if not st or st in _EXECUTED_STATUS_TOKENS or key == "active_positions":
+                            executed.add(raw_aid.strip().lower())
+
+    from tier0_sota.live.paper_farm import open_bounded_duckdb
+
+    for db_path in sorted(manifest_dir.glob("*.duckdb")):
+        if db_path.name == "tv_half_auto_audit.duckdb":
+            continue
+        try:
+            with open_bounded_duckdb(db_path, read_only=True) as conn:
+                tables = {str(r[0]) for r in conn.execute("SHOW TABLES").fetchall()}
+                if "paper_entry_decisions" in tables:
+                    for (cid,) in conn.execute(
+                        "SELECT DISTINCT client_order_id FROM paper_entry_decisions "
+                        "WHERE client_order_id LIKE 'noesis-tv-%'"
+                    ).fetchall():
+                        aid = _extract_tv_alert_id_from_token(cid)
+                        if aid:
+                            executed.add(aid)
+                if "paper_wire_orders" in tables:
+                    wire_cols = {
+                        str(r[0]) for r in conn.execute("DESCRIBE paper_wire_orders").fetchall()
+                    }
+                    if "client_order_id" in wire_cols:
+                        for (cid,) in conn.execute(
+                            "SELECT DISTINCT client_order_id FROM paper_wire_orders "
+                            "WHERE client_order_id LIKE 'noesis-tv-%'"
+                        ).fetchall():
+                            aid = _extract_tv_alert_id_from_token(cid)
+                            if aid:
+                                executed.add(aid)
+        except Exception as exc:
+            # Live supervisor/runner may hold a write lock on its primary DuckDB; skip gracefully.
+            logging.getLogger(__name__).debug("Skipping locked DuckDB %s: %s", db_path.name, exc)
+            continue
+    return executed
+
+
+def _parse_iso_utc(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+    return dt.astimezone(UTC) if dt.tzinfo is not None else None
+
+
+def prune_and_archive_staged_presets(
+    *,
+    staged_path: Path = DEFAULT_PACK_STAGED_PATH,
+    manifest_dir: Path | None = None,
+    duckdb_path: Path | None = None,
+    now_utc: datetime | None = None,
+    active_session: str | None = None,
+    max_age_ms: int | None = None,
+    executed_alert_ids: Iterable[str] | None = None,
+    always_write: bool = False,
+) -> dict[str, Any]:
+    """Prune expired, legacy, and already-executed presets from staged_tv_presets.json.
+
+    Archives pruned rows into tv_half_auto_audit.duckdb with explicit status:
+      - EXECUTED_ARCHIVED: alert already submitted/filled in Paper Farm ledgers
+      - LEGACY_PRUNED: missing or non-paper venue_profile (or invalid qty/confirmation)
+      - EXPIRED_SESSION: cross-session alert or stale age beyond current trading day/window
+    """
+    eff_manifest_dir = (
+        manifest_dir
+        if manifest_dir is not None
+        else (
+            staged_path.parent.parent
+            if staged_path.parent.name == "tv_sota_pack"
+            else staged_path.parent
+        )
+    )
+    eff_duckdb = (
+        duckdb_path if duckdb_path is not None else _resolve_tv_audit_duckdb_path(staged_path)
+    )
+    ts_now = (now_utc or datetime.now(UTC)).astimezone(UTC)
+    now_ms = int(ts_now.timestamp() * 1000)
+    cur_sess = (
+        active_session.strip().upper()
+        if isinstance(active_session, str) and active_session.strip()
+        else _eng.classify_us_equity_session_et(now_ms * 1_000_000)
+    )
+
+    pruned_counts: dict[str, int] = {
+        "EXPIRED_SESSION": 0,
+        "EXECUTED_ARCHIVED": 0,
+        "LEGACY_PRUNED": 0,
+    }
+    if not staged_path.is_file():
+        return {
+            "ok": True,
+            "staged_path": str(staged_path),
+            "duckdb_path": str(eff_duckdb),
+            "active_session": cur_sess,
+            "kept_count": 0,
+            "archived_count": 0,
+            "pruned_counts": pruned_counts,
+            "archived_alert_ids": [],
+            "kept_alert_ids": [],
+            "paper_only": True,
+            "semi_auto_confirmed": False,
+            "live_execution_enabled": False,
+        }
+
+    try:
+        raw_doc = json.loads(staged_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unable to read staged presets manifest {staged_path}: {exc}") from exc
+    raw_presets = raw_doc.get("presets", []) if isinstance(raw_doc, Mapping) else []
+    exec_ids = _collect_executed_tv_alert_ids(eff_manifest_dir)
+    if executed_alert_ids is not None:
+        for tok in executed_alert_ids:
+            if not isinstance(tok, str) or not tok.strip():
+                continue
+            extracted = _extract_tv_alert_id_from_token(tok)
+            exec_ids.add(extracted or tok.strip().lower())
+
+    kept: list[dict[str, Any]] = []
+    archived_records: list[tuple[dict[str, Any], str]] = []
+    archived_summary: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+
+    for raw_item in raw_presets:
+        if not isinstance(raw_item, Mapping):
+            continue
+        item = dict(raw_item)
+        aid = str(item.get("alert_id") or "").strip()
+        aid_low = aid.lower()
+        sym = str(item.get("symbol") or "").strip().upper()
+        if aid_low and aid_low in seen_ids:
+            continue
+        if aid_low:
+            seen_ids.add(aid_low)
+
+        vp = str(item.get("venue_profile") or "").strip().upper()
+        row_sess = str(item.get("session") or "").strip().upper()
+        row_qty = item.get("qty")
+        row_confirmed = item.get("semi_auto_confirmed")
+        row_ts_ms = _opt_db_int(item.get("ts_utc_ms"))
+        staged_dt = _parse_iso_utc(item.get("staged_at_utc"))
+
+        archive_status: str | None = None
+        if aid_low and aid_low in exec_ids:
+            archive_status = "EXECUTED_ARCHIVED"
+        elif (
+            not vp
+            or vp not in _PAPER_VENUE_PROFILES
+            or row_confirmed is not False
+            or type(row_qty) is not int
+            or row_qty != 1
+        ):
+            archive_status = "LEGACY_PRUNED"
+        elif (
+            (cur_sess != "CLOSED" and row_sess != cur_sess)
+            or (
+                max_age_ms is not None and row_ts_ms is not None and now_ms - row_ts_ms > max_age_ms
+            )
+            or (
+                staged_dt is not None
+                and ts_now - staged_dt > timedelta(hours=_ARCHIVE_STALE_AGE_HOURS)
+            )
+        ):
+            archive_status = "EXPIRED_SESSION"
+
+        if archive_status is not None:
+            pruned_counts[archive_status] += 1
+            archived_records.append((item, archive_status))
+            archived_summary.append({"alert_id": aid, "symbol": sym, "status": archive_status})
+        else:
+            kept.append(item)
+
+    safe_to_archive: list[dict[str, Any]] = []
+    archive_meta: dict[str, dict[str, Any]] = {}
+    for rec, st in archived_records:
+        aid = str(rec.get("alert_id") or "").strip()
+        if not aid or not rec.get("symbol") or not rec.get("side") or not rec.get("session"):
+            continue
+        if (
+            rec.get("semi_auto_confirmed") is not False
+            or type(rec.get("qty")) is not int
+            or rec.get("qty") != 1
+        ):
+            continue
+        try:
+            refuse_live_endpoints(rec)
+        except ValueError:
+            continue
+        safe_to_archive.append(rec)
+        archive_meta[aid] = {
+            "status": st,
+            "venue_profile": rec.get("venue_profile"),
+            "archetype": rec.get("setup_archetype"),
+            "pair_symbol": rec.get("pair_symbol"),
+            "script_kind": rec.get("script_kind"),
+            "order_preset_id": rec.get("order_preset_id"),
+        }
+    if safe_to_archive:
+        persist_tv_presets_duckdb(
+            eff_duckdb,
+            safe_to_archive,
+            source="tv_bridge_prune",
+            meta_by_alert_id=archive_meta,
+        )
+
+    if archived_records or always_write:
+        _atomic_write_json(
+            staged_path,
+            {
+                "schema_version": "tier0.staged-tv-presets.v1",
+                "updated_at_utc": ts_now.isoformat(),
+                "last_pruned_at_utc": ts_now.isoformat(),
+                "active_session": cur_sess,
+                "paper_only": True,
+                "semi_auto_confirmed": False,
+                "live_execution_enabled": False,
+                "pruned_counts": pruned_counts,
+                "presets": kept,
+            },
+        )
+
+    return {
+        "ok": True,
+        "staged_path": str(staged_path),
+        "duckdb_path": str(eff_duckdb),
+        "active_session": cur_sess,
+        "kept_count": len(kept),
+        "archived_count": len(archived_records),
+        "pruned_counts": pruned_counts,
+        "archived_alert_ids": archived_summary,
+        "kept_alert_ids": [str(p.get("alert_id") or "") for p in kept],
+        "paper_only": True,
+        "semi_auto_confirmed": False,
+        "live_execution_enabled": False,
     }
 
 
@@ -528,6 +920,75 @@ def validate_tv_alert_payload(
     if live_intake:
         _check_live_intake(m, vu, time.time_ns() // 1_000_000, prof, wl_entry)
 
+    resolved_vp = m.venue_profile or _resolve_default_paper_venue_profile(vu)
+    session_presets = _build_staged_session_order_presets(
+        symbol=m.symbol,
+        side=route_side,
+        ref_price=m.trigger_price,
+        natr_pct=m.natr_pct,
+        venue_profile=resolved_vp,
+        wl_entry=wl_entry,
+        min_trailing_pct=m.min_trailing_pct,
+        pair_symbol=m.pair_symbol,
+    )
+    active_sp = session_presets[m.session]
+    eff_min_trail = round(
+        float(
+            m.min_trailing_pct if m.min_trailing_pct is not None else active_sp["min_trailing_pct"]
+        ),
+        6,
+    )
+    r_locks: dict[str, Any] = {
+        "be_plus_fee_price": active_sp["be_plus_fee_price"],
+        "lock_at_1r": active_sp["lock_at_1r"],
+        "lock_at_2r": active_sp["lock_at_2r"],
+        "lock_at_3r": active_sp["lock_at_3r"],
+        "fast_sell_non_noise_reverse_trigger": active_sp["fast_sell_non_noise_reverse_trigger"],
+    }
+    cal_cat = (
+        m.calibrated_category
+        or _opt_db_str((wl_entry or {}).get("calibrated_category"))
+        or _opt_db_str((wl_entry or {}).get("potential_category"))
+        or m.setup_archetype
+    )
+    ta_score = (
+        m.technical_alignment_score
+        if m.technical_alignment_score is not None
+        else _opt_db_float((wl_entry or {}).get("technical_alignment_score"))
+    )
+    if ta_score is not None and not (0.0 <= ta_score <= 100.0):
+        ta_score = None
+    eff_rvol = (
+        m.rvol
+        if m.rvol is not None
+        else _opt_db_float(
+            (wl_entry or {}).get("rvol_normalized")
+            if (wl_entry or {}).get("rvol_normalized") is not None
+            else (wl_entry or {}).get("rvol")
+        )
+    )
+    eff_trf = (
+        m.darkpool_trf_ratio
+        if m.darkpool_trf_ratio is not None
+        else _opt_db_float((wl_entry or {}).get("darkpool_trf_ratio"))
+    )
+    reason_raw: dict[str, Any] = {
+        k: v
+        for k, v in (
+            ("calibrated_category", cal_cat),
+            ("setup_archetype", m.setup_archetype),
+            ("rvol", round(eff_rvol, 3) if eff_rvol is not None else None),
+            (
+                "darkpool_trf_ratio",
+                round(eff_trf, 4) if eff_trf is not None and 0.0 <= eff_trf <= 1.0 else None,
+            ),
+            ("technical_alignment_score", round(ta_score, 2) if ta_score is not None else None),
+        )
+        if v is not None
+    }
+    if m.momentum_trigger_reason:
+        reason_raw = {**m.momentum_trigger_reason, **reason_raw}
+
     trig_norm = Decimal(str(float(m.trigger_price)))
     digest_src = (
         f"{m.symbol}:{m.ts_utc_ms}:{m.side}:{m.session}:{trig_norm}:{q_stop}:{m.trailing_schedule}"
@@ -541,6 +1002,7 @@ def validate_tv_alert_payload(
         "side": m.side,
         "qty": 1,
         "venue": vu,
+        "venue_profile": resolved_vp,
         "session": m.session,
         "order_type": m.order_type,
         "trigger_price": float(m.trigger_price),
@@ -557,6 +1019,13 @@ def validate_tv_alert_payload(
         "strategy_id": m.strategy_id,
         "semi_auto_confirmed": False,
         "staged_at_utc": datetime.now(UTC).isoformat(),
+        "min_trailing_pct": eff_min_trail,
+        "execution_mechanism": _SESSION_EXEC_MECHANISM.get(
+            m.session, "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"
+        ),
+        "auto_reverse_policy": m.auto_reverse_policy or "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE",
+        "r_lock_levels": r_locks,
+        "session_order_presets": session_presets,
     }
     optional_fields: tuple[tuple[str, Any], ...] = (
         ("data_source", m.data_source),
@@ -574,7 +1043,9 @@ def validate_tv_alert_payload(
         ("easy_to_borrow", m.easy_to_borrow),
         ("script_kind", m.script_kind),
         ("order_preset_id", m.order_preset_id),
-        ("venue_profile", m.venue_profile),
+        ("calibrated_category", cal_cat),
+        ("technical_alignment_score", round(ta_score, 2) if ta_score is not None else None),
+        ("momentum_trigger_reason", reason_raw or None),
     )
     for key, val in optional_fields:
         if val is not None:
@@ -590,11 +1061,16 @@ def stage_tv_alert_preset(
     venue: str = "IBKR",
     live_intake: bool = False,
 ) -> dict[str, Any]:
-    """Validate, deduplicate by alert_id, and atomically stage a semi-auto preset."""
+    """Validate, prune stale/executed on live intake, deduplicate, and atomically stage preset."""
     wl_data = _load_watchlist_manifest(watchlist_path)
     preset = validate_tv_alert_payload(
         payload, watchlist_manifest=wl_data, venue=venue, live_intake=live_intake
     )
+    if live_intake and staged_path.is_file():
+        prune_and_archive_staged_presets(
+            staged_path=staged_path,
+            now_utc=datetime.fromtimestamp(time.time_ns() / 1_000_000_000, tz=UTC),
+        )
     existing = (
         json.loads(staged_path.read_text(encoding="utf-8"))
         if staged_path.is_file()
@@ -607,11 +1083,18 @@ def stage_tv_alert_preset(
         {
             "schema_version": "tier0.staged-tv-presets.v1",
             "updated_at_utc": datetime.now(UTC).isoformat(),
+            "paper_only": True,
             "semi_auto_confirmed": False,
+            "live_execution_enabled": False,
             "presets": list(by_id.values()),
         },
     )
-    persist_tv_preset_duckdb(_resolve_tv_audit_duckdb_path(staged_path), preset, source="tv_bridge")
+    persist_tv_preset_duckdb(
+        _resolve_tv_audit_duckdb_path(staged_path),
+        preset,
+        source="tv_bridge",
+        status="ACTIVE_STAGED",
+    )
     return preset
 
 
@@ -639,16 +1122,30 @@ def ingest_alerts_file(
 
 
 def main() -> None:
-    """CLI entrypoint for validating and staging TradingView alert JSON."""
+    """CLI entrypoint for validating, staging, and pruning TradingView alert JSON."""
     p = argparse.ArgumentParser(description="Tier-0 TradingView semi-auto alert bridge")
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--ingest-file", type=Path)
     src.add_argument("--ingest-stdin", action="store_true")
+    src.add_argument(
+        "--prune-stale",
+        action="store_true",
+        help="Prune expired/legacy/executed alerts from staged_tv_presets.json into DuckDB audit.",
+    )
     p.add_argument("--staged-path", type=Path, default=DEFAULT_PACK_STAGED_PATH)
     p.add_argument("--watchlist-path", type=Path, default=DEFAULT_WATCHLIST_PATH)
+    p.add_argument("--manifest-dir", type=Path, default=None)
     p.add_argument("--venue", default="IBKR")
     p.add_argument("--live-intake", action="store_true")
     a = p.parse_args()
+    if a.prune_stale:
+        res = prune_and_archive_staged_presets(
+            staged_path=a.staged_path,
+            manifest_dir=a.manifest_dir,
+            always_write=True,
+        )
+        print(json.dumps(res, indent=2))
+        return
     if a.ingest_stdin:
         raw = json.loads(sys.stdin.read())
         items = raw if isinstance(raw, list) else [raw]

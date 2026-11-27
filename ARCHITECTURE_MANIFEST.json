@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 161,
+    "repository_files_count": 182,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -171,9 +171,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 27,
+    "total_adrs": 28,
     "counts_by_status": {
-      "accepted": 23,
+      "accepted": 24,
       "superseded": 4
     },
     "supersession_edges": [
@@ -218,7 +218,8 @@
         "ADR-0010",
         "ADR-0013",
         "ADR-0026",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L10": [
         "ADR-0001",
@@ -227,40 +228,47 @@
         "ADR-0011",
         "ADR-0017",
         "ADR-0021",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L11": [
         "ADR-0013",
-        "ADR-0018"
+        "ADR-0018",
+        "ADR-0028"
       ],
       "L12": [
         "ADR-0014",
         "ADR-0015",
-        "ADR-0018"
+        "ADR-0018",
+        "ADR-0028"
       ],
       "L13": [
         "ADR-0015",
         "ADR-0016",
-        "ADR-0018"
+        "ADR-0018",
+        "ADR-0028"
       ],
       "L14": [
         "ADR-0017",
         "ADR-0018",
         "ADR-0020",
-        "ADR-0021"
+        "ADR-0021",
+        "ADR-0028"
       ],
       "L15": [
         "ADR-0016",
         "ADR-0018",
         "ADR-0020",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L2": [
         "ADR-0001",
         "ADR-0008",
         "ADR-0014",
         "ADR-0015",
-        "ADR-0026"
+        "ADR-0026",
+        "ADR-0028"
       ],
       "L3": [
         "ADR-0001",
@@ -293,7 +301,8 @@
         "ADR-0019",
         "ADR-0020",
         "ADR-0025",
-        "ADR-0026"
+        "ADR-0026",
+        "ADR-0028"
       ],
       "L6": [
         "ADR-0001",
@@ -306,7 +315,8 @@
         "ADR-0021",
         "ADR-0024",
         "ADR-0026",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L7": [
         "ADR-0001",
@@ -318,7 +328,8 @@
         "ADR-0023",
         "ADR-0024",
         "ADR-0025",
-        "ADR-0026"
+        "ADR-0026",
+        "ADR-0028"
       ],
       "L8": [
         "ADR-0001",
@@ -340,9 +351,9 @@
         "ADR-0027"
       ]
     },
-    "fitness_bound_accepted_ratio": "23/23",
+    "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "ccb8cf9e66b4d5f9a770a38e92e116e8e8c3a3e8893a865fd02eec890999bc32"
+    "corpus_sha256": "945bcf1013304e7f9a06ac927ba41d7dce3ef628222adc333e138bbb1f96ba6c"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -353,8 +364,8 @@
     "src_files_mapped_ratio": "15/15",
     "zero_paper_winners_audit": {
       "ok": true,
-      "checked_default_packages": 45,
-      "imported_packages_count": 35,
+      "checked_default_packages": 49,
+      "imported_packages_count": 39,
       "cli_mcp_portal_mapped": [
         "ast-grep-cli",
         "dagster-webserver",
@@ -412,7 +423,8 @@
         "pydantic",
         "exchange_calendars",
         "edgartools",
-        "fredapi"
+        "fredapi",
+        "sqlglot"
       ],
       "rejected_overlaps": [
         "pandas-datareader",
@@ -434,7 +446,9 @@
         "stumpy-dev/stumpy",
         "lightgbm",
         "catboost",
-        "shap"
+        "shap",
+        "skchange",
+        "shapiq"
       ],
       "rejected_overlaps": [
         "ta-lib",
@@ -480,6 +494,9 @@
       "rejected_overlaps": [
         "custom-rest-polling-loops",
         "raw-unfiltered-alpaca-mcp-server",
+        "alpaca-trade-api-legacy",
+        "pylivetrader",
+        "alpaca-backtrader-api",
         "nautilus-alpaca",
         "tradingview-screener",
         "tvdatafeed",
@@ -507,7 +524,8 @@
         "ml4t-diagnostic",
         "arch",
         "statsmodels",
-        "clarabel"
+        "clarabel",
+        "mapie"
       ],
       "rejected_overlaps": [
         "pyportfolioopt",
@@ -566,6 +584,8 @@
         "docker/alertmanager.yml",
         "docker/dagster.yaml",
         "docker/workspace.yaml",
+        "docker/grafana/dashboards/tier0-workstation-telemetry.json",
+        "docker/grafana/dashboards/tier0-order-presets-momentum.json",
         "docs/adr/ADR-0001.md",
         "docs/adr/ADR-0002.md",
         "docs/adr/ADR-0003.md",
@@ -592,7 +612,8 @@
         "docs/adr/ADR-0024.md",
         "docs/adr/ADR-0025.md",
         "docs/adr/ADR-0026.md",
-        "docs/adr/ADR-0027.md"
+        "docs/adr/ADR-0027.md",
+        "docs/adr/ADR-0028.md"
       ]
     },
     "L7": {
@@ -640,6 +661,7 @@
         ".gitleaks.toml",
         ".pre-commit-config.yaml",
         "evals/formal_risk_z3.py",
+        "evals/symbolic_risk_crosshair.py",
         "scripts/sync_manifest.py",
         "scripts/check.ps1",
         "scripts/check.sh",
@@ -651,7 +673,10 @@
         "tests/test_architecture_manifest.py",
         "tests/test_grand_reset_kit.py",
         "tests/test_formal_and_evals.py",
-        "scripts/run_compounding_reflection.py"
+        "tests/test_starred_frontier_landscape.py",
+        "tests/test_stage4_drills.py",
+        "scripts/run_compounding_reflection.py",
+        "scripts/run_stage4_drills.py"
       ]
     },
     "L8": {
@@ -731,6 +756,7 @@
       "name": "Institutional UI & Visual Analytics",
       "winners": [
         "finos-workspace",
+        "finos-workspace-plugins",
         "OpenBB",
         "perspective",
         "lightweight-charts",
@@ -782,6 +808,8 @@
     "mcp_server": "scripts/nautilus_mcp_server.py",
     "orca_account_failover": "scripts/orca_account_failover.py",
     "formal_risk_z3": "evals/formal_risk_z3.py",
+    "symbolic_risk_crosshair": "evals/symbolic_risk_crosshair.py",
+    "stage4_drills": "scripts/run_stage4_drills.py",
     "inspect_safety_eval": "evals/tier0_inspect_eval.py",
     "grand_reset_00": "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
     "grand_reset_01": "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
@@ -847,15 +875,23 @@
     "docker/Dockerfile.sandbox",
     "docker/Dockerfile.xerj",
     "docker/alertmanager.yml",
+    "docker/compose.ibkr-paper.yml",
     "docker/compose.sota.yml",
     "docker/dagster.yaml",
     "docker/duckdb-ui/paper-farm.conf",
+    "docker/grafana/dashboards/tier0-order-presets-momentum.json",
     "docker/grafana/dashboards/tier0-sota-observability.json",
+    "docker/grafana/dashboards/tier0-workstation-telemetry.json",
     "docker/grafana/provisioning/dashboards/provider.yml",
     "docker/grafana/provisioning/datasources/prometheus.yml",
     "docker/otel-collector-config.yaml",
     "docker/prometheus.yml",
     "docker/prometheus_rules.yml",
+    "docker/systemd/tier0-compounding-loop.service",
+    "docker/systemd/tier0-compounding-loop.timer",
+    "docker/systemd/tier0-paper-farm-execution.service",
+    "docker/systemd/tier0-workstation-sota-guard.service",
+    "docker/systemd/tier0-workstation-sota-guard.timer",
     "docker/workspace.yaml",
     "docs/ARCHITECTURE_LAYER_MANIFEST.md",
     "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
@@ -890,11 +926,14 @@
     "docs/adr/ADR-0025.md",
     "docs/adr/ADR-0026.md",
     "docs/adr/ADR-0027.md",
+    "docs/adr/ADR-0028.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
     "evals/dspy_self_reflect.py",
     "evals/formal_risk_z3.py",
+    "evals/prewall_h109_multifeed_prereg.json",
+    "evals/symbolic_risk_crosshair.py",
     "evals/tier0_inspect_eval.py",
     "fnox.toml",
     "justfile",
@@ -925,7 +964,11 @@
     "scripts/preflight_resume.ps1",
     "scripts/preflight_resume.sh",
     "scripts/run_compounding_reflection.py",
+    "scripts/run_early_mover_compounding.py",
+    "scripts/run_h109_prewall_study.py",
     "scripts/run_live_paper_farm.ps1",
+    "scripts/run_nonstop_compounding_loop.py",
+    "scripts/run_stage4_drills.py",
     "scripts/setup_clean_ecosystem.ps1",
     "scripts/sync_manifest.py",
     "scripts/tv_console.ps1",
@@ -950,10 +993,16 @@
     "tests/test_architecture_manifest.py",
     "tests/test_core_engine.py",
     "tests/test_definitions.py",
+    "tests/test_early_mover_compounding.py",
+    "tests/test_extreme_mover_calibration.py",
     "tests/test_formal_and_evals.py",
     "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",
     "tests/test_mcp_server.py",
+    "tests/test_nonstop_compounding_loop.py",
+    "tests/test_prewall_h109.py",
+    "tests/test_stage4_drills.py",
+    "tests/test_starred_frontier_landscape.py",
     "tests/test_tv_automation.py",
     "upstream-map.toml",
     "uv.lock",

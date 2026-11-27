@@ -1,0 +1,203 @@
+{
+  "uid": "tier0-order-presets-momentum",
+  "title": "Tier-0 SOTA — 24/5 Order Presets, Positions & Momentum Alerts",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Combined 4-Account Paper Equity (PA1..PA3 + IBKR)",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "tier0_paper_farm_combined_equity_usd",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Active 24/5 Trailed Positions",
+      "gridPos": {"h": 6, "w": 4, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "max(tier0_paper_farm_active_trailed_positions)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Momentum Ignition Leaders",
+      "gridPos": {"h": 6, "w": 5, "x": 10, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "max(tier0_momentum_ignition_count)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Parabolic Climax Reversal Armed",
+      "gridPos": {"h": 6, "w": 5, "x": 15, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "max(tier0_momentum_climax_reversal_count) + max(tier0_paper_farm_peak_reverse_armed_count)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Staged Alerts (Active / Stale)",
+      "gridPos": {"h": 6, "w": 4, "x": 20, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "max(tier0_staged_alert_active_count)",
+          "legendFormat": "Active",
+          "refId": "A"
+        },
+        {
+          "expr": "max(tier0_staged_alert_stale_count)",
+          "legendFormat": "Stale",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "Live 4-Account Paper Farm Equity (USD)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "tier0_paper_farm_equity_usd_USD{account!=\"\"}",
+          "legendFormat": "{{account}} ({{lane_id}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Active 24/5 Trailed Positions — Profit-Lock Tier & Fast-Sell Armed",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "tier0_position_profit_lock_tier or vector(0)",
+          "legendFormat": "Lock Tier {{symbol}} ({{account}} / {{session}} / {{order_mode}})",
+          "refId": "A"
+        },
+        {
+          "expr": "tier0_position_fast_sell_armed or vector(0)",
+          "legendFormat": "Fast-Sell Armed {{symbol}} ({{account}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "Top SOTA Momentum Leader Scores (Calibrated Category)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "topk(10, tier0_momentum_top_score)",
+          "legendFormat": "{{symbol}} [{{calibrated_category}} | {{session}}]",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Momentum Leader RVOL & FINRA TRF Darkpool Ratio",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "topk(8, tier0_momentum_rvol)",
+          "legendFormat": "RVOL {{symbol}} ({{session}})",
+          "refId": "A"
+        },
+        {
+          "expr": "topk(8, tier0_momentum_darkpool_trf_ratio)",
+          "legendFormat": "TRF Ratio {{symbol}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Venue Order Handles Capacity (ALPACA_PAPER_1000 & IBKR_PAPER_4002)",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 22},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "tier0_venue_order_handle_max_rpm",
+          "legendFormat": "Max RPM ({{venue_profile}})",
+          "refId": "A"
+        },
+        {
+          "expr": "tier0_venue_order_handle_exit_reserve_rpm",
+          "legendFormat": "Exit Reserve RPM ({{venue_profile}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Staged Alert Hygiene & 24/5 Off-Hours Protection",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 22},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "targets": [
+        {
+          "expr": "tier0_staged_alert_active_count",
+          "legendFormat": "Active Staged Alerts",
+          "refId": "A"
+        },
+        {
+          "expr": "tier0_staged_alert_stale_count",
+          "legendFormat": "Stale Staged Alerts",
+          "refId": "B"
+        },
+        {
+          "expr": "tier0_paper_farm_extended_hours_protected_ratio{scope=\"combined\"}",
+          "legendFormat": "24/5 Ext-Hours Protected Ratio",
+          "refId": "C"
+        },
+        {
+          "expr": "tier0_tv_engine_coordination_ready_count",
+          "legendFormat": "Ready for Confirm",
+          "refId": "D"
+        }
+      ]
+    }
+  ]
+}

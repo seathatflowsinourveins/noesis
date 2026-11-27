@@ -105,6 +105,43 @@ tv_presets() {
   cat "$cards"
 }
 
+tv_layout() {
+  local quick="${TIER0_PACK_DIR}/TV_LAYOUT_AND_PRESET_QUICKSTART.md"
+  if [[ ! -f "$quick" ]]; then
+    tv_tickets "${1:-ALPACA}" >/dev/null
+  fi
+  cat "$quick"
+}
+
+tv_mcp_status() {
+  local py
+  py="$(_tier0_python)"
+  printf '[MCP-ECOSYSTEM] Repo 4-stdio parity + User TV/Pine MCPs (zero CDP):\n'
+  (
+    cd "${TIER0_REPO_ROOT}"
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${TIER0_REPO_ROOT}/src" \
+      "$py" -B scripts/nautilus_mcp_server.py --smoke
+  )
+  if command -v claude >/dev/null 2>&1; then
+    printf '[MCP-CLAUDE-USER] Registered Claude MCP servers:\n'
+    claude mcp list 2>&1 | head -n 25 || true
+  fi
+  if command -v uvx >/dev/null 2>&1; then
+    printf '[MCP-PINE-LOCAL] uvx pinescript-mcp binary: available (%s)\n' "$(command -v uvx)"
+  fi
+  printf '[PORTALS-OPENBB] '
+  curl -fsS --max-time 3 http://127.0.0.1:6900/health 2>/dev/null || printf 'offline'
+  printf '\n'
+}
+
+tv_watchlist_payload() {
+  local payload="${TIER0_PACK_DIR}/tv_watchlist_sync_payload.json"
+  if [[ ! -f "$payload" ]]; then
+    tv_tickets "${1:-ALPACA}" >/dev/null
+  fi
+  cat "$payload"
+}
+
 tv_sync_pine() {
   mkdir -p "${TIER0_PACK_DIR}"
   local f dest sha
@@ -332,6 +369,82 @@ print(json.dumps(out))
   printf '[OK] Staged & copied to clipboard (qty=1, semi_auto_confirmed=false).\n'
 }
 
+tv_prune_stale() {
+  local py
+  py="$(_tier0_python)"
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${TIER0_REPO_ROOT}/src" \
+    "$py" -B -m tier0_sota.tv.bridge \
+      --prune-stale \
+      --staged-path "${TIER0_PACK_DIR}/staged_tv_presets.json" \
+      --manifest-dir "${TIER0_MANIFEST_DIR}"
+}
+
+tv_preset_setup() {
+  local venue="ALPACA"
+  local venue_profile="ALPACA_PAPER_1000"
+  local max_stage="3"
+  local prune_only="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --prune-only)
+        prune_only="1"
+        shift
+        ;;
+      --venue-profile)
+        if [[ $# -lt 2 ]]; then
+          printf '[ERR] --venue-profile requires a profile name\n' >&2
+          return 2
+        fi
+        venue_profile="$2"
+        shift 2
+        ;;
+      --venue-profile=*)
+        venue_profile="${1#*=}"
+        shift
+        ;;
+      --max-stage)
+        if [[ $# -lt 2 ]]; then
+          printf '[ERR] --max-stage requires an integer count\n' >&2
+          return 2
+        fi
+        max_stage="$2"
+        shift 2
+        ;;
+      --max-stage=*)
+        max_stage="${1#*=}"
+        shift
+        ;;
+      IBKR|ALPACA|ibkr|alpaca)
+        venue="${1^^}"
+        if [[ "$venue" == "IBKR" && "$venue_profile" == "ALPACA_PAPER_1000" ]]; then
+          venue_profile="IBKR_PAPER_4002"
+        fi
+        shift
+        ;;
+      *)
+        printf 'Usage: tv_preset_setup [ALPACA|IBKR] [--venue-profile <PROFILE>] [--max-stage <N>] [--prune-only]\n' >&2
+        return 2
+        ;;
+    esac
+  done
+  if [[ "$prune_only" == "1" ]]; then
+    tv_prune_stale
+    return $?
+  fi
+  local py
+  py="$(_tier0_python)"
+  local args=(
+    -B -m tier0_sota.tv.tickets
+    --preset-setup
+    --manifest-dir "${TIER0_MANIFEST_DIR}"
+    --out-dir "${TIER0_PACK_DIR}"
+    --venue "${venue}"
+    --venue-profile "${venue_profile}"
+    --max-stage "${max_stage}"
+  )
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${TIER0_REPO_ROOT}/src" "$py" "${args[@]}"
+}
+
 tv_audit() {
   local py
   py="$(_tier0_python)"
@@ -521,6 +634,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     land) tv_land "$@" ;;
     tickets) tv_tickets "$@" ;;
     presets) tv_presets "$@" ;;
+    layout|tv-layout) tv_layout "$@" ;;
+    watchlist-payload|tv-watchlist-payload) tv_watchlist_payload "$@" ;;
+    mcp-status|tv-mcp-status) tv_mcp_status ;;
     handles|tv-handles) tv_handles "$@" ;;
     sync-pine) tv_sync_pine "$@" ;;
     copy-omni) tv_copy_omni ;;
@@ -531,12 +647,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     ingest) tv_ingest "$@" ;;
     ingest-clip|tv-ingest-clip) tv_ingest_clip "$@" ;;
     stage|tv-stage) tv_stage "$@" ;;
+    preset-setup|tv-preset-setup) tv_preset_setup "$@" ;;
+    prune-stale|tv-prune-stale) tv_prune_stale "$@" ;;
     confirm-paper|tv-confirm-paper) tv_confirm_paper "$@" ;;
     audit) tv_audit ;;
     portals) tv_portals ;;
     e2e) tv_e2e "$@" ;;
     *)
-      printf 'Usage: %s {land|tickets|presets|handles|sync-pine|copy-omni|copy-strategy|copy-regime|copy-darkpool|watchlist|ingest|ingest-clip|stage|confirm-paper|tv-confirm-paper|audit|portals|e2e}\n' "$0" >&2
+      printf 'Usage: %s {land|tickets|presets|layout|watchlist-payload|mcp-status|handles|sync-pine|copy-omni|copy-strategy|copy-regime|copy-darkpool|watchlist|ingest|ingest-clip|stage|preset-setup|prune-stale|confirm-paper|tv-confirm-paper|audit|portals|e2e}\n' "$0" >&2
       exit 2
       ;;
   esac

@@ -1,0 +1,54 @@
+# Dedicated Paper-Only IBKR Gateway + IBC stack (standalone from docker/compose.sota.yml).
+# Official OSI upstream: https://github.com/gnzsnz/ib-gateway-docker (MIT) + IBC (Apache-2.0)
+# Guardrails:
+#   - PAPER ONLY (TRADING_MODE=paper); NEVER exposes forbidden live ports (4001/7496/8798/8796).
+#   - Loopback-only port bindings (127.0.0.1:4002 API, 127.0.0.1:5900 VNC).
+#   - ZERO IBKR credentials stored on disk or in compose YAML; user signs in once interactively via VNC/noVNC,
+#     and AUTO_RESTART_TIME maintains the Paper session 24/5 with persisted settings under /mnt/z/sota-data/ib-gateway-paper.
+
+services:
+  ibkr-paper:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: ibkr-paper
+    cpus: "2.0"
+    mem_limit: 2048m
+    restart: unless-stopped
+    environment:
+      # Interactive login: leave credentials blank (optional runtime env passthrough only; never persisted here)
+      TWS_USERID: ${TWS_USERID:-}
+      TWS_PASSWORD: ${TWS_PASSWORD:-}
+      TRADING_MODE: paper
+      TWS_SETTINGS_PATH: /var/lib/ibgateway-settings
+      TIME_ZONE: America/New_York
+      AUTO_RESTART_TIME: "11:59 PM"
+      AUTO_LOGOFF_TIME: ""
+      RELOGIN_AFTER_TWOFA_TIMEOUT: "yes"
+      TWOFA_TIMEOUT_ACTION: restart
+      TWOFA_EXIT_INTERVAL: "60"
+      EXISTING_SESSION_DETECTED_ACTION: primary
+      TWS_ACCEPT_INCOMING: accept
+      READ_ONLY_API: "no"
+      BYPASS_WARNING: "yes"
+      ALLOW_BLIND_TRADING: "yes"
+      JAVA_HEAP_SIZE: "1024"
+      LP_NUM_THREADS: "2"
+      # Loopback-only (127.0.0.1:5900) interactive VNC password for one-time Paper GUI login
+      VNC_SERVER_PASSWORD: ${IBKR_VNC_PASSWORD:-paper4002}
+    ports:
+      # Host loopback 4002 (IBKR_PAPER_4002) -> container socat 4004 -> container IB Gateway Paper 127.0.0.1:4002
+      - "127.0.0.1:4002:4004"
+      # Loopback-only VNC for one-time interactive Paper Trading login + 2FA
+      - "127.0.0.1:5900:5900"
+    volumes:
+      - /mnt/z/sota-data/ib-gateway-paper:/var/lib/ibgateway-settings
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pgrep -f 'ibcalpha\\.ibc\\.IbcGateway' >/dev/null && pgrep -x x11vnc >/dev/null && pgrep -f 'socat TCP-LISTEN:4004' >/dev/null",
+        ]
+      interval: 30s
+      start_interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

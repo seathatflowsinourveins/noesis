@@ -440,6 +440,44 @@ def frontier_trigger_telemetry() -> dict[str, object]:
             tca_rows_calibrated = 0
 
     tv_compounding = _summarize_tv_half_auto(manifests_dir, perf_doc)
+    starred_doc = _read_json_optional(manifests_dir / "starred_frontier_landscape_manifest.json")
+    l15_doc = _read_json_optional(manifests_dir / "l15_supply_chain_and_formal_audit.json")
+
+    def _sub_dict(doc: dict[str, Any], key: str) -> dict[str, Any]:
+        val = doc.get(key)
+        return val if isinstance(val, dict) else {}
+
+    am_block = _sub_dict(l15_doc, "alertmanager")
+    alertmanager_9093_healthy = bool(
+        l15_doc.get("alertmanager_9093_healthy", am_block.get("healthy_9093", False))
+    )
+    ch_block = _sub_dict(l15_doc, "crosshair")
+    z3_block = _sub_dict(l15_doc, "z3_formal_proofs")
+    insp_block = _sub_dict(l15_doc, "inspect_ai")
+    sk_block = _sub_dict(l15_doc, "skills_lock")
+
+    crosshair_ok = bool(ch_block.get("ok", False))
+    z3_all_unsat = bool(z3_block.get("all_unsat", False))
+    inspect_audit_ok = bool(insp_block.get("ok", False))
+    skills_46_ok = bool(sk_block.get("parity_ok", False))
+
+    starred_summary_block = _sub_dict(starred_doc, "summary")
+    starred_versions = _sub_dict(starred_doc, "versions")
+    starred_engines = _sub_dict(starred_doc, "engines") or _sub_dict(starred_doc, "capabilities")
+    starred_all_ok = bool(
+        starred_summary_block.get("all_engines_pass")
+        or starred_doc.get("all_ok")
+        or starred_doc.get("ok")
+        or (
+            bool(starred_engines)
+            and all(
+                (v.get("status") == "VERIFIED_PASS" if isinstance(v, dict) else bool(v))
+                for v in starred_engines.values()
+            )
+        )
+    )
+    starred_graduated = list(starred_doc.get("graduated_packages") or sorted(starred_versions))
+
     payload: dict[str, Any] = {
         "schema_version": "tier0.frontier-trigger-telemetry.v1",
         "generated_at_utc": datetime.now(UTC).isoformat(),
@@ -452,18 +490,85 @@ def frontier_trigger_telemetry() -> dict[str, object]:
         "checked_default_packages": int(pw_audit.get("checked_default_packages") or 0),
         "unwired_lock_packages": unwired_lock_packages,
         "tca_rows_calibrated": tca_rows_calibrated,
+        "alertmanager_9093_healthy": alertmanager_9093_healthy,
         "tv_half_auto_compounding": tv_compounding,
+        "starred_frontier_landscape": {
+            "present": bool(starred_doc),
+            "schema_version": starred_doc.get("schema_version"),
+            "generated_at_utc": starred_doc.get("generated_at_utc"),
+            "all_engines_ok": starred_all_ok,
+            "engines_verified_pass": int(
+                starred_summary_block.get("engines_verified_pass") or len(starred_engines)
+            ),
+            "engines_total": int(
+                starred_summary_block.get("engines_total") or len(starred_engines)
+            ),
+            "graduated_packages": starred_graduated,
+        },
+        "l15_formal_supply_chain_audit": {
+            "present": bool(l15_doc),
+            "schema_version": l15_doc.get("schema_version"),
+            "generated_at_utc": l15_doc.get("generated_at_utc"),
+            "overall_ok": bool(l15_doc.get("overall_ok", False)),
+            "z3_all_unsat": z3_all_unsat,
+            "crosshair_ok": crosshair_ok,
+            "inspect_ok": inspect_audit_ok,
+            "skills_46_parity_ok": skills_46_ok,
+            "alertmanager_9093_healthy": alertmanager_9093_healthy,
+        },
         "triggers": {
             "l11_vortex_lake_gt_100gb": prewall_lake_gb > 100.0,
             "l12_tabicl_benchmark_pending": False,
             "l13_multi_day_positions_gt_10": max_concurrent_positions > 10,
             "l14_observability_tca_calibrated": tca_rows_calibrated > 0,
+            "l14_alertmanager_9093_live": alertmanager_9093_healthy,
             "l15_dspy_gepa_compiled": gepa_compiled,
+            "l15_crosshair_symbolic_verified": crosshair_ok,
+            "l11_l13_starred_frontier_graduated": starred_all_ok,
         },
     }
     out_path = manifests_dir / "frontier_trigger_status.json"
     _write_json_atomic(out_path, payload)
     return {**payload, "manifest_path": str(out_path)}
+
+
+def _summarize_nonstop_compounding_state(manifests_dir: Path) -> dict[str, Any]:
+    """Read fail-closed Stage-1 calibration & nonstop compounding loop heartbeat manifests."""
+    loop_doc = _read_json_optional(manifests_dir / "nonstop_compounding_loop_status.json")
+    hist_doc = _read_json_optional(
+        manifests_dir / "historical_extreme_mover_calibration_manifest.json"
+    )
+    prewall_doc = _read_json_optional(
+        manifests_dir / "prewall_early_mover_calibration_manifest.json"
+    )
+    venue_posture = loop_doc.get("venue_posture")
+    vp = venue_posture if isinstance(venue_posture, dict) else {}
+    taxonomy = (
+        hist_doc.get("categorized_mover_taxonomy")
+        or hist_doc.get("mover_taxonomy")
+        or hist_doc.get("taxonomy")
+        or hist_doc.get("categories")
+    )
+    per_sym = hist_doc.get("per_symbol_min_trailing_pct")
+    return {
+        "loop_present": bool(loop_doc),
+        "loop_iteration": loop_doc.get("iteration"),
+        "loop_verdict": loop_doc.get("overall_verdict"),
+        "loop_completed_at_utc": loop_doc.get("completed_at_utc"),
+        "alpaca_venue_profile": vp.get("alpaca_venue_profile"),
+        "combined_paper_max_rpm": vp.get("combined_paper_max_rpm"),
+        "paper_only": bool(loop_doc.get("paper_only", True)),
+        "live_execution_enabled": bool(loop_doc.get("live_execution_enabled", False)),
+        "historical_calibration_present": bool(hist_doc),
+        "historical_calibration_categories": (
+            len(taxonomy) if isinstance(taxonomy, (dict, list)) else 0
+        ),
+        "historical_calibration_symbols": (len(per_sym) if isinstance(per_sym, dict) else 0),
+        "nvda_premarket_verified": isinstance(
+            hist_doc.get("nvda_monday_premarket_e2e_replay"), dict
+        ),
+        "prewall_calibration_present": bool(prewall_doc),
+    }
 
 
 @asset(
@@ -496,6 +601,17 @@ def compounding_self_reflection_snapshot() -> dict[str, object]:
             return {"present": False, "path": str(manifest_path)}
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+    if os.environ.get("TIER0_DAGSTER_NONSTOP_LOOP", "0").strip() == "1":
+        from scripts.run_nonstop_compounding_loop import run_compounding_iteration
+
+        run_compounding_iteration(
+            manifest_dir=manifests_dir,
+            skip_calibration=offline_mode,
+            skip_reflection=True,
+            dry_run=offline_mode,
+            probe_services=not offline_mode,
+        )
+
     cross_leg = payload.get("cross_leg_falsification") or {}
     return {
         "present": True,
@@ -513,21 +629,43 @@ def compounding_self_reflection_snapshot() -> dict[str, object]:
         "inspect_accuracy": payload.get("inspect", {}).get("accuracy"),
         "risk_sha256_match": payload.get("safety", {}).get("risk_sha256_match"),
         "tv_half_auto": payload.get("tv_half_auto"),
+        "nonstop_compounding_loop": _summarize_nonstop_compounding_state(manifests_dir),
     }
 
 
+_COMPOUNDING_ASSET_SELECTION = [
+    prewall_pit_audit,
+    risk_kernel_sha256_attestation,
+    paper_farm_performance_snapshot,
+    inspect_safety_and_philosophy_eval,
+    adr_governance_and_graph_sync,
+    sim_vs_paper_parity_reconciliation,
+    frontier_trigger_telemetry,
+    compounding_self_reflection_snapshot,
+]
+
+NONSTOP_COMPOUNDING_TIMER_SPEC: dict[str, object] = {
+    "systemd_service": "tier0-compounding-loop.service",
+    "systemd_timer": "tier0-compounding-loop.timer",
+    "cadence": "2h",
+    "dagster_job": "nonstop_compounding_loop_job",
+    "dagster_schedule": "daily_compounding_reflection_schedule",
+    "paper_only": True,
+    "live_execution_enabled": False,
+}
+
 compounding_reflection_job = define_asset_job(
     name="compounding_reflection_job",
-    selection=[
-        prewall_pit_audit,
-        risk_kernel_sha256_attestation,
-        paper_farm_performance_snapshot,
-        inspect_safety_and_philosophy_eval,
-        adr_governance_and_graph_sync,
-        sim_vs_paper_parity_reconciliation,
-        frontier_trigger_telemetry,
-        compounding_self_reflection_snapshot,
-    ],
+    selection=_COMPOUNDING_ASSET_SELECTION,
+)
+
+nonstop_compounding_loop_job = define_asset_job(
+    name="nonstop_compounding_loop_job",
+    selection=_COMPOUNDING_ASSET_SELECTION,
+    description=(
+        "24/5 paper-only non-stop compounding loop asset job paired with native "
+        "systemd timer tier0-compounding-loop.timer (2h cadence, zero Python sleep loops)."
+    ),
 )
 
 daily_compounding_reflection_schedule = ScheduleDefinition(
@@ -539,16 +677,7 @@ daily_compounding_reflection_schedule = ScheduleDefinition(
 )
 
 defs = Definitions(
-    assets=[
-        prewall_pit_audit,
-        risk_kernel_sha256_attestation,
-        paper_farm_performance_snapshot,
-        inspect_safety_and_philosophy_eval,
-        adr_governance_and_graph_sync,
-        sim_vs_paper_parity_reconciliation,
-        frontier_trigger_telemetry,
-        compounding_self_reflection_snapshot,
-    ],
-    jobs=[compounding_reflection_job],
+    assets=_COMPOUNDING_ASSET_SELECTION,
+    jobs=[compounding_reflection_job, nonstop_compounding_loop_job],
     schedules=[daily_compounding_reflection_schedule],
 )

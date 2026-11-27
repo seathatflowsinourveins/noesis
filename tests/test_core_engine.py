@@ -59,6 +59,7 @@ from tier0_sota.engine import (
     compute_collared_entry_limit_price,
     compute_collared_limit_price,
     compute_dynamic_trailing_stop,
+    compute_non_noise_min_trail_spec,
     compute_progressive_trailing_stop,
     get_session_protection_profile,
     inspect_venue_capability,
@@ -850,3 +851,170 @@ def test_alpaca_paper_1000_and_venue_order_handle_spec() -> None:
         build_venue_order_handle_spec("ALPACA_PAPER_1000", "RTH", "bogus_sched")
     with pytest.raises(ValueError, match="Unknown 24/5 market session"):
         build_venue_order_handle_spec("ALPACA_PAPER_1000", "BOGUS_SESSION")
+
+
+def test_compute_non_noise_min_trail_spec_24x5_and_invariants() -> None:
+    expected_sessions = {
+        "RTH": (
+            "NATIVE_BROKER_STOP_MARKET_RATCHET",
+            "STOP_MARKET",
+            "STOP_MARKET_REPLACE_RATCHET",
+            Decimal("0"),
+            False,
+        ),
+        "PRE_MARKET": (
+            "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT",
+            "STOP_LIMIT",
+            "LIMIT_EXTENDED_HOURS_COLLARED",
+            Decimal("35"),
+            True,
+        ),
+        "AFTER_HOURS": (
+            "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT",
+            "STOP_LIMIT",
+            "LIMIT_EXTENDED_HOURS_COLLARED",
+            Decimal("35"),
+            True,
+        ),
+        "OVERNIGHT": (
+            "SYNTHETIC_BOATS_COLLARED_LIMIT",
+            "STOP_LIMIT",
+            "LIMIT_OVERNIGHT_COLLARED",
+            Decimal("50"),
+            True,
+        ),
+    }
+
+    for sess, (exp_mech, exp_ot, exp_exit, exp_collar, exp_ext) in expected_sessions.items():
+        for side in ("LONG", "SHORT"):
+            spec = compute_non_noise_min_trail_spec(
+                symbol="nvda",
+                entry_price=Decimal("140.00"),
+                side=side,
+                session=sess,
+                natr_pct=Decimal("0.018"),
+                spread_bps=Decimal("5"),
+                archetype="EARLY_EP_MOMENTUM_BURST",
+                venue_profile="ALPACA_PAPER_1000",
+            )
+            assert spec["schema_version"] == "tier0.non-noise-min-trail.v1"
+            assert spec["symbol"] == "NVDA" and spec["side"] == side and spec["session"] == sess
+            assert isinstance(spec["non_noise_min_trail_pct"], Decimal)
+            assert isinstance(spec["fast_sell_non_noise_reversal_pct"], Decimal)
+            assert isinstance(spec["peak_climax_reverse_trigger_pct"], Decimal)
+            assert isinstance(spec["collar_bps"], Decimal)
+            assert spec["execution_mechanism"] == exp_mech
+            assert spec["order_type"] == exp_ot
+            assert spec["broker_exit_order"] == exp_exit
+            assert spec["collar_bps"] == exp_collar
+            assert spec["extended_hours"] is exp_ext
+            assert spec["auto_reverse_policy"] == "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE"
+            assert spec["fast_sell_non_noise_reversal_pct"] == spec["non_noise_min_trail_pct"]
+            assert spec["non_noise_min_trail_pct"] >= spec["fee_and_spread_noise_floor"]
+            assert (
+                Decimal("0")
+                < spec["non_noise_min_trail_pct"]
+                <= spec["initial_max_loss_pct"]
+                <= MAX_STOP_LOSS_PCT
+            )
+            assert spec["peak_climax_r_multiple"] == Decimal("2.5")
+            assert spec["peak_climax_reverse_trigger_pct"] >= (
+                Decimal("2.5")
+                * (abs(Decimal("140.00") - spec["initial_stop_price"]) / Decimal("140.00"))
+            )
+            assert spec["overnight_routing_venue"] == (
+                "IBKR_PAPER_4002" if side == "SHORT" else "ALPACA_PAPER_1000"
+            )
+            rr = spec["rapid_reentry_policy"]
+            assert rr["reentry_cooldown_secs"] == 60
+            assert rr["rpm_budget_available"] == 900
+            assert rr["max_rpm"] == 1000 and rr["exit_reserve_rpm"] == 100
+            assert rr["reentry_max_attempts_per_session"] == 3
+            assert rr["exit_reserve_protected"] is True
+            assert spec["paper_only"] is True
+            assert spec["live_execution_enabled"] is False
+            assert spec["executable_now"] is True
+
+    # Parabolic top archetype tightens non-noise trail vs structural VCP breakout.
+    parabolic = compute_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("140.00"),
+        side="LONG",
+        session="RTH",
+        natr_pct=Decimal("0.025"),
+        archetype="PARABOLIC_TOP",
+    )
+    vcp = compute_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("140.00"),
+        side="LONG",
+        session="RTH",
+        natr_pct=Decimal("0.025"),
+        archetype="VCP_BREAKOUT",
+    )
+    assert parabolic["non_noise_min_trail_pct"] < vcp["non_noise_min_trail_pct"]
+
+    # Extreme NATR clamps cleanly <= initial_max_loss_pct; low-priced symbol obeys 2x Rule-612 tick.
+    high_vol = compute_non_noise_min_trail_spec(
+        symbol="SMCI",
+        entry_price=Decimal("40.00"),
+        side="LONG",
+        session="OVERNIGHT",
+        natr_pct=Decimal("0.12"),
+    )
+    assert (
+        high_vol["non_noise_min_trail_pct"] == high_vol["initial_max_loss_pct"] == Decimal("0.0100")
+    )
+    assert high_vol["reverse_leg_routing"] == "INVERSE_HEDGE_SOXS_SQQQ"
+
+    low_px = compute_non_noise_min_trail_spec(
+        symbol="LOWP",
+        entry_price=Decimal("10.00"),
+        side="LONG",
+        session="RTH",
+        natr_pct=Decimal("0.001"),
+        spread_bps=Decimal("1"),
+    )
+    assert low_px["non_noise_min_trail_pct"] >= Decimal("2") * (Decimal("0.01") / Decimal("10.00"))
+
+    # IBKR 3000rpm budget & fail-closed LIVE venue profile.
+    ib_spec = compute_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("140.00"),
+        side="SHORT",
+        session="OVERNIGHT",
+        natr_pct=Decimal("0.015"),
+        venue_profile="IBKR_PAPER_4002",
+    )
+    assert ib_spec["rapid_reentry_policy"]["rpm_budget_available"] == 2700
+    assert ib_spec["overnight_routing_venue"] == "IBKR_PAPER_4002"
+
+    live_spec = compute_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("140.00"),
+        side="LONG",
+        session="RTH",
+        natr_pct=Decimal("0.015"),
+        venue_profile="ALPACA_LIVE_PRO_LINE_1000",
+    )
+    assert live_spec["paper_only"] is False
+    assert live_spec["live_execution_enabled"] is False
+    assert live_spec["executable_now"] is False
+
+    # Fail-closed validation on invalid inputs.
+    with pytest.raises(ValueError, match="entry_price"):
+        compute_non_noise_min_trail_spec(
+            symbol="NVDA",
+            entry_price=Decimal("0"),
+            side="LONG",
+            session="RTH",
+            natr_pct=Decimal("0.015"),
+        )
+    with pytest.raises(ValueError, match="numeric"):
+        compute_non_noise_min_trail_spec(
+            symbol="NVDA",
+            entry_price=True,  # type: ignore[arg-type]
+            side="LONG",
+            session="RTH",
+            natr_pct=Decimal("0.015"),
+        )

@@ -1,0 +1,25 @@
+[Unit]
+Description=Tier-0 SOTA Workstation Preflight, Reconcile & Hygiene Guard (WSL2 Native)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sota
+WorkingDirectory=/mnt/z/noesis
+Environment=WSL_DISTRO_NAME=Noesis-SOTA
+Environment=TIER0_REPO_ROOT=/mnt/z/noesis
+Environment=TIER0_DATA_ROOT=/mnt/z/sota-data
+Environment=ORCA_WORKSPACES_DIR=/mnt/z/workspaces
+Environment=PYTHONDONTWRITEBYTECODE=1
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=512M
+TimeoutStartSec=120
+ExecStartPre=/usr/bin/bash -c 'test -z "$(ss -lntH | grep -E ":(4001|7496|8798|8796)\\b" || true)" && test "$(sha256sum /mnt/z/noesis/src/tier0_sota/risk.py | cut -d" " -f1)" = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"'
+ExecStart=/usr/bin/bash -lc 'export PATH="$HOME/noesis/.venv/bin:$HOME/.local/share/mise/shims:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" TIER0_STATE_ROOT="$HOME/tier0-sota-state" UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv" FNOX_AGE_KEY_FILE="$HOME/.config/fnox/age.txt" && (/mnt/z/noesis/scripts/preflight_resume.sh || /mnt/z/noesis/scripts/preflight_resume.sh --reconcile)'
+ExecStartPost=-/usr/bin/rm -rf /mnt/z/noesis/.ruff_cache /mnt/z/noesis/.hypothesis
+ExecStartPost=-/usr/bin/bash -c 'd="/tmp/pytest-of-$(id -un)"; if [ -d "$d" ]; then find "$d" -mindepth 1 -maxdepth 1 -mmin +120 -exec rm -rf {} +; fi'
+ExecStartPost=-/usr/bin/docker image prune -f
+ExecStartPost=-/usr/bin/bash -lc 'if [ -x "$HOME/.local/bin/codebase-memory-mcp" ]; then "$HOME/.local/bin/codebase-memory-mcp" config set ui_enabled false && "$HOME/.local/bin/codebase-memory-mcp" config set watcher_enabled false && "$HOME/.local/bin/codebase-memory-mcp" config set auto_watch false; fi'

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,11 @@ import pytest
 
 from tier0_sota.tv import (
     MULTI_SITUATION_SETUP_PLAYBOOK,
+    TV_CLOUD_WATCHLIST_IDS,
     TvAlertV1,
     build_half_auto_tickets,
     build_tv_order_presets,
+    build_tv_watchlist_sync_payload,
     build_venue_order_handles,
     build_venue_order_handles_matrix,
     classify_multi_situation_setup,
@@ -25,13 +28,16 @@ from tier0_sota.tv import (
     filter_extreme_movers,
     ingest_alerts_file,
     load_tv_audit_summary,
+    prune_and_archive_staged_presets,
     refresh_tickets_from_paths,
     refuse_live_endpoints,
     render_tickets_markdown,
     render_tv_watchlist,
+    resolve_non_noise_min_trail_spec,
     resolve_tv_exchange_symbol,
     resolve_venue_order_handle,
     resolve_venue_profile,
+    run_preset_setup_automation,
     stage_tv_alert_preset,
     validate_tv_alert_payload,
 )
@@ -105,6 +111,17 @@ def _valid_alert(**overrides: Any) -> dict[str, Any]:
 def test_pine_v6_non_repainting_balance_and_colors(pine_name: str) -> None:
     src = (REPO_ROOT / "pine" / pine_name).read_text(encoding="utf-8")
     assert src.startswith("//@version=6")
+    # Tier-0 Zero Self-Invention: every Pine v6 script MUST import a verified official
+    # TradingView/* or PineCoders/* library and be mapped in upstream-map.toml.
+    assert re.search(
+        r"^import\s+(?:TradingView|PineCoders)/[A-Za-z0-9_]+/\d+\s+as\s+[A-Za-z_][A-Za-z0-9_]*\s*$",
+        src,
+        re.MULTILINE,
+    ), f"{pine_name} must import an official TradingView/* or PineCoders/* library"
+    upstream_map_txt = (REPO_ROOT / "upstream-map.toml").read_text(encoding="utf-8")
+    assert f'[files."pine/{pine_name}"]' in upstream_map_txt, (
+        f"pine/{pine_name} missing provenance mapping in upstream-map.toml"
+    )
     assert "barmerge.lookahead_on" not in src
     assert "barmerge.lookahead_off" in src
     assert "barmerge.gaps_off" in src
@@ -1365,7 +1382,7 @@ def test_zero_ticket_refresh_migrates_existing_legacy_duckdb_and_exports_parquet
     assert pq_path.is_file()
     with duckdb.connect(str(db_path), read_only=True) as conn:
         cols = conn.execute("DESCRIBE tv_staged_presets").fetchall()
-        assert len(cols) == 29
+        assert len(cols) == 30
         pq_rows = conn.execute(
             "SELECT alert_id, symbol FROM read_parquet(?)", [str(pq_path)]
         ).fetchall()
@@ -2352,11 +2369,11 @@ def test_bridge_live_intake_refuses_stage5_live_venue_profile_and_mismatch(
     assert staged_ok["venue_profile"] == "ALPACA_PAPER_1000"
     assert staged_ok["semi_auto_confirmed"] is False and staged_ok["qty"] == 1
 
-    # DuckDB 29-column audit table persists venue_profile cleanly.
+    # DuckDB 30-column audit table persists venue_profile and lifecycle status cleanly.
     db_path = tmp_path / "tv_half_auto_audit.duckdb"
     with duckdb.connect(str(db_path), read_only=True) as conn:
         cols = conn.execute("DESCRIBE tv_staged_presets").fetchall()
-        assert len(cols) == 29
+        assert len(cols) == 30
         vp_rows = conn.execute(
             "SELECT symbol, venue_profile FROM tv_staged_presets WHERE alert_id = ?",
             [staged_ok["alert_id"]],
@@ -2541,3 +2558,1801 @@ def test_engine_coordination_manifest_active_positions_and_1000rpm_pack_sync(
     assert comp["multi_situation_setup_counts"] == {"PEAD_DRIFT": 1}
     assert comp["venue_order_handles_summary"]["ALPACA_PAPER_1000"]["max_rpm"] == 1000
     assert comp["venue_order_handles_summary"]["IBKR_PAPER_4002"]["max_rpm"] == 3000
+    assert comp["artifacts"]["layout_blueprints_json"] == "tv_layout_blueprints.json"
+    assert comp["artifacts"]["layout_quickstart_md"] == "TV_LAYOUT_AND_PRESET_QUICKSTART.md"
+
+    layout_bp = json.loads((out_dir / "tv_layout_blueprints.json").read_text(encoding="utf-8"))
+    assert layout_bp["schema_version"] == "tier0.tv-layout-blueprints.v1"
+    assert layout_bp["zero_cdp_policy"] is True
+    assert layout_bp["live_execution_enabled"] is False
+    assert layout_bp["semi_auto_confirmed"] is False
+    assert layout_bp["qty"] == 1
+    assert len(layout_bp["tradingview_layouts"]) == 3
+    assert len(layout_bp["native_tv_order_panel_presets"]) == 3
+    assert len(layout_bp["finos_openbb_command_center"]["tabs"]) == 5
+    assert layout_bp["finos_openbb_command_center"]["widgets_count"] == 26
+    assert "@finos-workspace/mermaid@1.0.0" in layout_bp["finos_openbb_command_center"]["plugins"]
+    assert layout_bp["mcp_ecosystem"]["user_official_tradingview_mcp"]["zero_cdp"] is True
+
+    quick_md = (out_dir / "TV_LAYOUT_AND_PRESET_QUICKSTART.md").read_text(encoding="utf-8")
+    assert "Tier-0 Real TradingView Layouts" in quick_md
+    assert "https://mcp.tradingview.com/mcp" in quick_md
+    assert "pinescript-mcp" in quick_md
+    assert "Zero CDP" in quick_md
+
+    tv_sh = (Path(__file__).resolve().parents[1] / "scripts" / "tv_console.sh").read_text(
+        encoding="utf-8"
+    )
+    tv_ps = (Path(__file__).resolve().parents[1] / "scripts" / "tv_console.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "tv_layout()" in tv_sh and "tv_mcp_status()" in tv_sh
+    assert "function tv-layout" in tv_ps and "function tv-mcp-status" in tv_ps
+    assert "tv_watchlist_payload()" in tv_sh and "function tv-watchlist-payload" in tv_ps
+
+
+def test_watchlist_sync_payload_non_noise_engine_ssot_and_cloud_receipt(tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    from tier0_sota import engine as eng
+
+    # 1. Zero-Self-Invention: resolve_non_noise_min_trail_spec delegates directly to engine SSOT.
+    for sess, expected_mech in (
+        ("RTH", "NATIVE_BROKER_STOP_MARKET_RATCHET"),
+        ("PRE_MARKET", "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"),
+        ("AFTER_HOURS", "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"),
+        ("OVERNIGHT", "SYNTHETIC_BOATS_COLLARED_LIMIT"),
+    ):
+        spec = resolve_non_noise_min_trail_spec(
+            symbol="NVDA",
+            entry_price=Decimal("140.00"),
+            side="LONG",
+            session=sess,
+            natr_pct=Decimal("0.015"),
+            spread_bps=Decimal("4"),
+            archetype="EARLY_EP_MOMENTUM_BURST",
+            venue_profile="ALPACA_PAPER_1000",
+        )
+        eng_spec = eng.compute_non_noise_min_trail_spec(
+            symbol="NVDA",
+            entry_price=Decimal("140.00"),
+            side="LONG",
+            session=sess,
+            natr_pct=Decimal("0.015"),
+            spread_bps=Decimal("4"),
+            archetype="EARLY_EP_MOMENTUM_BURST",
+            venue_profile="ALPACA_PAPER_1000",
+        )
+        assert spec["source"] == "tier0_sota.engine.compute_non_noise_min_trail_spec"
+        assert spec["execution_mechanism"] == expected_mech
+        assert spec["non_noise_min_trail_pct"] == pytest.approx(
+            float(eng_spec["non_noise_min_trail_pct"])
+        )
+        assert spec["non_noise_min_trail_pct"] <= 0.02
+        assert spec["rapid_reentry_policy"]["max_rpm"] == 1000
+        assert spec["rapid_reentry_policy"]["rpm_budget_available"] == 900
+        assert spec["rapid_reentry_policy"]["reentry_cooldown_secs"] == 60
+        assert spec["rapid_reentry_policy"]["exit_reserve_protected"] is True
+
+    # 2. Refresh wires cloud sync receipt, historical audit, paper adoption & watchlist payload.
+    bar_utc = "2026-11-25T14:35:00Z"
+    now_utc = datetime(2026, 11, 25, 14, 35, 10, tzinfo=UTC)
+    manifest_dir = tmp_path / "manifests"
+    out_dir = manifest_dir / "tv_sota_pack"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-25T14:35:04Z",
+                "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+                "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+                "macro_regime": {"regime": 1, "regime_label": "BULL"},
+                "early_weights_calibration": {"prewall_cutoff": "2026-10-15", "rvol_w": 0.35},
+                "discovery_summary": {"scanned": 420, "eligible": 2},
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "NVDA",
+                        "exchange": "NASDAQ",
+                        "score": 88.4,
+                        "last_price": 145.50,
+                        "session_move_pct": 4.2,
+                        "rvol_normalized": 3.8,
+                        "natr_pct": 0.015,
+                        "potential_category": "PREMARKET_CATALYST_LEADER",
+                        "calibrated_category": "PREMARKET_CATALYST_LEADER",
+                        "min_trailing_pct": 0.0042,
+                        "technicals": {"vwap": 144.2, "above_vwap": True},
+                        "early_detection": {"calibration_wall_date": "2026-10-15"},
+                        "session_order_presets": {
+                            "PRE_MARKET": {"order_mode": "STOP_LIMIT"},
+                            "RTH": {"order_mode": "STOP_MARKET"},
+                            "AFTER_HOURS": {"order_mode": "STOP_LIMIT"},
+                            "OVERNIGHT": {"order_mode": "STOP_LIMIT"},
+                        },
+                        "technical_alignment_score": 0.91,
+                        "premarket_ignition": True,
+                        "extreme_mover_eligible": True,
+                        "shortable": True,
+                        "easy_to_borrow": True,
+                        "bar_close_utc": bar_utc,
+                    },
+                    {
+                        "rank": 2,
+                        "symbol": "TQQQ",
+                        "exchange": "NASDAQ",
+                        "score": 61.2,
+                        "last_price": 78.20,
+                        "session_move_pct": 2.4,
+                        "rvol_normalized": 1.6,
+                        "natr_pct": 0.018,
+                        "potential_category": "EXTREME_MOVER_CONTINUATION",
+                        "extreme_mover_eligible": False,
+                        "watch_tier": "UV_DARKPOOL_BUILDUP",
+                        "unusual_volume_buildup": True,
+                        "bar_close_utc": bar_utc,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "paper_farm_execution_status.json").write_text(
+        json.dumps(
+            {
+                "status": "SUPERVISING",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "active_positions": [
+                    {
+                        "symbol": "NVDA",
+                        "side": "LONG",
+                        "lane_account": "ALPACA_PA1",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "entry_price": 144.80,
+                        "active_stop": 144.95,
+                        "lock_tier": "T1_BE_PLUS_FEE",
+                        "adopted_external": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "tv_mcp_sync_receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-mcp-sync-receipt.v1",
+                "generated_at_utc": "2026-11-25T14:35:00Z",
+                "zero_cdp": True,
+                "paper_only": True,
+                "semi_auto_confirmed": False,
+                "live_execution_enabled": False,
+                "post_fix_replay_status": "DEFERRED_DAILY_QUOTA_RESET",
+                "cloud_watchlist": {
+                    "watchlist_id": TV_CLOUD_WATCHLIST_IDS["active"],
+                    "symbols": ["NASDAQ:NVDA", "NASDAQ:TQQQ"],
+                },
+                "technicals_ratings": {
+                    "NASDAQ:NVDA": {"rating": "STRONG_BUY", "rating_score": 0.86},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "historical_extreme_mover_calibration_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.historical-extreme-mover-calibration.v1",
+                "generated_at_utc": "2026-11-25T14:00:00Z",
+                "prewall_cutoff": "2026-10-15",
+                "prewall_benchmark": {"recall_at_top15": 0.82},
+                "nvda_monday_premarket_audit": {
+                    "first_detect_et": "2026-11-23T07:05:00-05:00",
+                    "first_detect_px": 141.20,
+                    "peak_px": 149.80,
+                    "category": "PREMARKET_CATALYST_LEADER",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        out_dir=out_dir,
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        now_utc=now_utc,
+    )
+    nvda = doc["tickets"][0]
+    assert nvda["potential_category"] == "PREMARKET_CATALYST_LEADER"
+    assert nvda["calibrated_category"] == "PREMARKET_CATALYST_LEADER"
+    assert nvda["min_trailing_pct"] == pytest.approx(0.0042)
+    assert nvda["technicals"]["above_vwap"] is True
+    assert nvda["early_detection"]["calibration_wall_date"] == "2026-10-15"
+    assert sorted(nvda["session_order_presets"]) == [
+        "AFTER_HOURS",
+        "OVERNIGHT",
+        "PRE_MARKET",
+        "RTH",
+    ]
+    assert nvda["tv_technicals_rating"] == "STRONG_BUY"
+    assert nvda["tv_technicals_score"] == pytest.approx(0.86)
+    assert nvda["auto_adopted_by_engine"] is True
+    assert nvda["engine_adoption_status"] == "AUTO_ADOPTED_EXTERNAL"
+
+    wl_payload = json.loads(
+        (out_dir / "tv_watchlist_sync_payload.json").read_text(encoding="utf-8")
+    )
+    assert wl_payload["schema_version"] == "tier0.tv-watchlist-sync-payload.v1"
+    assert wl_payload["zero_cdp"] is True and wl_payload["paper_only"] is True
+    assert wl_payload["semi_auto_confirmed"] is False
+    assert wl_payload["live_execution_enabled"] is False and wl_payload["qty"] == 1
+    assert wl_payload["watchlists"]["active"]["watchlist_id"] == "357054653"
+    assert wl_payload["watchlists"]["alert_bound"]["watchlist_id"] == "357055160"
+    assert "NASDAQ:NVDA" in wl_payload["watchlists"]["active"]["symbols"]
+    assert "NASDAQ:NVDA" in wl_payload["watchlists"]["alert_bound"]["symbols"]
+    assert wl_payload["category_counts"]["PREMARKET_CATALYST_LEADER"] == 1
+    assert wl_payload["calibrated_category_counts"]["PREMARKET_CATALYST_LEADER"] == 1
+    assert wl_payload["categorized_symbols"][0]["session_order_presets_sessions"] == [
+        "AFTER_HOURS",
+        "OVERNIGHT",
+        "PRE_MARKET",
+        "RTH",
+    ]
+    assert wl_payload["tv_cloud_mcp_sync"]["present"] is True
+    assert wl_payload["tv_cloud_mcp_sync"]["technicals_ratings_count"] == 1
+    assert wl_payload["calibration_metadata"]["early_weights_calibration"]["rvol_w"] == 0.35
+
+    comp = json.loads((out_dir / "tv_compounding_manifest.json").read_text(encoding="utf-8"))
+    assert comp["artifacts"]["watchlist_sync_payload_json"] == "tv_watchlist_sync_payload.json"
+    assert comp["artifacts"]["mcp_sync_receipt_json"] == "tv_mcp_sync_receipt.json"
+    assert comp["historical_early_mover_audit_summary"]["present"] is True
+    assert comp["historical_early_mover_audit_summary"]["nvda_peak_px"] == pytest.approx(149.80)
+    assert comp["tv_cloud_mcp_sync_summary"]["present"] is True
+    assert comp["tv_cloud_mcp_sync_summary"]["post_fix_replay_status"] == (
+        "DEFERRED_DAILY_QUOTA_RESET"
+    )
+
+    direct = build_tv_watchlist_sync_payload(doc)
+    assert direct["watchlists"]["active"]["watchlist_id"] == "357054653"
+
+
+def test_phase4_24x5_non_noise_min_trail_early_mover_audit_and_cloud_mcp_sync(
+    tmp_path: Path,
+) -> None:
+    # 1. Verify resolve_non_noise_min_trail_spec across all 4 sessions via engine SSOT.
+    rth_spec = resolve_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("145.00"),
+        side="LONG",
+        session="RTH",
+        natr_pct=Decimal("0.014"),
+        archetype="EARLY_EP_MOMENTUM_BURST",
+        venue_profile="ALPACA_PAPER_1000",
+    )
+    assert rth_spec["source"] == "tier0_sota.engine.compute_non_noise_min_trail_spec"
+    assert rth_spec["execution_mechanism"] == "NATIVE_BROKER_STOP_MARKET_RATCHET"
+    assert rth_spec["execution_mechanism_label"] == "RTH: STOP_MARKET 0bp Native Ratchet"
+    assert rth_spec["order_type"] == "STOP_MARKET"
+    assert rth_spec["collar_bps"] == pytest.approx(0.0)
+    assert rth_spec["extended_hours"] is False
+    assert 0.0 < rth_spec["non_noise_min_trail_pct"] <= 0.02
+    assert rth_spec["auto_reverse_policy"] == "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE"
+    assert rth_spec["rapid_reentry_policy"]["reentry_cooldown_secs"] == 60
+    assert rth_spec["rapid_reentry_policy"]["max_rpm"] == 1000
+    assert rth_spec["rapid_reentry_policy"]["exit_reserve_protected"] is True
+
+    pre_spec = resolve_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("145.00"),
+        side="LONG",
+        session="PRE_MARKET",
+        natr_pct=Decimal("0.014"),
+        archetype="EARLY_EP_MOMENTUM_BURST",
+        venue_profile="ALPACA_PAPER_1000",
+    )
+    assert pre_spec["execution_mechanism"] == "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"
+    assert "35bp" in pre_spec["execution_mechanism_label"]
+    assert pre_spec["order_type"] == "STOP_LIMIT"
+    assert pre_spec["collar_bps"] == pytest.approx(35.0)
+    assert pre_spec["extended_hours"] is True
+
+    on_spec = resolve_non_noise_min_trail_spec(
+        symbol="NVDA",
+        entry_price=Decimal("145.00"),
+        side="LONG",
+        session="OVERNIGHT",
+        natr_pct=Decimal("0.014"),
+        archetype="EARLY_EP_MOMENTUM_BURST",
+        venue_profile="IBKR_PAPER_4002",
+    )
+    assert on_spec["execution_mechanism"] == "SYNTHETIC_BOATS_COLLARED_LIMIT"
+    assert "50bp" in on_spec["execution_mechanism_label"]
+    assert on_spec["collar_bps"] == pytest.approx(50.0)
+    assert on_spec["rapid_reentry_policy"]["max_rpm"] == 3000
+
+    # 2. Verify full Phase 4 & Phase 5 manifest propagation across all emitted tv_sota_pack files.
+    manifest_dir = tmp_path / "manifests"
+    out_dir = manifest_dir / "tv_sota_pack"
+    out_dir.mkdir(parents=True)
+    pre_bar = "2026-11-25T13:05:00Z"  # 08:05 ET (PRE_MARKET)
+    pre_now = datetime(2026, 11, 25, 13, 5, 10, tzinfo=UTC)
+
+    movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-25T13:05:05Z",
+                "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+                "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+                "macro_regime": {"regime": 1, "regime_label": "RISK_ON"},
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "NVDA",
+                        "exchange": "NASDAQ",
+                        "score": 94.5,
+                        "last_price": 146.20,
+                        "prior_close": 140.00,
+                        "session_move_pct": 4.43,
+                        "rvol_normalized": 4.8,
+                        "vol_buildup_ratio": 3.2,
+                        "unusual_volume_buildup": True,
+                        "darkpool_trf_ratio": 0.46,
+                        "natr_pct": 0.015,
+                        "potential_category": "PREMARKET_EARLY_IGNITION",
+                        "technical_alignment_score": 91.5,
+                        "early_ignition_detected": True,
+                        "premarket_ignition": True,
+                        "sudden_volume_surge": True,
+                        "tuning_run_id": "mlflow-run-phase4-001",
+                        "extreme_mover_eligible": True,
+                        "shortable": True,
+                        "easy_to_borrow": True,
+                        "bar_close_utc": pre_bar,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "paper_farm_execution_status.json").write_text(
+        json.dumps(
+            {
+                "status": "SUPERVISING",
+                "active_session": "PRE_MARKET",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "adopted_external_positions_count": 1,
+                "synthetic_offhours_trailed_count": 1,
+                "peak_reverse_armed_count": 1,
+                "rapid_reentry_ready_count": 1,
+                "active_positions": [
+                    {
+                        "symbol": "NVDA",
+                        "side": "LONG",
+                        "account": "ALPACA_PA1",
+                        "lane_id": "L1_ORB_BURST",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "entry_price": 145.00,
+                        "active_stop": 145.15,
+                        "active_session": "PRE_MARKET",
+                        "execution_mechanism": "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT",
+                        "non_noise_min_trail_pct": 0.0052,
+                        "adopted_external": True,
+                        "auto_adopted_by_engine": True,
+                        "fast_sell_armed": True,
+                        "peak_reverse_armed": True,
+                        "reentry_eligible_after_utc": "2026-11-25T13:06:00Z",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "early_mover_tuning_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.early-mover-tuning.v1",
+                "generated_at_utc": "2026-11-25T13:00:00Z",
+                "prewall_cutoff": "2026-10-15",
+                "study_name": "tier0_early_mover_compounding",
+                "trials_count": 12,
+                "mlflow_run_id": "mlflow-run-phase4-001",
+                "validation_metrics": {
+                    "recall_at_top15": 0.85,
+                    "median_time_to_first_detect_mins": 14.5,
+                    "mean_post_detect_mfe_capture_pct": 4.25,
+                },
+                "best_weights": {"w_move": 0.22, "w_rvol": 0.28, "w_premarket_ignition": 0.18},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "historical_early_mover_audit_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.historical-early-mover-audit.v1",
+                "generated_at_utc": "2026-11-25T13:01:00Z",
+                "prewall_cutoff": "2026-10-15",
+                "prewall_benchmark": {
+                    "recall_at_top15": 0.85,
+                    "median_time_to_first_detect_mins": 14.5,
+                    "mean_post_detect_mfe_capture_pct": 4.25,
+                },
+                "nvda_monday_premarket_audit": {
+                    "symbol": "NVDA",
+                    "split_tag": "out_of_sample_recent_replay",
+                    "first_detect_et": "2026-11-23T04:15:00-05:00",
+                    "first_detect_px": 141.50,
+                    "peak_px": 171.50,
+                    "category": "PREMARKET_EARLY_IGNITION",
+                },
+                "first_detection_timeline": [
+                    {
+                        "symbol": "NVDA",
+                        "date": "2026-10-14",
+                        "first_detect_et": "09:35 ET",
+                        "first_detect_px": 135.0,
+                        "session_high_px": 142.0,
+                        "post_detect_mfe_pct": 5.19,
+                        "category": "PREMARKET_EARLY_IGNITION",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "tv_cloud_mcp_sync_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-cloud-mcp-sync.v1",
+                "generated_at_utc": "2026-11-25T13:04:00Z",
+                "zero_cdp": True,
+                "paper_only": True,
+                "semi_auto_confirmed": False,
+                "live_execution_enabled": False,
+                "official_tv_mcp": {
+                    "status": "AUTHENTICATED_DAILY_QUOTA_EXHAUSTED",
+                    "endpoint": "https://mcp.tradingview.com/mcp",
+                },
+                "pinescript_reference_mcp": {
+                    "status": "VERIFIED_PASS",
+                    "package": "pinescript-mcp==0.7.7",
+                },
+                "scripts": {
+                    "tier0_omni_sota_24x5.pine": {"status": "VERIFIED_PASS", "error_count": 0},
+                    "tier0_sota_strategy_24x5.pine": {"status": "VERIFIED_PASS", "error_count": 0},
+                    "tier0_market_regime.pine": {"status": "VERIFIED_PASS", "error_count": 0},
+                    "tier0_darkpool_uv_buildup.pine": {"status": "VERIFIED_PASS", "error_count": 0},
+                },
+                "watchlist_sync_payload": {
+                    "name": "Tier-0 SOTA 24x5 Movers & Darkpool",
+                    "symbols": ["NASDAQ:NVDA", "AMEX:SOXL", "NASDAQ:TQQQ"],
+                },
+                "backtest_sync_queue": [
+                    {"symbol": "NASDAQ:NVDA", "script": "tier0_sota_strategy_24x5.pine"}
+                ],
+                "technicals_ratings": {
+                    "NASDAQ:NVDA": {"rating": "STRONG_BUY", "rating_score": 0.91},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "starred_frontier_landscape_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.starred-frontier-landscape.v1",
+                "generated_at_utc": "2026-11-25T13:04:30Z",
+                "prewall_cutoff": "2026-10-15",
+                "mapie": {
+                    "empirical_coverage": 0.91,
+                    "mean_interval_width": 0.014,
+                    "ok": True,
+                },
+                "skchange": {"changepoints": [12, 48], "ok": True},
+                "shapiq": {
+                    "top_interactions": [{"features": ["rvol", "move_pct"], "score": 0.14}],
+                    "ok": True,
+                },
+                "sqlglot": {"ok": True, "queries_checked": 4, "unsafe_blocked": 2},
+                "edgartools": {"pit_safe": True, "symbols": {"NVDA": {"catalyst_score": 0.8}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "l15_supply_chain_and_formal_audit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.l15-formal-supply-chain-audit.v1",
+                "generated_at_utc": "2026-11-25T13:04:45Z",
+                "z3": {"ok": True, "unsat_count": 5, "total": 5},
+                "crosshair": {"ok": True, "counterexamples": 0},
+                "inspect_ai": {"ok": True, "passed": 7, "total": 7},
+                "alertmanager": {"healthy": True, "rules_count": 12},
+                "skills": {"ok": True, "locked_skills_count": 46},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        out_dir=out_dir,
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        now_utc=pre_now,
+    )
+    nvda = doc["tickets"][0]
+    assert nvda["execution_mechanism"] == "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"
+    assert "35bp" in nvda["execution_mechanism_label"]
+    assert nvda["non_noise_min_trail_pct"] > 0.0
+    assert nvda["auto_reverse_policy"] == "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE"
+    assert nvda["rapid_reentry_rpm"] == 1000
+    assert nvda["reentry_cooldown_secs"] == 60
+    assert nvda["auto_adopted_by_engine"] is True
+    assert nvda["engine_adoption_status"] == "AUTO_ADOPTED_EXTERNAL"
+    assert nvda["potential_category"] == "PREMARKET_EARLY_IGNITION"
+    assert nvda["technical_alignment_score"] == pytest.approx(91.5)
+    assert nvda["premarket_ignition"] is True
+    assert nvda["sudden_volume_surge"] is True
+    assert nvda["tv_technicals_rating"] == "STRONG_BUY"
+
+    presets = json.loads((out_dir / "tv_order_presets.json").read_text(encoding="utf-8"))
+    card0 = presets["symbol_order_cards"][0]
+    assert card0["execution_mechanism"] == "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"
+    assert card0["auto_adopted_by_engine"] is True
+    assert card0["potential_category"] == "PREMARKET_EARLY_IGNITION"
+    assert card0["tv_technicals_rating"] == "STRONG_BUY"
+    assert card0["rapid_reentry_rpm"] == 1000
+
+    comp = json.loads((out_dir / "tv_compounding_manifest.json").read_text(encoding="utf-8"))
+    assert comp["lossless_24x5_summary"]["adopted_external_positions_count"] == 1
+    assert comp["lossless_24x5_summary"]["synthetic_offhours_trailed_count"] == 1
+    assert comp["early_mover_tuning_summary"]["present"] is True
+    assert comp["early_mover_tuning_summary"]["recall_at_top15"] == pytest.approx(0.85)
+    assert comp["historical_early_mover_audit_summary"]["present"] is True
+    assert comp["historical_early_mover_audit_summary"]["nvda_peak_px"] == pytest.approx(171.50)
+    assert comp["tv_cloud_mcp_sync_summary"]["present"] is True
+    assert comp["tv_cloud_mcp_sync_summary"]["compiled_pass_count"] == 4
+    assert comp["tv_cloud_mcp_sync_summary"]["cloud_watchlist_symbol_count"] == 3
+    assert comp["starred_frontier_landscape_summary"]["present"] is True
+    assert comp["starred_frontier_landscape_summary"]["mapie_empirical_coverage"] == pytest.approx(
+        0.91
+    )
+    assert comp["starred_frontier_landscape_summary"]["skchange_changepoints_count"] == 2
+    assert comp["starred_frontier_landscape_summary"]["sqlglot_pit_ok"] is True
+    assert comp["starred_frontier_landscape_summary"]["edgartools_pit_safe"] is True
+    assert comp["l15_formal_audit_summary"]["present"] is True
+    assert comp["l15_formal_audit_summary"]["z3_ok"] is True
+    assert comp["l15_formal_audit_summary"]["crosshair_ok"] is True
+    assert comp["l15_formal_audit_summary"]["alertmanager_healthy"] is True
+    assert comp["finos_command_center_summary"]["tabs_count"] == 5
+    assert comp["finos_command_center_summary"]["widgets_count"] == 26
+    assert "@finos-workspace/mermaid@1.0.0" in comp["finos_command_center_summary"]["plugins"]
+    assert comp["artifacts"]["cloud_mcp_sync_json"] == "tv_cloud_mcp_sync_manifest.json"
+    assert (
+        comp["artifacts"]["starred_frontier_landscape_json"]
+        == "../starred_frontier_landscape_manifest.json"
+    )
+    assert comp["artifacts"]["l15_formal_audit_json"] == "../l15_supply_chain_and_formal_audit.json"
+
+    layout_bp = json.loads((out_dir / "tv_layout_blueprints.json").read_text(encoding="utf-8"))
+    assert layout_bp["finos_openbb_command_center"]["widgets_count"] == 26
+    assert len(layout_bp["finos_openbb_command_center"]["tabs"]) == 5
+    assert "@finos-workspace/mermaid@1.0.0" in layout_bp["finos_openbb_command_center"]["plugins"]
+    assert layout_bp["early_mover_tuning_summary"]["present"] is True
+    assert layout_bp["historical_early_mover_audit_summary"]["present"] is True
+    assert layout_bp["tv_cloud_mcp_sync_summary"]["present"] is True
+    assert layout_bp["starred_frontier_landscape_summary"]["present"] is True
+    assert layout_bp["l15_formal_audit_summary"]["present"] is True
+
+    quick_md = (out_dir / "TV_LAYOUT_AND_PRESET_QUICKSTART.md").read_text(encoding="utf-8")
+    cards_md = (out_dir / "TV_ORDER_PRESET_CARDS.md").read_text(encoding="utf-8")
+    tickets_md = (out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md").read_text(encoding="utf-8")
+    assert "85.0%" in quick_md and "4/4 PASS" in quick_md
+    assert "5-Tab Command Center" in quick_md and "26 Widgets" in quick_md
+    assert "@finos-workspace/mermaid" in quick_md and "tier0_live_architecture_mermaid" in quick_md
+    assert "starred_frontier_landscape_manifest.json" in quick_md
+    assert "l15_supply_chain_and_formal_audit.json" in quick_md
+    assert "PREMARKET_EARLY_IGNITION" in cards_md and "STRONG_BUY" in cards_md
+    assert "AUTO_ADOPTED_EXTERNAL" in tickets_md and "1000 rpm" in tickets_md
+
+    for artifact in out_dir.iterdir():
+        if artifact.suffix not in {".json", ".md", ".txt"}:
+            continue
+        blob = artifact.read_text(encoding="utf-8")
+        for forbidden in ("9223", "api.alpaca.markets", ":4001", ":7496", ":8798", ":8796"):
+            assert forbidden not in blob, f"Forbidden token {forbidden!r} in {artifact.name}"
+
+
+def test_order_preset_cards_full_hydration_early_ignition_sorting_and_receipt_refresh(
+    tmp_path: Path,
+) -> None:
+    """Verify zero 0.0 R-lock/stop-limit blanks, extended-hours staging, sorting & receipt sync."""
+    manifest_dir = tmp_path / "manifests"
+    out_dir = manifest_dir / "tv_sota_pack"
+    out_dir.mkdir(parents=True)
+
+    # Active PRE_MARKET instant: 2026-11-27 05:58:40 ET = 2026-11-27 10:58:40 UTC.
+    pre_bar = "2026-11-27T10:58:00+00:00"
+    pre_now = datetime(2026, 11, 27, 10, 58, 40, tzinfo=UTC)
+    pre_bar_ms = int(datetime(2026, 11, 27, 10, 58, 0, tzinfo=UTC).timestamp() * 1000)
+    on_bar_ms = int(datetime(2026, 11, 27, 4, 58, 0, tzinfo=UTC).timestamp() * 1000)
+
+    # Seed prior-session OVERNIGHT and active-session PRE_MARKET raw PINE_STAGED alerts
+    # (note: raw staged JSON intentionally omits R-lock/stop-limit/rating/lane fields).
+    raw_staged = {
+        "schema_version": "tier0.staged-tv-presets.v1",
+        "updated_at_utc": "2026-11-27T10:46:15+00:00",
+        "semi_auto_confirmed": False,
+        "presets": [
+            {
+                "alert_id": "29f7d3087c18367f",
+                "schema_version": "tier0.tv-alert.v1",
+                "symbol": "SQQQ",
+                "ts_utc_ms": on_bar_ms,
+                "bar_confirmed": True,
+                "side": "BUY",
+                "qty": 1,
+                "venue": "ALPACA",
+                "venue_profile": "ALPACA_PAPER_1000",
+                "session": "OVERNIGHT",
+                "order_type": "STOP_LIMIT",
+                "trigger_price": 46.59,
+                "stop_price": 46.13,
+                "stop_distance_pct": 0.009873,
+                "limit_collar_bps": 50.0,
+                "trailing_schedule": "tight_near_lossless",
+                "natr_pct": 0.0016,
+                "auto_reverse": True,
+                "auto_reentry": True,
+                "reentry_cooldown_secs": 60,
+                "strategy_id": "SignalExecutionStrategy",
+                "semi_auto_confirmed": False,
+                "staged_at_utc": "2026-11-27T04:58:10+00:00",
+                "data_source": "tradingview_pine_v6",
+            },
+            {
+                "alert_id": "feabe4e34db95720",
+                "schema_version": "tier0.tv-alert.v1",
+                "symbol": "MSTR",
+                "ts_utc_ms": on_bar_ms,
+                "bar_confirmed": True,
+                "side": "BUY",
+                "qty": 1,
+                "venue": "ALPACA",
+                "venue_profile": "ALPACA_PAPER_1000",
+                "session": "OVERNIGHT",
+                "order_type": "STOP_LIMIT",
+                "trigger_price": 83.99,
+                "stop_price": 83.16,
+                "stop_distance_pct": 0.009882,
+                "limit_collar_bps": 50.0,
+                "trailing_schedule": "tight_near_lossless",
+                "natr_pct": 0.0024,
+                "auto_reverse": True,
+                "auto_reentry": True,
+                "reentry_cooldown_secs": 60,
+                "strategy_id": "SignalExecutionStrategy",
+                "semi_auto_confirmed": False,
+                "staged_at_utc": "2026-11-27T04:58:15+00:00",
+                "data_source": "tradingview_pine_v6",
+            },
+            {
+                "alert_id": "df527f1380ac1fb8",
+                "schema_version": "tier0.tv-alert.v1",
+                "symbol": "SOXL",
+                "ts_utc_ms": pre_bar_ms,
+                "bar_confirmed": True,
+                "side": "BUY",
+                "qty": 1,
+                "venue": "ALPACA",
+                "venue_profile": "ALPACA_PAPER_1000",
+                "session": "PRE_MARKET",
+                "order_type": "STOP_LIMIT",
+                "trigger_price": 36.72,
+                "stop_price": 36.27,
+                "stop_distance_pct": 0.012255,
+                "limit_collar_bps": 35.0,
+                "trailing_schedule": "tight_near_lossless",
+                "natr_pct": 0.0024,
+                "auto_reverse": True,
+                "auto_reentry": True,
+                "reentry_cooldown_secs": 60,
+                "strategy_id": "SignalExecutionStrategy",
+                "semi_auto_confirmed": False,
+                "staged_at_utc": "2026-11-27T10:58:10+00:00",
+                "data_source": "tradingview_pine_v6",
+            },
+        ],
+    }
+    (out_dir / "staged_tv_presets.json").write_text(json.dumps(raw_staged), encoding="utf-8")
+
+    # Seed active broker-adopted TQQQ/SQQQ positions on ALPACA_PA3.
+    (manifest_dir / "paper_farm_execution_status.json").write_text(
+        json.dumps(
+            {
+                "status": "SUPERVISING",
+                "active_session": "PRE_MARKET",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "managed_symbols": ["SQQQ", "TQQQ"],
+                "active_positions": [
+                    {
+                        "symbol": "SQQQ",
+                        "account": "ALPACA_PA3",
+                        "lane_id": "L3_AVWAP_TIGHT_LOCK",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "side": "LONG",
+                        "qty": 1.0,
+                        "entry_price": 45.78,
+                        "active_stop": 45.21,
+                        "active_session": "PRE_MARKET",
+                        "adopted_external": True,
+                    },
+                    {
+                        "symbol": "TQQQ",
+                        "account": "ALPACA_PA3",
+                        "lane_id": "L3_AVWAP_TIGHT_LOCK",
+                        "venue_profile": "ALPACA_PAPER_1000",
+                        "side": "LONG",
+                        "qty": 1.0,
+                        "entry_price": 48.56,
+                        "active_stop": 48.83,
+                        "active_session": "PRE_MARKET",
+                        "adopted_external": True,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Seed stale tv_mcp_sync_receipt.json + tv_cloud_mcp_sync_manifest.json with real quota error.
+    verbatim_quota = "TOOL_QUOTA_EXCEEDED - You've reached your daily usage limit"
+    (out_dir / "tv_mcp_sync_receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-mcp-sync-receipt.v1",
+                "generated_at_utc": "2026-11-27T06:26:45+00:00",
+                "zero_cdp": True,
+                "paper_only": True,
+                "semi_auto_confirmed": False,
+                "live_execution_enabled": False,
+                "post_fix_replay_status": "DEFERRED_DAILY_QUOTA_RESET",
+                "official_tv_mcp": {
+                    "status": "AUTHENTICATED_DAILY_QUOTA_EXHAUSTED",
+                    "verbatim_error": verbatim_quota,
+                },
+                "pinescript_reference_mcp": {"status": "VERIFIED_PASS"},
+                "pine_cloud_validations": {
+                    "pine/tier0_omni_sota_24x5.pine": {
+                        "script_id": "USER;real_existing_id",
+                        "ok": True,
+                        "status": "PASS",
+                        "error_count": 0,
+                    }
+                },
+                "technicals_ratings": {
+                    "BATS:DRAM": {"rating": "STRONG_BUY", "rating_score": 0.88},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "tv_cloud_mcp_sync_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-cloud-mcp-sync.v1",
+                "generated_at_utc": "2026-11-27T06:17:04+00:00",
+                "pinescript_reference_mcp": {
+                    "package": "pinescript-mcp==0.7.7",
+                    "status": "VERIFIED_PASS",
+                    "valid_count": 48,
+                    "validated_functions_count": 48,
+                    "invalid_count": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Extended-hours movers: ALL have extreme_mover_eligible=False (honest!), with causal ignition,
+    # active broker adoption, and liquid >= $10 setup signals (plus a sub-$10 ticker excluded).
+    movers_path = manifest_dir / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-27T10:58:35+00:00",
+                "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+                "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+                "macro_regime": {"regime": 0, "regime_label": "NEUTRAL"},
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "DRAM",
+                        "exchange": "BATS",
+                        "score": 54.05,
+                        "last_price": 37.41,
+                        "prior_close": 36.11,
+                        "session_move_pct": 3.60,
+                        "rvol_normalized": 0.72,
+                        "vol_buildup_ratio": 2.38,
+                        "unusual_volume_buildup": True,
+                        "hidden_volume_ratio": 1.924,
+                        "darkpool_trf_ratio": 0.0447,
+                        "watch_tier": "PREMARKET_IGNITION",
+                        "potential_category": "PREMARKET_EARLY_IGNITION",
+                        "technical_alignment_score": 65.66,
+                        "premarket_ignition": True,
+                        "early_ignition_detected": True,
+                        "sudden_volume_surge": True,
+                        "technicals": {"above_vwap": True},
+                        "natr_pct": 0.001,
+                        "extreme_mover_eligible": False,
+                        "shortable": True,
+                        "easy_to_borrow": True,
+                        "bar_close_utc": pre_bar,
+                    },
+                    {
+                        "rank": 2,
+                        "symbol": "TQQQ",
+                        "exchange": "NASDAQ",
+                        "score": 48.0,
+                        "last_price": 48.80,
+                        "prior_close": 49.14,
+                        "session_move_pct": -0.69,
+                        "rvol_normalized": 0.17,
+                        "unusual_volume_buildup": True,
+                        "darkpool_trf_ratio": 0.4861,
+                        "watch_tier": "PINNED_STANDBY",
+                        "potential_category": "SUDDEN_VOLUME_SURGE",
+                        "technical_alignment_score": 51.42,
+                        "sudden_volume_surge": True,
+                        "pinned": True,
+                        "technicals": {"above_vwap": True},
+                        "natr_pct": 0.001,
+                        "extreme_mover_eligible": False,
+                        "bar_close_utc": pre_bar,
+                    },
+                    {
+                        "rank": 3,
+                        "symbol": "NVDL",
+                        "exchange": "NASDAQ",
+                        "score": 45.2,
+                        "last_price": 14.71,
+                        "prior_close": 14.50,
+                        "session_move_pct": 1.45,
+                        "rvol_normalized": 0.18,
+                        "unusual_volume_buildup": True,
+                        "darkpool_trf_ratio": 0.3117,
+                        "watch_tier": "PINNED_STANDBY",
+                        "potential_category": "SUDDEN_VOLUME_SURGE",
+                        "technical_alignment_score": 66.27,
+                        "early_ignition_detected": True,
+                        "sudden_volume_surge": True,
+                        "technicals": {"above_vwap": True},
+                        "natr_pct": 0.0014,
+                        "extreme_mover_eligible": False,
+                        "bar_close_utc": pre_bar,
+                    },
+                    {
+                        "rank": 4,
+                        "symbol": "PENNY",
+                        "exchange": "NASDAQ",
+                        "score": 40.0,
+                        "last_price": 4.25,
+                        "session_move_pct": 5.0,
+                        "rvol_normalized": 1.1,
+                        "premarket_ignition": True,
+                        "early_ignition_detected": True,
+                        "technical_alignment_score": 70.0,
+                        "natr_pct": 0.015,
+                        "extreme_mover_eligible": False,
+                        "bar_close_utc": pre_bar,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doc = refresh_tickets_from_paths(
+        movers_path=movers_path,
+        out_dir=out_dir,
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        now_utc=pre_now,
+    )
+
+    # 1. Strict extreme flag remains 100% honest (False); early-ignition presets are staged cleanly.
+    assert doc["active_session"] == "PRE_MARKET"
+    assert doc["extreme_mover_confirmed_count"] == 0
+    assert doc["session_early_ignition_count"] >= 3  # DRAM, TQQQ, NVDL (+ SQQQ adopted)
+    assert doc["schema_validated_count"] == len(doc["tickets"]) > 0
+    assert doc["charter_guards"]["qty"] == 1
+    assert doc["charter_guards"]["semi_auto_confirmed"] is False
+    assert doc["charter_guards"]["live_execution_enabled"] is False
+    ticket_syms = {t["symbol"] for t in doc["tickets"]}
+    assert {"DRAM", "TQQQ", "SQQQ", "NVDL"} <= ticket_syms
+    assert "PENNY" not in ticket_syms  # < $10 liquidity floor enforced
+    for t in doc["tickets"]:
+        assert t["extreme_mover_eligible"] is False
+        assert t["preset_tier"] == "SESSION_EARLY_IGNITION_PRESET"
+        assert t["action_gate"] == "SESSION_EARLY_IGNITION_PRESET"
+        assert t["order_type_now"] == "STOP_LIMIT"
+        assert t["collar_now_bps"] == 35
+
+    # 2. staged_scan_presets.json is non-empty and every preset passes strict TvAlertV1.
+    staged_scan = json.loads((out_dir / "staged_scan_presets.json").read_text(encoding="utf-8"))
+    assert staged_scan["semi_auto_confirmed"] is False
+    assert staged_scan["extreme_mover_confirmed_count"] == 0
+    assert staged_scan["session_early_ignition_count"] == len(staged_scan["presets"]) >= 3
+    for p in staged_scan["presets"]:
+        assert p["qty"] == 1 and p["semi_auto_confirmed"] is False
+        TvAlertV1.model_validate(p)
+
+    # 3. Direct build_tv_order_presets on BOTH active PRE_MARKET and prior OVERNIGHT PINE_STAGED
+    # cards guarantees ZERO 0.0 R-lock/stop-limit blanks, non-empty rating/lane & clean sorting.
+    presets_doc = build_tv_order_presets(
+        doc,
+        manual_staged_presets=raw_staged["presets"],
+        paper_coordination=doc["paper_farm_coordination"],
+        tv_cloud_sync=json.loads(
+            (out_dir / "tv_mcp_sync_receipt.json").read_text(encoding="utf-8")
+        ),
+        movers_entries=json.loads(movers_path.read_text(encoding="utf-8"))["entries"],
+    )
+    cards = presets_doc["symbol_order_cards"]
+    assert len(cards) >= 7
+    assert presets_doc["qty"] == 1
+    assert presets_doc["semi_auto_confirmed"] is False
+    assert presets_doc["live_execution_enabled"] is False
+
+    # Active-session (PRE_MARKET) cards must all precede prior-session (OVERNIGHT) staged cards.
+    sessions_order = [c["session"] for c in cards]
+    first_overnight_idx = sessions_order.index("OVERNIGHT")
+    assert all(s == "PRE_MARKET" for s in sessions_order[:first_overnight_idx])
+    assert all(s == "OVERNIGHT" for s in sessions_order[first_overnight_idx:])
+
+    for c in cards:
+        assert c["qty"] == 1
+        assert c["semi_auto_confirmed"] is False
+        assert c["live_execution_enabled"] is False
+        assert c["entry_ref_price"] > 0.0
+        assert c["entry_limit_price"] > 0.0
+        assert c["stop_trigger_price"] > 0.0
+        assert c["stop_limit_price"] > 0.0
+        assert c["be_plus_fee_floor"] > 0.0
+        assert c["lock_at_1r"] > 0.0
+        assert c["lock_at_2r"] > 0.0
+        assert c["lock_at_3r"] > 0.0
+        assert c["fast_sell_rev_trigger"] > 0.0
+        assert c["non_noise_min_trail_pct"] > 0.0
+        assert c["peak_climax_reverse_trigger_pct"] > 0.0
+        assert c["technical_alignment_score"] > 0.0
+        assert c["tv_technicals_rating"] in {
+            "STRONG_BUY",
+            "BUY",
+            "NEUTRAL",
+            "SELL",
+            "STRONG_SELL",
+        }
+        assert c["ta_rating_source"] in {"tv_cloud_mcp", "local_ta_composite"}
+        assert c["lane_account"] and c["paper_lane_account"] == c["lane_account"]
+        assert c["lane_id"] and c["paper_lane_id"] == c["lane_id"]
+        if c["side"] == "BUY":
+            assert (
+                c["stop_limit_price"]
+                <= c["stop_trigger_price"]
+                < c["entry_ref_price"]
+                < c["be_plus_fee_floor"]
+                <= c["lock_at_1r"]
+                < c["lock_at_2r"]
+                < c["lock_at_3r"]
+            )
+
+    dram_card = next(c for c in cards if c["symbol"] == "DRAM")
+    assert dram_card["tv_technicals_rating"] == "STRONG_BUY"
+    assert dram_card["ta_rating_source"] == "tv_cloud_mcp"
+    mstr_card = next(c for c in cards if c["symbol"] == "MSTR")
+    assert mstr_card["card_kind"] == "PINE_STAGED"
+    assert mstr_card["ta_rating_source"] == "local_ta_composite"
+    assert mstr_card["stop_limit_price"] < mstr_card["stop_trigger_price"]
+
+    # 4. Markdown consoles render real presets, 4-session panel table & valid TvAlertV1 webhooks.
+    tickets_md = (out_dir / "LIVE_HALF_AUTO_ORDER_TICKETS.md").read_text(encoding="utf-8")
+    assert "No extreme movers" not in tickets_md
+    assert "SESSION_EARLY_IGNITION_PRESET" in tickets_md
+    assert f"`{doc['schema_validated_count']}/{len(doc['tickets'])}`" in tickets_md
+
+    cards_md = (out_dir / "TV_ORDER_PRESET_CARDS.md").read_text(encoding="utf-8")
+    assert "## 1-Click Native TradingView Order Panel Field Table (All 4 Sessions)" in cards_md
+    assert "## Copy-Paste TradingView Pine v6 TvAlertV1 JSON Webhook Snippets" in cards_md
+    for omni_id in (
+        "AUTO_REGIME_ADAPTIVE",
+        "LOSSLESS_TIGHT_SCALP",
+        "CRASH_DEFENSIVE_INVERSE",
+        "MINERVINI_VCP_BREAKOUT",
+        "STOCKBEE_EP_MOMENTUM_BURST",
+        "STOCKBEE_EXHAUSTION_HAMMER",
+        "PARABOLIC_EXHAUSTION_SHORT",
+        "OVERNIGHT_24X5_IBKR",
+    ):
+        assert omni_id in cards_md
+    # Parse and validate embedded webhook JSON snippets against strict TvAlertV1.
+    json_snippets = re.findall(r'\{"schema_version":"tier0\.tv-alert\.v1"[^\n`]+\}', cards_md)
+    assert len(json_snippets) >= 9  # 1 active top card + 8 Omni situations
+    for raw_snip in json_snippets:
+        parsed = json.loads(raw_snip)
+        assert parsed["qty"] == 1 and parsed["semi_auto_confirmed"] is False
+        TvAlertV1.model_validate(parsed)
+
+    # 5. tv_mcp_sync_receipt.json refreshes timestamp & local parity without fabricating cloud IDs.
+    receipt = json.loads((out_dir / "tv_mcp_sync_receipt.json").read_text(encoding="utf-8"))
+    assert receipt["generated_at_utc"] == pre_now.isoformat()
+    assert receipt["official_tv_mcp"]["status"] == "AUTHENTICATED_DAILY_QUOTA_EXHAUSTED"
+    assert receipt["official_tv_mcp"]["verbatim_error"] == verbatim_quota
+    assert receipt["pine_cloud_validations"]["pine/tier0_omni_sota_24x5.pine"]["script_id"] == (
+        "USER;real_existing_id"
+    )
+    assert receipt["local_mcp_parity"]["pinescript_mcp"]["valid_functions"] == 48
+    assert receipt["local_mcp_parity"]["nautilus_engine"]["tools_count"] == 10
+    assert receipt["live_pack_counts"]["session_early_ignition_count"] >= 3
+    assert receipt["live_pack_counts"]["staged_scan_count"] >= 3
+    assert receipt["paper_only"] is True
+    assert receipt["semi_auto_confirmed"] is False
+    assert receipt["live_execution_enabled"] is False
+
+
+def test_prune_and_archive_staged_presets_and_24x5_preset_setup_automation(
+    tmp_path: Path,
+) -> None:
+    import duckdb
+
+    manifest_dir = tmp_path / "manifests"
+    pack_dir = manifest_dir / "tv_sota_pack"
+    pack_dir.mkdir(parents=True)
+    # 2026-11-27 11:05:00Z = 06:05 ET (PRE_MARKET on Black Friday)
+    pre_now = datetime(2026, 11, 27, 11, 5, 10, tzinfo=UTC)
+    pre_bar_ms = int(datetime(2026, 11, 27, 11, 5, 0, tzinfo=UTC).timestamp() * 1000)
+
+    # Seed Paper Farm DuckDB ledger with an executed TV alert (noesis-tv-<alert_id>).
+    with duckdb.connect(str(manifest_dir / "paper_lane_pa3.duckdb")) as conn:
+        conn.execute("CREATE TABLE paper_entry_decisions (client_order_id VARCHAR, symbol VARCHAR)")
+        conn.execute(
+            "INSERT INTO paper_entry_decisions VALUES ('noesis-tv-f34c45558aabc11f', 'SQQQ')"
+        )
+
+    # Seed paper_farm_execution_status.json with a second executed TV order + locked symbols.
+    (manifest_dir / "paper_farm_execution_status.json").write_text(
+        json.dumps(
+            {
+                "status": "SUPERVISING",
+                "active_session": "PRE_MARKET",
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "managed_symbols": ["SQQQ", "TQQQ"],
+                "active_positions": [
+                    {
+                        "symbol": "SQQQ",
+                        "account": "ALPACA_PA3",
+                        "client_order_id": "noesis-tv-c20975fc3b300caf",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    staged_path = pack_dir / "staged_tv_presets.json"
+    staged_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.staged-tv-presets.v1",
+                "updated_at_utc": "2026-11-27T10:46:15+00:00",
+                "semi_auto_confirmed": False,
+                "presets": [
+                    {
+                        **_valid_alert(
+                            symbol="MSTR",
+                            session="OVERNIGHT",
+                            order_type="STOP_LIMIT",
+                            trigger_price=180.0,
+                            stop_price=178.2,
+                            limit_collar_bps=50.0,
+                            venue="ALPACA",
+                        ),
+                        "alert_id": "feabe4e34db95720",
+                        "staged_at_utc": "2026-11-27T02:32:52+00:00",
+                    },
+                    {
+                        **_valid_alert(
+                            symbol="SQQQ",
+                            session="PRE_MARKET",
+                            venue="ALPACA",
+                            venue_profile="ALPACA_PAPER_1000",
+                            trigger_price=45.78,
+                            stop_price=45.21,
+                        ),
+                        "alert_id": "f34c45558aabc11f",
+                        "staged_at_utc": "2026-11-27T10:45:40+00:00",
+                    },
+                    {
+                        **_valid_alert(
+                            symbol="TQQQ",
+                            session="PRE_MARKET",
+                            venue="ALPACA",
+                            venue_profile="ALPACA_PAPER_1000",
+                            trigger_price=48.56,
+                            stop_price=47.96,
+                        ),
+                        "alert_id": "c20975fc3b300caf",
+                        "staged_at_utc": "2026-11-27T10:45:45+00:00",
+                    },
+                    {
+                        **_valid_alert(
+                            symbol="AMD",
+                            session="OVERNIGHT",
+                            order_type="STOP_LIMIT",
+                            trigger_price=150.0,
+                            stop_price=148.5,
+                            limit_collar_bps=50.0,
+                            venue="ALPACA",
+                            venue_profile="ALPACA_PAPER_1000",
+                        ),
+                        "alert_id": "1111222233334444",
+                        "staged_at_utc": "2026-11-27T03:00:00+00:00",
+                    },
+                    {
+                        **_valid_alert(
+                            symbol="SOXL",
+                            ts_utc_ms=pre_bar_ms,
+                            session="PRE_MARKET",
+                            venue="ALPACA",
+                            venue_profile="ALPACA_PAPER_1000",
+                            trigger_price=36.28,
+                            stop_price=35.83,
+                        ),
+                        "alert_id": "df527f1380ac1fb8",
+                        "staged_at_utc": "2026-11-27T10:46:15+00:00",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    prune_res = prune_and_archive_staged_presets(
+        staged_path=staged_path,
+        manifest_dir=manifest_dir,
+        now_utc=pre_now,
+    )
+    assert prune_res["ok"] is True
+    assert prune_res["active_session"] == "PRE_MARKET"
+    assert prune_res["kept_count"] == 1
+    assert prune_res["archived_count"] == 4
+    assert prune_res["kept_alert_ids"] == ["df527f1380ac1fb8"]
+    assert prune_res["pruned_counts"] == {
+        "EXPIRED_SESSION": 1,
+        "EXECUTED_ARCHIVED": 2,
+        "LEGACY_PRUNED": 1,
+    }
+
+    db_path = pack_dir / "tv_half_auto_audit.duckdb"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        assert len(conn.execute("DESCRIBE tv_staged_presets").fetchall()) == 30
+        statuses = dict(conn.execute("SELECT alert_id, status FROM tv_staged_presets").fetchall())
+    assert statuses["feabe4e34db95720"] == "LEGACY_PRUNED"
+    assert statuses["f34c45558aabc11f"] == "EXECUTED_ARCHIVED"
+    assert statuses["c20975fc3b300caf"] == "EXECUTED_ARCHIVED"
+    assert statuses["1111222233334444"] == "EXPIRED_SESSION"
+
+    audit_summary = load_tv_audit_summary(db_path)
+    assert audit_summary["by_status"]["EXECUTED_ARCHIVED"] == 2
+    assert audit_summary["by_status"]["LEGACY_PRUNED"] == 1
+    assert audit_summary["by_status"]["EXPIRED_SESSION"] == 1
+
+    # Verify unified preset-setup skips locked SQQQ/TQQQ & stages fresh unlocked movers.
+    (manifest_dir / "live_whole_market_movers_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": "2026-11-27T11:05:05Z",
+                "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+                "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+                "macro_regime": {"regime": 0, "regime_label": "NEUTRAL"},
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "SQQQ",
+                        "last_price": 46.05,
+                        "session_move_pct": 1.21,
+                        "rvol_normalized": 1.6,
+                        "natr_pct": 0.012,
+                        "watch_tier": "PREMARKET_IGNITION",
+                        "calibrated_category": "PARABOLIC_CLIMAX_SHORT_REVERSAL",
+                        "darkpool_trf_ratio": 0.31,
+                        "technical_alignment_score": 64.2,
+                        "bar_close_utc": "2026-11-27T11:05:00Z",
+                    },
+                    {
+                        "rank": 2,
+                        "symbol": "DRAM",
+                        "last_price": 37.24,
+                        "session_move_pct": 3.13,
+                        "rvol_normalized": 2.4,
+                        "natr_pct": 0.012,
+                        "min_trailing_pct": 0.0045,
+                        "watch_tier": "PREMARKET_IGNITION",
+                        "calibrated_category": "SUDDEN_VOLUME_IGNITION",
+                        "darkpool_trf_ratio": 0.14,
+                        "technical_alignment_score": 68.5,
+                        "premarket_ignition": True,
+                        "bar_close_utc": "2026-11-27T11:05:00Z",
+                    },
+                    {
+                        "rank": 3,
+                        "symbol": "EWZ",
+                        "last_price": 33.80,
+                        "session_move_pct": 3.46,
+                        "rvol_normalized": 2.1,
+                        "natr_pct": 0.011,
+                        "watch_tier": "PREMARKET_IGNITION",
+                        "calibrated_category": "SUDDEN_VOLUME_IGNITION",
+                        "darkpool_trf_ratio": 0.24,
+                        "technical_alignment_score": 71.2,
+                        "premarket_ignition": True,
+                        "bar_close_utc": "2026-11-27T11:05:00Z",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-paper venue_profile"):
+        run_preset_setup_automation(
+            manifest_dir=manifest_dir,
+            out_dir=pack_dir,
+            venue="ALPACA",
+            venue_profile="ALPACA_LIVE_PRO_LINE_1000",
+            now_utc=pre_now,
+        )
+
+    setup_res = run_preset_setup_automation(
+        manifest_dir=manifest_dir,
+        out_dir=pack_dir,
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        max_stage=3,
+        now_utc=pre_now,
+    )
+    assert setup_res["ok"] is True
+    assert setup_res["paper_only"] is True
+    assert setup_res["semi_auto_confirmed"] is False
+    assert setup_res["live_execution_enabled"] is False
+    assert setup_res["active_staged_count"] == 3
+    assert set(setup_res["active_staged_symbols"]) == {"SOXL", "DRAM", "EWZ"}
+    assert "SQQQ" in setup_res["locked_symbols_skipped"]
+
+    staged_after = json.loads(staged_path.read_text(encoding="utf-8"))
+    assert staged_after["semi_auto_confirmed"] is False
+    assert len(staged_after["presets"]) == 3
+    for row in staged_after["presets"]:
+        assert row["session"] == "PRE_MARKET"
+        assert row["venue_profile"] == "ALPACA_PAPER_1000"
+        assert row["qty"] == 1 and row["semi_auto_confirmed"] is False
+        assert row["min_trailing_pct"] > 0.0
+        assert row["auto_reverse_policy"] == "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE"
+        sop = row["session_order_presets"]
+        assert sorted(sop.keys()) == ["AFTER_HOURS", "OVERNIGHT", "PRE_MARKET", "RTH"]
+        assert sop["RTH"]["order_mode"] == "STOP_MARKET"
+        assert sop["RTH"]["alpaca_order_request"] == "TrailingStopOrderRequest"
+        assert sop["RTH"]["nautilus_order_type"] == "TrailingStopMarketOrder"
+        assert sop["PRE_MARKET"]["order_mode"] == "STOP_LIMIT"
+        assert sop["PRE_MARKET"]["collar_bps"] == pytest.approx(35.0)
+        assert sop["PRE_MARKET"]["extended_hours"] is True
+        assert sop["PRE_MARKET"]["synthetic_stop_ratchet"] is True
+        assert sop["PRE_MARKET"]["alpaca_entry_modify_rpm_budget"] == 900
+        assert sop["PRE_MARKET"]["alpaca_exit_reserve_rpm"] == 100
+        assert sop["PRE_MARKET"]["ibkr_max_rpm"] == 3000
+        assert sop["PRE_MARKET"]["ibkr_exit_reserve_rpm"] == 300
+        assert sop["OVERNIGHT"]["collar_bps"] == pytest.approx(50.0)
+        assert set(row["r_lock_levels"].keys()) >= {
+            "be_plus_fee_price",
+            "lock_at_1r",
+            "lock_at_2r",
+            "lock_at_3r",
+            "fast_sell_non_noise_reverse_trigger",
+        }
+        TvAlertV1.model_validate(row)
+
+    order_presets = json.loads((pack_dir / "tv_order_presets.json").read_text(encoding="utf-8"))
+    assert order_presets["symbol_order_cards"]
+    for card in order_presets["symbol_order_cards"]:
+        assert sorted(card["session_order_presets"].keys()) == [
+            "AFTER_HOURS",
+            "OVERNIGHT",
+            "PRE_MARKET",
+            "RTH",
+        ]
+        assert "momentum_trigger_reason" in card
+
+    tv_sh = (REPO_ROOT / "scripts" / "tv_console.sh").read_text(encoding="utf-8")
+    tv_ps = (REPO_ROOT / "scripts" / "tv_console.ps1").read_text(encoding="utf-8")
+    assert "tv_preset_setup()" in tv_sh and "tv_prune_stale()" in tv_sh
+    assert "preset-setup|tv-preset-setup" in tv_sh
+    assert "function tv-preset-setup" in tv_ps and "function tv-prune-stale" in tv_ps
+
+
+def test_session_order_presets_sell_card_preserves_canonical_overnight_short_route() -> None:
+    """SELL/SHORT standby & ignition cards must never inherit BUY overnight short flags."""
+    from tier0_sota.live.paper_farm import build_symbol_24x5_session_presets
+    from tier0_sota.tv.tickets import _ensure_symbol_session_order_presets
+
+    stale_buy_sop = build_symbol_24x5_session_presets(
+        symbol="EWZ",
+        side="LONG",
+        ref_price=Decimal("33.88"),
+        natr_pct=Decimal("0.012"),
+        alpaca_venue_profile="ALPACA_PAPER_200",
+        alpaca_max_rpm=200,
+    )
+    stale_buy_sop["OVERNIGHT"]["custom_tag"] = "preserved"
+    assert stale_buy_sop["OVERNIGHT"]["alpaca_overnight_short_supported"] is True
+    assert stale_buy_sop["OVERNIGHT"]["overnight_short_route"] is None
+
+    merged = _ensure_symbol_session_order_presets(
+        stale_buy_sop,
+        symbol="EWZ",
+        side="SHORT",
+        ref_price=Decimal("33.88"),
+        natr_pct=Decimal("0.012"),
+        venue_profile="ALPACA_PAPER_1000",
+    )
+    ovn = merged["OVERNIGHT"]
+    assert ovn["alpaca_overnight_short_supported"] is False
+    assert str(ovn["overnight_short_route"] or "").startswith("IBKR_PAPER_4002_OR_INVERSE_ETF_")
+    assert ovn["initial_stop_price"] > ovn["entry_limit_price"]
+    assert ovn["alpaca_venue_profile"] == "ALPACA_PAPER_1000"
+    assert ovn["alpaca_max_rpm"] == 1000
+    assert ovn["custom_tag"] == "preserved"
+
+    presets = build_tv_order_presets(
+        {
+            "generated_at_et": "2026-11-27T06:45:00-05:00",
+            "active_session": "PRE_MARKET",
+            "venue": "ALPACA",
+            "venue_profile": "ALPACA_PAPER_1000",
+            "macro_regime": {"regime": -1, "regime_label": "BEAR"},
+            "tickets": [
+                {
+                    "symbol": "EWZ",
+                    "side": "SELL",
+                    "session": "PRE_MARKET",
+                    "trigger_price": 33.88,
+                    "stop_price": 34.30,
+                    "natr_pct": 0.012,
+                    "rvol_normalized": 2.6,
+                    "score": 82.0,
+                    "venue": "ALPACA",
+                    "venue_profile": "ALPACA_PAPER_1000",
+                    "order_type": "STOP_LIMIT",
+                    "limit_collar_bps": 35.0,
+                    "trailing_schedule": "tight_near_lossless",
+                    "session_order_presets": stale_buy_sop,
+                }
+            ],
+            "standby_presets": [
+                {
+                    "symbol": "ANT",
+                    "side": "SELL",
+                    "session": "PRE_MARKET",
+                    "trigger_price": 85.84,
+                    "stop_price": 86.91,
+                    "natr_pct": 0.012,
+                    "rvol_normalized": 2.1,
+                    "score": 76.0,
+                    "venue": "ALPACA",
+                    "venue_profile": "ALPACA_PAPER_1000",
+                    "order_type": "STOP_LIMIT",
+                    "limit_collar_bps": 35.0,
+                    "trailing_schedule": "tight_near_lossless",
+                    "session_order_presets": stale_buy_sop,
+                }
+            ],
+        }
+    )
+    sell_cards = [c for c in presets["symbol_order_cards"] if c.get("side") == "SELL"]
+    assert len(sell_cards) >= 2
+    for card in sell_cards:
+        sop = card["session_order_presets"]
+        assert sorted(sop.keys()) == ["AFTER_HOURS", "OVERNIGHT", "PRE_MARKET", "RTH"]
+        assert sop["OVERNIGHT"]["alpaca_overnight_short_supported"] is False
+        assert str(sop["OVERNIGHT"]["overnight_short_route"] or "").startswith(
+            "IBKR_PAPER_4002_OR_INVERSE_ETF_"
+        )
+        assert sop["OVERNIGHT"]["collar_bps"] == pytest.approx(50.0)
+        assert sop["PRE_MARKET"]["collar_bps"] == pytest.approx(35.0)
+        assert sop["AFTER_HOURS"]["collar_bps"] == pytest.approx(35.0)
+        assert sop["RTH"]["collar_bps"] == pytest.approx(0.0)
+
+
+def test_movers_first_watchlist_zero_bare_tickers_and_market_feed_reasons() -> None:
+    """Movers-first watchlist leads with ###01_LIVE_EXTREME_MOVERS_TOP and carries feed reasons."""
+    from tier0_sota.tv.tickets import (
+        build_tv_watchlist_sync_payload,
+        render_order_preset_cards_markdown,
+        render_tv_movers_first_watchlist,
+    )
+
+    ranked = [
+        {
+            "symbol": "XP",
+            "last_price": 17.04,
+            "session_move_pct": 18.42,
+            "daily_change_pct": 18.42,
+            "intraday_window_pct": -1.45,
+            "rvol": 2.1,
+            "score": 88.5,
+            "side": "BUY",
+            "ranking_reason": "+18.42% daily | RVOL 2.10x | Macro:INTRADAY_GAP_FADE_IN_GREEN_TAPE",
+            "market_feed_reason": (
+                "INTRADAY_GAP_FADE_IN_GREEN_TAPE: Daily green while 1m pulled back"
+            ),
+        },
+        {
+            "symbol": "CRWV",
+            "last_price": 40.92,
+            "session_move_pct": -3.87,
+            "daily_change_pct": -3.87,
+            "intraday_window_pct": -3.87,
+            "rvol": 1.8,
+            "score": 65.0,
+            "side": "SELL",
+            "darkpool_trf_ratio": 0.45,
+        },
+        {"symbol": "HL", "last_price": 11.84, "session_move_pct": 4.97, "rvol": 1.6, "score": 60.0},
+    ]
+    txt = render_tv_movers_first_watchlist(
+        [], ranked_entries=ranked, staged_presets=[{"symbol": "NU"}]
+    )
+    lines = [ln for ln in txt.splitlines() if ln.strip()]
+    assert lines[0] == "###01_LIVE_EXTREME_MOVERS_TOP"
+    assert lines[1] == "NASDAQ:XP"
+    assert "NASDAQ:CRWV" in lines
+    assert "NYSE:HL" in lines
+    assert "NYSE:NU" in lines
+    sym_lines = [ln for ln in lines if not ln.startswith("###")]
+    assert all(":" in ln for ln in sym_lines), f"Bare ticker leaked: {sym_lines}"
+
+    macro = {
+        "regime": 0,
+        "regime_label": "NEUTRAL",
+        "regime_reason": "INTRADAY_GAP_FADE_IN_GREEN_TAPE: Daily green while 1m pulled back",
+    }
+    doc = {
+        "generated_at_et": "2026-11-27T10:00:00-05:00",
+        "active_session": "RTH",
+        "venue": "ALPACA",
+        "venue_profile": "ALPACA_PAPER_1000",
+        "macro_regime": macro,
+        "tickets": [],
+        "standby_presets": ranked,
+    }
+    payload = build_tv_watchlist_sync_payload(doc, movers={"entries": ranked})
+    assert (
+        payload["watchlists"]["active"]["mcp_symbol_sync_tool"] == "mcp-watchlist-add-to-watchlist"
+    )
+    assert payload["macro_regime"]["regime_reason"] == macro["regime_reason"]
+    xp_row = next(r for r in payload["categorized_symbols"] if r["symbol"] == "XP")
+    assert xp_row["daily_change_pct"] == pytest.approx(18.42)
+    assert "INTRADAY_GAP_FADE_IN_GREEN_TAPE" in str(xp_row["ranking_reason"])
+
+    md = render_order_preset_cards_markdown(
+        {
+            "generated_at_et": "2026-11-27T10:00:00-05:00",
+            "active_session": "RTH",
+            "macro_regime": macro,
+            "symbol_order_cards": [],
+        }
+    )
+    assert "**Market Feed Indicator Reason:** INTRADAY_GAP_FADE_IN_GREEN_TAPE" in md
+
+    # Full-market + Early-Stage Ignition sections render with 0 bare tickers
+    full_movers = [
+        {
+            "symbol": "POM",
+            "exchange": "NASDAQ",
+            "tv_symbol": "NASDAQ:POM",
+            "daily_change_pct": 83.85,
+        },
+        {
+            "symbol": "UFG",
+            "exchange": "NASDAQ",
+            "tv_symbol": "NASDAQ:UFG",
+            "daily_change_pct": 56.69,
+        },
+        {
+            "symbol": "XLAB",
+            "exchange": "NASDAQ",
+            "tv_symbol": "NASDAQ:XLAB",
+            "daily_change_pct": 37.25,
+        },
+        {
+            "symbol": "RETO",
+            "exchange": "NASDAQ",
+            "tv_symbol": "NASDAQ:RETO",
+            "daily_change_pct": 28.53,
+        },
+    ]
+    early_movers = [
+        {
+            "symbol": "KYNB",
+            "exchange": "NASDAQ",
+            "tv_symbol": "NASDAQ:KYNB",
+            "daily_change_pct": 21.51,
+        },
+        {
+            "symbol": "EWZS",
+            "exchange": "NASDAQ",
+            "tv_symbol": "NASDAQ:EWZS",
+            "daily_change_pct": 13.78,
+        },
+    ]
+    txt_full = render_tv_movers_first_watchlist(
+        [],
+        ranked_entries=ranked,
+        full_market_movers=full_movers,
+        early_stage_movers=early_movers,
+    )
+    flines = [ln for ln in txt_full.splitlines() if ln.strip()]
+    assert flines[0] == "###01_LIVE_EXTREME_MOVERS_TOP"
+    assert "NASDAQ:POM" in flines and "NASDAQ:UFG" in flines and "NASDAQ:RETO" in flines
+    assert "###02_EARLY_STAGE_IGNITION_TOP" in flines
+    assert "NASDAQ:KYNB" in flines and "NASDAQ:EWZS" in flines
+    assert all(":" in ln for ln in flines if not ln.startswith("###"))
+    payload2 = build_tv_watchlist_sync_payload(
+        doc,
+        movers={
+            "entries": ranked,
+            "full_market_top_movers": full_movers,
+            "early_stage_ignition_movers": early_movers,
+            "full_market_sweep_summary": {"universe_scanned": 12005},
+        },
+    )
+    assert payload2["full_market_sweep_summary"]["universe_scanned"] == 12005
+    assert payload2["watchlists"]["active"]["symbols"][0] == "NASDAQ:POM"
+    assert len(payload2["early_stage_ignition_movers"]) == 2
+
+
+def test_order_preset_cards_sweep_summary_early_stage_table_and_zero_bare_staged(
+    tmp_path: Path,
+) -> None:
+    """TV_ORDER_PRESET_CARDS renders sweep summary + early-stage table with 0 bare tickers."""
+    from tier0_sota.tv.tickets import (
+        refresh_tickets_from_paths,
+        render_tv_movers_first_watchlist,
+    )
+
+    out_dir = tmp_path / "tv_sota_pack"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".nms_equity_universe_cache.json").write_text(
+        json.dumps(
+            {
+                "ny_date": "2026-11-27",
+                "symbols": {"AEHL": "NASDAQ", "COHX": "BATS", "XP": "NASDAQ", "FIEE": "NASDAQ"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    bar_ts = "2026-11-27T20:05:00Z"
+    now_ts = datetime(2026, 11, 27, 20, 5, 10, tzinfo=UTC)
+    stage_tv_alert_preset(
+        _valid_alert(
+            symbol="COHX",
+            session="AFTER_HOURS",
+            order_type="STOP_LIMIT",
+            trigger_price=10.38,
+            stop_price=10.26,
+            limit_collar_bps=35.0,
+        ),
+        staged_path=out_dir / "staged_tv_presets.json",
+        watchlist_path=tmp_path / "unused.json",
+        venue="ALPACA",
+    )
+    stage_tv_alert_preset(
+        _valid_alert(
+            symbol="AEHL",
+            session="AFTER_HOURS",
+            order_type="STOP_LIMIT",
+            trigger_price=13.30,
+            stop_price=13.14,
+            limit_collar_bps=35.0,
+        ),
+        staged_path=out_dir / "staged_tv_presets.json",
+        watchlist_path=tmp_path / "unused.json",
+        venue="ALPACA",
+    )
+    movers_path = tmp_path / "live_whole_market_movers_manifest.json"
+    movers_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "generated_at_utc": bar_ts,
+                "feed_sources": ["alpaca_sip", "finra_trf_exchange_d"],
+                "pin_symbols": ["SOXL", "SOXS", "TQQQ", "SQQQ"],
+                "macro_regime": {
+                    "regime": 0,
+                    "regime_label": "NEUTRAL",
+                    "regime_reason": "MIXED_OR_TRANSITIONAL: SPY +1.74%, QQQ +2.57%, SOXX +4.16%",
+                },
+                "full_market_sweep_summary": {
+                    "enabled": True,
+                    "universe_scanned": 12005,
+                    "qualifying_movers_count": 1299,
+                    "early_stage_count": 29,
+                    "extreme_expansion_count": 21,
+                    "parabolic_climax_count": 10,
+                    "elapsed_secs": 1.23,
+                },
+                "full_market_top_movers": [
+                    {
+                        "symbol": "AEHL",
+                        "exchange": "NASDAQ",
+                        "tv_symbol": "NASDAQ:AEHL",
+                        "stage": "PARABOLIC_CLIMAX_SURGE",
+                        "price_tier": "INSTITUTIONAL_GE10",
+                        "last_price": 13.30,
+                        "daily_change_pct": 52.40,
+                        "tod_rvol": 14.5,
+                        "dollar_vol": 42_500_000.0,
+                        "ranking_reason": "+52.40% daily | PaceRVOL 14.50x | Climax Surge",
+                    },
+                    {
+                        "symbol": "PENNY",
+                        "exchange": "NASDAQ",
+                        "tv_symbol": "NASDAQ:PENNY",
+                        "stage": "PARABOLIC_CLIMAX_SURGE",
+                        "price_tier": "SUB_DOLLAR",
+                        "last_price": 0.45,
+                        "daily_change_pct": 90.0,
+                        "tod_rvol": 20.0,
+                        "dollar_vol": 2_000_000.0,
+                        "ranking_reason": "Should be filtered out (< $1)",
+                    },
+                ],
+                "early_stage_ignition_movers": [
+                    {
+                        "symbol": "XP",
+                        "exchange": "NASDAQ",
+                        "tv_symbol": "NASDAQ:XP",
+                        "stage": "EARLY_STAGE_IGNITION",
+                        "price_tier": "INSTITUTIONAL_GE10",
+                        "last_price": 17.30,
+                        "daily_change_pct": 18.42,
+                        "tod_rvol": 4.25,
+                        "dollar_vol": 195_000_000.0,
+                        "ranking_reason": "+18.42% daily | PaceRVOL 4.25x | Early Ignition",
+                    }
+                ],
+                "entries": [
+                    {
+                        "rank": 1,
+                        "symbol": "AEHL",
+                        "exchange": "NASDAQ",
+                        "score": 82.0,
+                        "last_price": 13.30,
+                        "prior_close": 8.73,
+                        "session_move_pct": 52.40,
+                        "rvol_normalized": 6.0,
+                        "natr_pct": 0.014,
+                        "darkpool_trf_ratio": 0.46,
+                        "unusual_volume_buildup": True,
+                        "extreme_mover_eligible": True,
+                        "bar_close_utc": bar_ts,
+                    },
+                    {
+                        "rank": 2,
+                        "symbol": "SNDQ",
+                        "exchange": "BATS",
+                        "side": "SELL",
+                        "score": 68.0,
+                        "last_price": 34.78,
+                        "prior_close": 36.10,
+                        "session_move_pct": -3.66,
+                        "rvol_normalized": 2.4,
+                        "natr_pct": 0.012,
+                        "darkpool_trf_ratio": 0.74,
+                        "watch_tier": "UV_DARKPOOL_BUILDUP",
+                        "extreme_mover_eligible": False,
+                        "bar_close_utc": bar_ts,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    refresh_tickets_from_paths(
+        movers_path=movers_path,
+        out_dir=out_dir,
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        now_utc=now_ts,
+    )
+
+    wl_mf = (out_dir / "tier0_sota_tv_movers_first_live.txt").read_text(encoding="utf-8")
+    mf_lines = [ln.strip() for ln in wl_mf.splitlines() if ln.strip()]
+    assert mf_lines[0] == "###01_LIVE_EXTREME_MOVERS_TOP"
+    assert "###02_EARLY_STAGE_IGNITION_TOP" in mf_lines
+    sym_lines = [ln for ln in mf_lines if not ln.startswith("###")]
+    assert all(":" in ln for ln in sym_lines), f"Bare ticker in movers-first: {sym_lines}"
+    assert "BATS:COHX" in sym_lines and "NASDAQ:AEHL" in sym_lines
+    assert sym_lines.count("NASDAQ:AEHL") == 1
+
+    presets = json.loads((out_dir / "tv_order_presets.json").read_text(encoding="utf-8"))
+    assert presets["full_market_sweep_summary"]["universe_scanned"] == 12005
+    assert presets["paper_only"] is True and presets["live_execution_enabled"] is False
+    assert presets["semi_auto_confirmed"] is False and presets["qty"] == 1
+    for card in presets["symbol_order_cards"]:
+        assert ":" in str(card["tv_symbol"]), f"Bare tv_symbol on card: {card}"
+        sop = card["session_order_presets"]
+        assert sorted(sop.keys()) == ["AFTER_HOURS", "OVERNIGHT", "PRE_MARKET", "RTH"]
+        if card["side"] == "SELL":
+            assert sop["OVERNIGHT"]["alpaca_overnight_short_supported"] is False
+            assert str(sop["OVERNIGHT"]["overnight_short_route"] or "").startswith(
+                "IBKR_PAPER_4002_OR_INVERSE_ETF_"
+            )
+        else:
+            assert sop["OVERNIGHT"]["alpaca_overnight_short_supported"] is True
+            assert sop["OVERNIGHT"]["overnight_short_route"] is None
+        assert card["be_plus_fee_floor"] is not None
+        assert all(card[k] is not None for k in ("lock_at_1r", "lock_at_2r", "lock_at_3r"))
+
+    cards_md = (out_dir / "TV_ORDER_PRESET_CARDS.md").read_text(encoding="utf-8")
+    assert "**Market Feed Indicator Reason:** MIXED_OR_TRANSITIONAL" in cards_md
+    assert "**Entire-US-Market Sweep Summary:** `12,005` NMS equities in `1.23s`" in cards_md
+    assert "Early-Stage Ignition `29` | Extreme Expansion `21` | Parabolic Climax `10`" in cards_md
+    assert "## Top Entire-Market Extreme Movers & Early-Stage Ignition (>= $1)" in cards_md
+    assert "`NASDAQ:AEHL`" in cards_md and "`NASDAQ:XP`" in cards_md and "`BATS:COHX`" in cards_md
+    assert "+18.42% daily · PaceRVOL 4.25x · Early Ignition" in cards_md
+    assert "NASDAQ:PENNY" not in cards_md
+
+    payload = json.loads((out_dir / "tv_watchlist_sync_payload.json").read_text(encoding="utf-8"))
+    for wl_key in ("active", "alert_bound"):
+        syms = payload["watchlists"][wl_key]["symbols"]
+        assert all(":" in s for s in syms), f"Bare ticker in payload[{wl_key}]: {syms}"
+
+    # Direct render call with un-prefixed staged row resolves via full_market_movers automatically
+    direct_txt = render_tv_movers_first_watchlist(
+        [],
+        full_market_movers=[{"symbol": "COHX", "exchange": "BATS", "tv_symbol": "BATS:COHX"}],
+        staged_presets=[{"symbol": "COHX"}],
+    )
+    direct_syms = [
+        ln.strip() for ln in direct_txt.splitlines() if ln.strip() and not ln.startswith("###")
+    ]
+    assert direct_syms == [
+        "BATS:COHX",
+        "AMEX:SOXS",
+        "NASDAQ:SQQQ",
+        "AMEX:SPXS",
+        "AMEX:SDOW",
+        "AMEX:SPY",
+        "NASDAQ:QQQ",
+        "NASDAQ:SOXX",
+        "AMEX:IWM",
+        "AMEX:RSP",
+        "CBOE:VIX",
+        "NASDAQ:TLT",
+    ]

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
+import logging
 import os
+import re
+import shutil
+import subprocess
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -44,8 +50,214 @@ from tier0_sota.live.scanner import (
 )
 from tier0_sota.tv.tickets import refresh_tickets_from_paths
 
+LOG = logging.getLogger(__name__)
 NY = ZoneInfo("America/New_York")
 _LEGACY_TWO_PIN_SET = frozenset({"SOXL", "SOXS"})
+_DIRECT_SHORT_ETB_ORIGINS = frozenset(
+    {"DIRECT_SHORT_ETB", "DIRECT_SHORT_ETB_REENTRY", "DIRECT_SHORT_ETB_AUTO_REVERSE"}
+)
+_IBKR_DU_ACCOUNT_RE = re.compile(r"^DU[0-9A-Z]{4,14}$")
+_IBKR_CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_IBC_DIALOG_ACCT_RE = re.compile(
+    r"detected dialog entitled:\s*([A-Z][A-Z0-9]{4,14})\s+"
+    r"Trader Workstation Configuration(?:\s*\(([^)]+)\))?"
+)
+_IBKR_HEALTH_CLIENT_ID = 97
+_IBKR_HEALTH_TIMEOUT_SECS = 4.0
+_IBKR_HEALTH_TTL_SECS_DEFAULT = 600.0
+_IBKR_ERROR_BACKOFF_SECS_DEFAULT = 300.0
+
+
+def _parse_nonneg_float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        return default
+    return val if val >= 0.0 else default
+
+
+def _validate_paper_du_account(raw: str) -> str:
+    """Enforce paper-only DU* IBKR account prefix; fail-closed on any live account."""
+    code = raw.strip().upper()
+    if "-" in code:
+        code = code.rsplit("-", 1)[-1]
+    if not _IBKR_DU_ACCOUNT_RE.fullmatch(code):
+        raise PermissionError("Refused non-DU IBKR account; paper DU* account required")
+    return code
+
+
+def _resolve_ibkr_paper_account_id() -> str | None:
+    """Resolve authenticated paper DU* account code from env or local IBC paper logs."""
+    for env_key in ("IBKR_ACCOUNT_ID", "TWS_ACCOUNT"):
+        raw = os.environ.get(env_key, "").strip()
+        if raw:
+            return _validate_paper_du_account(raw)
+
+    docker_bin = shutil.which("docker")
+    container = os.environ.get("IBKR_GATEWAY_CONTAINER", "ibkr-paper").strip()
+    if not docker_bin or not _IBKR_CONTAINER_RE.fullmatch(container):
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [docker_bin, "logs", container],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    matches = _IBC_DIALOG_ACCT_RE.findall(f"{proc.stdout}\n{proc.stderr}")
+    if not matches:
+        return None
+    acct_code, mode_tag = matches[-1]
+    if mode_tag.strip().lower() != "simulated trading":
+        raise PermissionError("Refused IBKR gateway session not in Simulated Trading mode")
+    return _validate_paper_du_account(acct_code)
+
+
+async def _probe_ibkr_paper_session_async(
+    *,
+    host: str,
+    port: int,
+    client_id: int,
+    timeout_secs: float,
+    account_id: str,
+) -> dict[str, Any]:
+    """Read-only NautilusTrader v2 LiveNode IBKR account balance handshake (ZERO orders)."""
+    from nautilus_trader.adapters.interactive_brokers import (
+        InteractiveBrokersExecutionClientConfig,
+        InteractiveBrokersExecutionClientFactory,
+    )
+    from nautilus_trader.common import Environment, LoggerConfig, LogLevel
+    from nautilus_trader.live import LiveNode
+    from nautilus_trader.model import Currency, TraderId, Venue
+
+    timeout_i = max(1, min(4, int(round(timeout_secs))))
+    usd = Currency.from_str("USD")
+    cfg = InteractiveBrokersExecutionClientConfig(
+        host=host,
+        port=port,
+        client_id=client_id,
+        account_id=account_id,
+        base_currency=usd,
+        connection_timeout=timeout_i,
+        request_timeout=timeout_i,
+        fetch_all_open_orders=False,
+        max_reconnect_attempts=0,
+    )
+    node = (
+        LiveNode.builder(
+            "ibkr-health-probe", TraderId(f"TIER0-{client_id:03d}"), Environment.SANDBOX
+        )
+        .with_logging(LoggerConfig(stdout_level=LogLevel.ERROR, bypass_logging=True))
+        .with_reconciliation(False)
+        .with_timeout_connection(timeout_i)
+        .with_timeout_reconciliation(1)
+        .with_timeout_portfolio(1)
+        .with_timeout_disconnection_secs(1)
+        .with_delay_post_stop_secs(0)
+        .with_delay_shutdown_secs(0)
+        .add_exec_client("INTERACTIVE_BROKERS", InteractiveBrokersExecutionClientFactory(), cfg)
+        .build()
+    )
+    cache = node.cache
+    handle = node.handle()
+    task = asyncio.create_task(node.run_async())
+    venue = Venue("INTERACTIVE_BROKERS")
+    steps = max(1, int(timeout_secs / 0.05))
+    try:
+        for _ in range(steps):
+            if task.done():
+                exc = task.exception() if not task.cancelled() else None
+                return {
+                    "authenticated": False,
+                    "all_du_paper_accounts": True,
+                    "account_id": None,
+                    "equity": None,
+                    "tcp_reachable": False,
+                    "reason": f"node_exited:{exc}" if exc is not None else "node_exited",
+                }
+            await asyncio.sleep(0.05)
+            live_acct = cache.account_for_venue(venue)
+            if live_acct is None:
+                continue
+            balances = live_acct.balances()
+            if not balances:
+                continue
+            du_code = _validate_paper_du_account(str(live_acct.id))
+            bal = balances.get(usd) or next(iter(balances.values()))
+            equity = round(float(bal.total), 2)
+            if equity > 0:
+                return {
+                    "authenticated": True,
+                    "all_du_paper_accounts": True,
+                    "account_id": du_code,
+                    "equity": equity,
+                    "tcp_reachable": True,
+                    "redacted_account": "DU***",
+                }
+        return {
+            "authenticated": False,
+            "all_du_paper_accounts": True,
+            "account_id": None,
+            "equity": None,
+            "reason": "balance_timeout",
+        }
+    finally:
+        handle.stop()
+        try:
+            await asyncio.wait_for(task, timeout=3.0)
+        except (TimeoutError, asyncio.CancelledError, RuntimeError):
+            task.cancel()
+
+
+def _probe_ibkr_paper_session(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 4002,
+    client_id: int = _IBKR_HEALTH_CLIENT_ID,
+    timeout_secs: float = _IBKR_HEALTH_TIMEOUT_SECS,
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """Bounded read-only paper-only IBKR handshake via native NautilusTrader v2."""
+    if host != "127.0.0.1" or port != 4002:
+        raise PermissionError("IBKR health probe requires loopback 127.0.0.1:4002 only")
+    du_acct = (
+        _validate_paper_du_account(account_id)
+        if account_id is not None
+        else _resolve_ibkr_paper_account_id()
+    )
+    if du_acct is None:
+        return {
+            "authenticated": False,
+            "all_du_paper_accounts": False,
+            "equity": None,
+            "reason": "du_account_unresolved",
+        }
+
+    def _run_probe() -> dict[str, Any]:
+        return asyncio.run(
+            _probe_ibkr_paper_session_async(
+                host=host,
+                port=port,
+                client_id=client_id,
+                timeout_secs=timeout_secs,
+                account_id=du_acct,
+            )
+        )
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _run_probe()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_run_probe).result(timeout=timeout_secs + 4.0)
 
 
 def _resolve_pin_symbols(raw: str) -> tuple[str, ...]:
@@ -78,13 +290,218 @@ def verify_paper_environment() -> None:
             raise PermissionError(f"Missing account-specific paper credentials for {acct}")
 
 
-def ibkr_health(adapter: IbkrPaperAdapter) -> bool:
-    """Check only the pinned paper socket. TCP alone cannot attest a DU login or equity."""
+def _persist_ibkr_health_status(
+    adapter: IbkrPaperAdapter,
+    *,
+    gateway_ready: bool,
+    tcp_reachable: bool,
+    equity: float | None,
+    account_id: str | None = None,
+    probe_error: str | None = None,
+    probe_checked_at_utc: str | None = None,
+    heartbeat_utc: str | None = None,
+) -> dict[str, Any]:
+    payload = adapter.write_status(
+        gateway_ready=gateway_ready,
+        tcp_reachable=tcp_reachable,
+        equity=equity if gateway_ready else None,
+    )
+    checked_iso = probe_checked_at_utc or str(payload["generated_at_utc"])
+    hb_iso = heartbeat_utc or str(payload["generated_at_utc"])
+    enriched = payload | {
+        "account_id": account_id if gateway_ready else None,
+        "probe_client_id": _IBKR_HEALTH_CLIENT_ID,
+        "probe_error": None if gateway_ready else probe_error,
+        "probe_checked_at_utc": checked_iso,
+        "heartbeat_utc": hb_iso,
+    }
+    _atomic_write_json(adapter.status_path, enriched)
+    return enriched
+
+
+def _try_reuse_ibkr_health_status(adapter: IbkrPaperAdapter, *, now: datetime) -> bool | None:
+    """Reuse fresh verified IBKR ready status or honor balance_timeout backoff without probing."""
+    prev = _read_json_dict(adapter.status_path)
+    if (
+        prev.get("schema_version") != "tier0.ibkr-paper-lane.v1"
+        or prev.get("paper_only") is not True
+        or prev.get("live_execution_enabled") is not False
+        or prev.get("endpoint") != f"ibkr://127.0.0.1:{adapter.port}"
+    ):
+        return None
+    checked_raw = prev.get("probe_checked_at_utc") or prev.get("generated_at_utc")
+    if not isinstance(checked_raw, str) or not checked_raw.strip():
+        return None
+    try:
+        checked_dt = datetime.fromisoformat(checked_raw)
+        if checked_dt.tzinfo is None:
+            checked_dt = checked_dt.replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    age_secs = (now - checked_dt).total_seconds()
+    if age_secs < 0.0:
+        return None
+
+    if prev.get("ready") is True:
+        ttl_secs = _parse_nonneg_float_env(
+            "TIER0_IBKR_HEALTH_TTL_SECS", _IBKR_HEALTH_TTL_SECS_DEFAULT
+        )
+        if ttl_secs <= 0.0 or age_secs >= ttl_secs:
+            return None
+        raw_acct = prev.get("account_id")
+        raw_eq = prev.get("equity")
+        if raw_acct in (None, "") or not (
+            isinstance(raw_eq, (int, float)) and not isinstance(raw_eq, bool) and float(raw_eq) > 0
+        ):
+            return None
+        try:
+            acct_code = _validate_paper_du_account(str(raw_acct))
+        except PermissionError:
+            return None
+        _persist_ibkr_health_status(
+            adapter,
+            gateway_ready=True,
+            tcp_reachable=True,
+            equity=round(float(raw_eq), 2),
+            account_id=acct_code,
+            probe_error=None,
+            probe_checked_at_utc=checked_dt.isoformat(),
+            heartbeat_utc=now.isoformat(),
+        )
+        return True
+
+    err_raw = str(prev.get("probe_error") or "")
+    if prev.get("ready") is False and err_raw.startswith("balance_timeout"):
+        backoff_secs = _parse_nonneg_float_env(
+            "TIER0_IBKR_ERROR_BACKOFF_SECS", _IBKR_ERROR_BACKOFF_SECS_DEFAULT
+        )
+        if backoff_secs > 0.0 and age_secs < backoff_secs:
+            LOG.info(
+                "IBKR :4002 balance_timeout backoff active (%.0fs/%.0fs); skipping Client %d probe",
+                age_secs,
+                backoff_secs,
+                _IBKR_HEALTH_CLIENT_ID,
+            )
+            return True
+    return None
+
+
+def ibkr_health(
+    adapter: IbkrPaperAdapter,
+    *,
+    probe_fn: Callable[..., dict[str, Any]] | None = None,
+) -> bool:
+    """Verify pinned IBKR :4002 paper socket + read-only DU* account handshake (fail-closed)."""
     if adapter.port != 4002 or not adapter.paper_only or adapter.live_execution_enabled:
         raise PermissionError("IBKR health requires the paper gateway on loopback port 4002")
-    reachable = os.environ.get("IBKR_PAPER_TCP_REACHABLE") == "1"
-    adapter.write_status(tcp_reachable=reachable, equity=None)
-    return reachable
+    env_tcp = os.environ.get("IBKR_PAPER_TCP_REACHABLE")
+    if env_tcp == "0":
+        _persist_ibkr_health_status(
+            adapter,
+            gateway_ready=False,
+            tcp_reachable=False,
+            equity=None,
+            probe_error="tcp_unreachable",
+        )
+        return False
+    tcp_hint = env_tcp == "1"
+    if probe_fn is None and tcp_hint:
+        cached = _try_reuse_ibkr_health_status(adapter, now=datetime.now(UTC))
+        if cached is not None:
+            return cached
+
+    probe = probe_fn or _probe_ibkr_paper_session
+    try:
+        res = probe(
+            host="127.0.0.1",
+            port=adapter.port,
+            client_id=_IBKR_HEALTH_CLIENT_ID,
+            timeout_secs=_IBKR_HEALTH_TIMEOUT_SECS,
+        )
+    except PermissionError as exc:
+        LOG.error("IBKR :4002 paper isolation refusal: %s", exc)
+        _persist_ibkr_health_status(
+            adapter,
+            gateway_ready=False,
+            tcp_reachable=tcp_hint,
+            equity=None,
+            probe_error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("IBKR :4002 read-only paper handshake failed: %s", exc)
+        _persist_ibkr_health_status(
+            adapter,
+            gateway_ready=False,
+            tcp_reachable=tcp_hint,
+            equity=None,
+            probe_error=f"{type(exc).__name__}: {exc}",
+        )
+        return tcp_hint
+
+    if not isinstance(res, dict):
+        LOG.warning("IBKR :4002 paper handshake returned invalid payload type: %r", type(res))
+        _persist_ibkr_health_status(
+            adapter,
+            gateway_ready=False,
+            tcp_reachable=tcp_hint,
+            equity=None,
+            probe_error="invalid_probe_payload",
+        )
+        return tcp_hint
+
+    raw_acct = res.get("account_id")
+    verified_acct: str | None = None
+    if raw_acct not in (None, ""):
+        try:
+            verified_acct = _validate_paper_du_account(str(raw_acct))
+        except PermissionError as exc:
+            LOG.error("IBKR :4002 refused non-DU account_id: %s", exc)
+            _persist_ibkr_health_status(
+                adapter,
+                gateway_ready=False,
+                tcp_reachable=bool(tcp_hint or res.get("tcp_reachable") is True),
+                equity=None,
+                probe_error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
+
+    if res.get("live_account_detected") is True or (
+        res.get("authenticated") is True and res.get("all_du_paper_accounts") is not True
+    ):
+        _persist_ibkr_health_status(
+            adapter,
+            gateway_ready=False,
+            tcp_reachable=bool(tcp_hint or res.get("tcp_reachable") is True),
+            equity=None,
+            probe_error="non_du_account_refused",
+        )
+        raise PermissionError("Refused non-DU IBKR account; paper DU* account required")
+
+    raw_eq = res.get("equity")
+    eq_val = (
+        round(float(raw_eq), 2)
+        if isinstance(raw_eq, (int, float)) and not isinstance(raw_eq, bool) and float(raw_eq) > 0
+        else None
+    )
+    gateway_ready = (
+        res.get("authenticated") is True
+        and res.get("all_du_paper_accounts") is True
+        and eq_val is not None
+    )
+    tcp_ok = bool(gateway_ready or tcp_hint or res.get("tcp_reachable") is True)
+    probe_reason = str(res.get("reason") or "handshake_unverified") if not gateway_ready else None
+    if not gateway_ready:
+        LOG.warning("IBKR :4002 paper handshake unverified: %s", probe_reason)
+    _persist_ibkr_health_status(
+        adapter,
+        gateway_ready=gateway_ready,
+        tcp_reachable=tcp_ok,
+        equity=eq_val if gateway_ready else None,
+        account_id=verified_acct if gateway_ready else None,
+        probe_error=probe_reason,
+    )
+    return tcp_ok
 
 
 def midpoint_asof(data: Any, symbol: str, at: datetime) -> Decimal | None:
@@ -150,6 +567,38 @@ def exit_context(lane: AlpacaPaperLane, order: Any, decisions: dict, data: Any) 
                 return None
             raise
     for cid in parents:
+        if str(cid).startswith("adopted-"):
+            base_id = f"exit-{cid}"
+            synthetic = order.client_order_id == base_id or (
+                order.client_order_id.startswith(base_id + "-")
+                and order.client_order_id.removeprefix(base_id + "-").isdecimal()
+            )
+            if not synthetic:
+                continue
+            with open_bounded_duckdb(lane.duckdb_path) as db:
+                row = db.execute(
+                    "SELECT active_stop FROM paper_entry_decisions WHERE client_order_id=?", [cid]
+                ).fetchone()
+            decision = row[0] if row else None
+            submitted = order.submitted_at
+            if decision is None or submitted is None or data is None:
+                raise ValueError("Owned exit lacks a decision or arrival benchmark")
+            session = engine.classify_us_equity_session_et(int(submitted.timestamp() * 1e9))
+            mid = midpoint_asof(data, order.symbol, submitted)
+            if mid is None:
+                raise ValueError("Owned exit awaits a causal quote at broker submission")
+            side = "LONG" if order.side.value == "buy" else "SHORT"
+            return (
+                order.symbol,
+                side,
+                Decimal(str(decision)),
+                mid,
+                session,
+                "PROTECTIVE_EXIT",
+                Decimal(0),
+                None,
+                submitted,
+            )
         try:
             parent = broker.get_order_by_client_id(cid)
             parent = broker.get_order_by_id(parent.id, GetOrderByIdRequest(nested=True))
@@ -173,13 +622,15 @@ def exit_context(lane: AlpacaPaperLane, order: Any, decisions: dict, data: Any) 
                     "SELECT active_stop FROM paper_entry_decisions WHERE client_order_id=?", [cid]
                 ).fetchone()
             decision = row[0] if row else None
+            ref_ts = order.submitted_at
         else:
             decision = order.stop_price
-        submitted = order.submitted_at
-        if decision is None or submitted is None or data is None:
+            filled_ts = getattr(order, "filled_at", None)
+            ref_ts = filled_ts if isinstance(filled_ts, datetime) else order.submitted_at
+        if decision is None or ref_ts is None or data is None:
             raise ValueError("Owned exit lacks a decision or arrival benchmark")
-        session = engine.classify_us_equity_session_et(int(submitted.timestamp() * 1e9))
-        mid = midpoint_asof(data, order.symbol, submitted)
+        session = engine.classify_us_equity_session_et(int(ref_ts.timestamp() * 1e9))
+        mid = midpoint_asof(data, order.symbol, ref_ts)
         if mid is None:
             raise ValueError("Owned exit awaits a causal quote at broker submission")
         side = "LONG" if order.side.value == "buy" else "SHORT"
@@ -192,7 +643,7 @@ def exit_context(lane: AlpacaPaperLane, order: Any, decisions: dict, data: Any) 
             "PROTECTIVE_EXIT",
             Decimal(0),
             None,
-            submitted,
+            ref_ts,
         )
     return None
 
@@ -248,7 +699,11 @@ def reconcile_fills(lane: AlpacaPaperLane, data: Any = None) -> int:
             cumulative = Decimal(fill["cum_qty"])
             if not 0 < qty <= cumulative:
                 raise ValueError("Invalid broker execution quantity")
-            if side == "SHORT" and origin not in ("DIRECT_SHORT_ETB", "PROTECTIVE_EXIT"):
+            if (
+                side == "SHORT"
+                and origin not in _DIRECT_SHORT_ETB_ORIGINS
+                and origin != "PROTECTIVE_EXIT"
+            ):
                 raise ValueError("Short borrow evidence missing")
             # ETB Trading API shares have zero borrow fee. Never infer an HTB rate.
             # Use executed shares for each fill slice; each activity has its own price.
@@ -264,7 +719,7 @@ def reconcile_fills(lane: AlpacaPaperLane, data: Any = None) -> int:
                 fill_price=Decimal(fill["price"]),
                 borrow_tier=(
                     "ETB"
-                    if origin == "DIRECT_SHORT_ETB"
+                    if origin in _DIRECT_SHORT_ETB_ORIGINS
                     else "INVERSE_ETF"
                     if origin.startswith("INVERSE_HEDGE_")
                     else "NONE"
@@ -374,7 +829,12 @@ def refresh_accounts(
                 shared_data = ExtremeMoverScanner.from_env(lane.account).data_client
             reconcile_fills(lane, shared_data)
             refresh_markouts(lane, shared_data)
-            lane.write_status(equity=float(equity), session=session, observation=True)
+            lane.write_status(
+                equity=float(equity),
+                session=session,
+                open_positions_count=len(positions),
+                observation=True,
+            )
             export_ui_snapshot(lane)
     farm.symbol_lock.reconcile(owners)
     return inventory
@@ -443,6 +903,15 @@ def reconcile_staged_tv_presets_for_engine(
             [dict(p) for p in raw_pos if isinstance(p, dict)] if isinstance(raw_pos, list) else []
         )
     known_pos_syms = {str(p.get("symbol") or "").strip().upper() for p in positions_out}
+    default_exec_mech = (
+        "NATIVE_BROKER_STOP_MARKET_RATCHET"
+        if session == "RTH"
+        else "SYNTHETIC_BOATS_COLLARED_LIMIT"
+        if session == "OVERNIGHT"
+        else "SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT"
+        if session in ("PRE_MARKET", "AFTER_HOURS")
+        else "SESSION_CLOSED_HOLD_GTC_STOP"
+    )
     for sym, acct in sorted(owners.items()):
         if sym and sym not in known_pos_syms:
             positions_out.append(
@@ -458,6 +927,9 @@ def reconcile_staged_tv_presets_for_engine(
                         farm.lanes[acct].venue_profile if acct in farm.lanes else "IBKR_PAPER_4002"
                     ),
                     "active_session": session,
+                    "execution_mechanism": default_exec_mech,
+                    "adopted_external": False,
+                    "auto_adopted_by_engine": True,
                     "source": "symbol_lock",
                 }
             )
@@ -593,6 +1065,7 @@ def reconcile_staged_tv_presets_for_engine(
                 target_lane_id = lane.profile["lane_id"]
 
         handle_spec: dict[str, Any] | None = None
+        non_noise_trail: dict[str, Any] | None = None
         sandbox_parity: dict[str, Any] = {
             "environment": "SANDBOX",
             "parity_ok": False,
@@ -619,6 +1092,35 @@ def reconcile_staged_tv_presets_for_engine(
                         loss_pct = abs(ref_d - stop_d) / ref_d
                         stop_within_cap = Decimal("0") < loss_pct <= risk.MAX_STOP_LOSS_PCT
                         rule612_stop = float(stop_d)
+                        arch_name = str(
+                            raw.get("archetype")
+                            or mover.get("potential_category")
+                            or "EARLY_EP_MOMENTUM_BURST"
+                        )
+                        nn_raw = engine.compute_non_noise_min_trail_spec(
+                            symbol=sym or "SPY",
+                            entry_price=ref_d,
+                            side=route_side,
+                            session=session,
+                            natr_pct=natr_d,
+                            archetype=arch_name,
+                            venue_profile=resolved_vp,
+                        )
+                        non_noise_trail = {
+                            "non_noise_min_trail_pct": float(nn_raw["non_noise_min_trail_pct"]),
+                            "fast_sell_non_noise_reversal_pct": float(
+                                nn_raw["fast_sell_non_noise_reversal_pct"]
+                            ),
+                            "peak_climax_reverse_trigger_pct": float(
+                                nn_raw["peak_climax_reverse_trigger_pct"]
+                            ),
+                            "auto_reverse_policy": str(nn_raw["auto_reverse_policy"]),
+                            "execution_mechanism": str(nn_raw["execution_mechanism"]),
+                            "broker_exit_order": str(nn_raw["broker_exit_order"]),
+                            "collar_bps": float(nn_raw["collar_bps"]),
+                            "extended_hours": bool(nn_raw["extended_hours"]),
+                            "rapid_reentry_policy": nn_raw["rapid_reentry_policy"],
+                        }
                 except Exception:  # noqa: BLE001
                     stop_within_cap = False
             if not stop_within_cap:
@@ -639,6 +1141,16 @@ def reconcile_staged_tv_presets_for_engine(
                 "trailing_schedule": sched_name,
                 "rule_612_stop_price": rule612_stop,
                 "stop_loss_pct_within_cap": stop_within_cap,
+                "execution_mechanism": (
+                    non_noise_trail["execution_mechanism"]
+                    if non_noise_trail is not None
+                    else default_exec_mech
+                ),
+                "non_noise_min_trail_pct": (
+                    non_noise_trail["non_noise_min_trail_pct"]
+                    if non_noise_trail is not None
+                    else None
+                ),
             }
 
         ready_confirm = len(reasons) == 0
@@ -656,15 +1168,37 @@ def reconcile_staged_tv_presets_for_engine(
                 "target_lane_id": target_lane_id,
                 "semi_auto_confirmed": False,
                 "auto_submitted": False,
+                "auto_adopted_by_engine": True,
                 "ready_for_operator_confirm": ready_confirm,
                 "discipline_gate": ("READY_FOR_OPERATOR_CONFIRM" if ready_confirm else reasons[0]),
                 "blocking_reasons": reasons,
                 "order_handle_spec": handle_spec,
+                "non_noise_trail_spec": non_noise_trail,
                 "nautilus_sandbox_parity": sandbox_parity,
             }
         )
 
     ready_count = sum(1 for d in decisions if d["ready_for_operator_confirm"])
+    adopted_external_n = max(
+        int(exec_doc.get("adopted_external_positions_count") or 0),
+        sum(1 for p in positions_out if p.get("adopted_external") is True),
+    )
+    synthetic_offhours_n = max(
+        int(exec_doc.get("synthetic_offhours_trailed_count") or 0),
+        sum(
+            1
+            for p in positions_out
+            if str(p.get("execution_mechanism") or "").startswith("SYNTHETIC_")
+        ),
+    )
+    peak_reverse_n = max(
+        int(exec_doc.get("peak_reverse_armed_count") or 0),
+        sum(1 for p in positions_out if p.get("peak_reverse_armed") is True),
+    )
+    rapid_reentry_n = max(
+        int(exec_doc.get("rapid_reentry_ready_count") or 0),
+        sum(1 for p in positions_out if p.get("rapid_reentry_ready") is True),
+    )
     out_path = pack_dir / "tv_engine_coordination_manifest.json"
     coord_doc: dict[str, Any] = {
         "schema_version": "tier0.tv-engine-coordination.v1",
@@ -683,6 +1217,10 @@ def reconcile_staged_tv_presets_for_engine(
         "symbol_lock_snapshot": owners,
         "active_positions": positions_out,
         "active_positions_count": len(positions_out),
+        "adopted_external_positions_count": adopted_external_n,
+        "synthetic_offhours_trailed_count": synthetic_offhours_n,
+        "peak_reverse_armed_count": peak_reverse_n,
+        "rapid_reentry_ready_count": rapid_reentry_n,
         "venue_order_handles": venue_handles,
         "staged_alerts_evaluated": len(decisions),
         "ready_for_operator_confirm_count": ready_count,
@@ -748,12 +1286,15 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
         )
         tv_meta = perf.get("tv_half_auto") or {}
         venue_handles = coord.get("venue_order_handles") or {}
+        ibkr_status = _read_json_dict(farm.ibkr.status_path)
+        ibkr_ready = ibkr_status.get("ready") is True
         result = {
             "session": session,
             "paper_only": True,
             "live_execution_enabled": False,
-            "accounts_authenticated": len(farm.lanes),
+            "accounts_authenticated": len(farm.lanes) + (1 if ibkr_ready else 0),
             "ibkr_tcp_reachable": reachable,
+            "ibkr_gateway_ready": ibkr_ready,
             "scan_rows": scan["ranked_count"],
             "tickets": tickets["staged_count"],
             "standby_presets": len(tickets.get("standby_presets") or ()),
@@ -762,6 +1303,14 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
             "tv_coordination_evaluated": int(coord.get("staged_alerts_evaluated") or 0),
             "tv_coordination_ready": int(coord.get("ready_for_operator_confirm_count") or 0),
             "active_positions_count": int(coord.get("active_positions_count") or 0),
+            "adopted_external_positions_count": int(
+                coord.get("adopted_external_positions_count") or 0
+            ),
+            "synthetic_offhours_trailed_count": int(
+                coord.get("synthetic_offhours_trailed_count") or 0
+            ),
+            "peak_reverse_armed_count": int(coord.get("peak_reverse_armed_count") or 0),
+            "rapid_reentry_ready_count": int(coord.get("rapid_reentry_ready_count") or 0),
             "combined_max_rpm": int(venue_handles.get("combined_max_rpm") or 0),
             "tca_fills": perf["summary"]["tca_fills_count"],
             "paper_live_deployed": perf["paper_live_deployed"],
@@ -780,6 +1329,10 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
                     "ready_for_operator_confirm_count": coord["ready_for_operator_confirm_count"],
                     "blocked_count": coord["blocked_count"],
                     "active_positions_count": coord["active_positions_count"],
+                    "adopted_external_positions_count": coord["adopted_external_positions_count"],
+                    "synthetic_offhours_trailed_count": coord["synthetic_offhours_trailed_count"],
+                    "peak_reverse_armed_count": coord["peak_reverse_armed_count"],
+                    "rapid_reentry_ready_count": coord["rapid_reentry_ready_count"],
                     "any_breaker_tripped": coord["any_breaker_tripped"],
                     "semi_auto_confirmed": False,
                     "auto_submit_enabled": False,
@@ -804,10 +1357,13 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
                             if acct in farm.lanes
                             else farm.ibkr.rate_budget.exit_reserve_rpm
                         ),
-                        "ready": metrics["worker_verified"] and session != "CLOSED",
+                        "ready": (metrics["worker_verified"] if acct in farm.lanes else ibkr_ready)
+                        and session != "CLOSED",
                         "status": (
                             "Paper account authenticated · " + session
                             if acct in farm.lanes
+                            else "Paper DU authenticated · " + session
+                            if ibkr_ready
                             else "DU login unverified"
                             if reachable
                             else "Paper socket unavailable"
@@ -832,12 +1388,31 @@ def main() -> None:
         default=None,
         help="Optional Alpaca Paper RPM cap (200|1000|ALPACA_PAPER_200|ALPACA_PAPER_1000)",
     )
+    p.add_argument(
+        "--account",
+        default=None,
+        help=(
+            "Optional Alpaca paper lane account target for --confirm-tv-alert "
+            f"({', '.join(sorted(ALPACA_LANE_PROFILES))})"
+        ),
+    )
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--observe", action="store_true")
     mode.add_argument("--confirm-paper", action="store_true")
     mode.add_argument("--confirm-tv-alert", metavar="ALERT_ID")
     mode.add_argument("--ibkr-health", action="store_true")
     args = p.parse_args()
+    target_account: str | None = None
+    if args.account is not None:
+        if not args.confirm_tv_alert:
+            raise ValueError("--account is only supported with --confirm-tv-alert")
+        target_account = str(args.account).strip().upper()
+        if target_account not in ALPACA_LANE_PROFILES:
+            allowed = ", ".join(sorted(ALPACA_LANE_PROFILES))
+            raise PermissionError(
+                f"Refused non-paper or unknown Alpaca lane account {args.account!r}; "
+                f"allowed paper lanes: {allowed}"
+            )
     if args.alpaca_rpm is not None:
         _, resolved_rpm = resolve_alpaca_paper_venue_profile(
             env={"TIER0_ALPACA_RPM": str(args.alpaca_rpm)}
@@ -856,13 +1431,27 @@ def main() -> None:
             alert_id=args.confirm_tv_alert,
             qty=args.tv_qty,
             dry_run=args.dry_run,
+            target_account=target_account,
         )
         print(json.dumps(receipt, indent=2))
         return
     if args.ibkr_health:
-        reachable = ibkr_health(IbkrPaperAdapter(args.manifest_dir))
+        adapter = IbkrPaperAdapter(args.manifest_dir)
+        reachable = ibkr_health(adapter)
+        status = _read_json_dict(adapter.status_path)
+        du_verified = status.get("ready") is True
         print(
-            json.dumps({"paper_port": 4002, "tcp_reachable": reachable, "du_login_verified": False})
+            json.dumps(
+                {
+                    "paper_port": 4002,
+                    "tcp_reachable": reachable,
+                    "du_login_verified": du_verified,
+                    "ready": du_verified,
+                    "account_id": status.get("account_id"),
+                    "equity": status.get("equity"),
+                    "probe_error": status.get("probe_error"),
+                }
+            )
         )
         raise SystemExit(0 if reachable else 1)
     print(

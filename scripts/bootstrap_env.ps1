@@ -340,10 +340,21 @@ try {
     $VenvPrefix = $VenvDir.TrimEnd('\', '/') + '\'
     $ScriptsDir = Join-Path $VenvDir "Scripts"
     $ScriptsPrefix = $ScriptsDir.TrimEnd('\', '/') + '\'
-    $StaleDir = Join-Path $VenvDir ".stale-scripts"
+    $VenvRoot = [System.IO.Path]::GetPathRoot($VenvDir)
+    $SotaCacheRoot = "Z:\sota-cache"
+    $StaleDir = if (
+        (Test-Path -LiteralPath $SotaCacheRoot -PathType Container) -and
+        ([System.IO.Path]::GetPathRoot($SotaCacheRoot) -ieq $VenvRoot)
+    ) {
+        Join-Path $SotaCacheRoot "venv-stale-scripts"
+    } else {
+        Join-Path (Split-Path -Parent $VenvDir) ".venv-stale-scripts"
+    }
+    $LegacyStaleDir = Join-Path $VenvDir ".stale-scripts"
 
-    # Reap stale relocated binaries from prior runs and non-destructively unlock active .venv\Scripts\*.exe locks.
+    # Reap stale relocated binaries (external + legacy in-venv) and unlock active .venv\Scripts\*.exe locks.
     Remove-StaleVenvScripts -StalePath $StaleDir
+    Remove-StaleVenvScripts -StalePath $LegacyStaleDir
     Unlock-VenvScriptsForSync -ScriptsDir $ScriptsDir -ScriptsPrefix $ScriptsPrefix -StaleDir $StaleDir
 
     $HasSrc = Test-Path (Join-Path $RepoRoot "src\tier0_sota\__init__.py")
@@ -472,6 +483,7 @@ print(
     }
 
     Remove-StaleVenvScripts -StalePath $StaleDir
+    Remove-StaleVenvScripts -StalePath $LegacyStaleDir
     Write-Output "[BOOTSTRAP-PS1 OK] $RepoRoot"
 }
 finally {

@@ -261,6 +261,46 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             tmp.unlink(missing_ok=True)
 
 
+def _load_cached_manifest_readonly(
+    manifest_path: Path,
+    *,
+    agents: list[str],
+    threshold_pct: float,
+    include_fable: bool,
+) -> dict[str, Any] | None:
+    if not manifest_path.is_file():
+        return None
+    try:
+        cached = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(cached, dict)
+        or cached.get("schema_version") != "tier0.orca-account-failover.v1"
+    ):
+        return None
+    cached_agents = cached.get("agents")
+    if not isinstance(cached_agents, dict):
+        return None
+    filtered_agents = {
+        agent: cached_agents[agent]
+        for agent in agents
+        if isinstance(cached_agents.get(agent), dict)
+    }
+    if not filtered_agents:
+        return None
+    return {
+        "schema_version": "tier0.orca-account-failover.v1",
+        "generated_at_utc": str(cached.get("generated_at_utc") or ""),
+        "apply_requested": False,
+        "threshold_pct": threshold_pct,
+        "include_fable": include_fable,
+        "source": "cached_manifest_readonly",
+        "manifest_path": str(manifest_path),
+        "agents": filtered_agents,
+    }
+
+
 def run_failover_check(
     *,
     agents: list[str],
@@ -270,7 +310,20 @@ def run_failover_check(
     manifest_path: Path | None,
 ) -> dict[str, Any]:
     """Query `orca account list --json`, evaluate headroom, and optionally fail over."""
-    orca_data = _run_orca_json(["account", "list"])
+    try:
+        orca_data = _run_orca_json(["account", "list"])
+    except FileNotFoundError:
+        if not apply:
+            fallback_path = manifest_path if manifest_path is not None else DEFAULT_MANIFEST_PATH
+            cached_report = _load_cached_manifest_readonly(
+                fallback_path,
+                agents=agents,
+                threshold_pct=threshold_pct,
+                include_fable=include_fable,
+            )
+            if cached_report is not None:
+                return cached_report
+        raise
     decisions: dict[str, dict[str, Any]] = {}
     for agent in agents:
         decision = evaluate_agent_failover(
@@ -361,6 +414,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(report, indent=2))
     else:
+        source_suffix = (
+            f" source=cached_manifest_readonly({report.get('generated_at_utc', 'unknown')})"
+            if report.get("source") == "cached_manifest_readonly"
+            else ""
+        )
         for agent_name, dec in report["agents"].items():
             action = (
                 f"SWITCHED->{dec['switch_result']['target_account_id']}"
@@ -377,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"weekly={dec['active_weekly_used_pct']}% "
                 f"fable={dec['active_fable_weekly_used_pct']}% "
                 f"alternates_ok={dec['healthy_alternates_count']} action={action}"
+                f"{source_suffix}"
             )
     return 0
 

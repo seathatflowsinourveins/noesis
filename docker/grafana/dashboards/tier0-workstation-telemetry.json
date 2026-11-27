@@ -1,0 +1,175 @@
+{
+  "uid": "tier0-workstation-telemetry",
+  "title": "Tier-0 SOTA — Workstation CPU, Memory & Load",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "WSL2 CPU Busy (%)",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 60},
+              {"color": "red", "value": 85}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(system_cpu_time_seconds_total{state!=\"idle\"}[2m])) / sum(rate(system_cpu_time_seconds_total[2m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "WSL2 Busy Cores (of 48)",
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 16},
+              {"color": "red", "value": 36}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(system_cpu_time_seconds_total{state!=\"idle\"}[2m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "WSL2 RAM Used (GiB)",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 48},
+              {"color": "red", "value": 64}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "system_memory_usage_bytes{state=\"used\"} / 1073741824",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "WSL2 Load Average (1m)",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 16},
+              {"color": "red", "value": 36}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "system_cpu_load_average_1m",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "WSL2 CPU Cores by State (user / system / softirq / wait / nice)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 2},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (state) (rate(system_cpu_time_seconds_total{state=~\"user|system|softirq|wait|nice\"}[2m]))",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "WSL2 Memory Breakdown",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "bytes"},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "system_memory_usage_bytes",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "WSL2 Load Average (1m / 5m / 15m) vs Logical vCPUs",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 2},
+        "overrides": []
+      },
+      "targets": [
+        {"expr": "system_cpu_load_average_1m", "legendFormat": "Load 1m", "refId": "A"},
+        {"expr": "system_cpu_load_average_5m", "legendFormat": "Load 5m", "refId": "B"},
+        {"expr": "system_cpu_load_average_15m", "legendFormat": "Load 15m", "refId": "C"},
+        {"expr": "system_cpu_logical_count", "legendFormat": "Logical vCPUs", "refId": "D"}
+      ]
+    }
+  ]
+}

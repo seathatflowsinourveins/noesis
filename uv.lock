@@ -659,6 +659,15 @@ wheels = [
 ]
 
 [[package]]
+name = "colour"
+version = "0.1.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/d4/5911a7618acddc3f594ddf144ecd8a03c29074a540f4494670ad8f153efe/colour-0.1.5.tar.gz", hash = "sha256:af20120fefd2afede8b001fbef2ea9da70ad7d49fafdb6489025dae8745c3aee", size = 24776, upload-time = "2017-11-19T23:20:08.015Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/46/e81907704ab203206769dee1385dc77e1407576ff8f50a0681d0a6b541be/colour-0.1.5-py2.py3-none-any.whl", hash = "sha256:33f6db9d564fadc16e59921a56999b79571160ce09916303d35346dddc17978c", size = 23772, upload-time = "2017-11-19T23:20:04.56Z" },
+]
+
+[[package]]
 name = "configobj"
 version = "5.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2337,6 +2346,20 @@ wheels = [
 ]
 
 [[package]]
+name = "mapie"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b3/a0/4aa8f92e3423cb9f8478608b6da89cfa0477b367039035c6102cc2d1cc33/mapie-1.6.0.tar.gz", hash = "sha256:471631634184c4cc22641b8a72572df5b5e281e237b0c00ec6c1c668b78767c2", size = 13478928, upload-time = "2026-10-19T09:08:17.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/d2/c2a652d10310b8e10731bcff875d0dd1b2fe1e682e73579ef33f428ad6ba/mapie-1.6.0-py3-none-any.whl", hash = "sha256:6bb6b217f33f1301913d230efab68b8b6ec3c0dcdf1e7ad28ccce73435f71dfb", size = 573257, upload-time = "2026-10-19T09:08:14.985Z" },
+]
+
+[[package]]
 name = "markdown"
 version = "3.11.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2829,8 +2852,12 @@ research = [
     { name = "edgartools" },
     { name = "fredapi" },
     { name = "lightgbm" },
+    { name = "mapie" },
     { name = "pyarrow" },
     { name = "shap" },
+    { name = "shapiq" },
+    { name = "skchange" },
+    { name = "sqlglot" },
 ]
 
 [package.metadata]
@@ -2895,8 +2922,12 @@ research = [
     { name = "edgartools", specifier = ">=6.0.0" },
     { name = "fredapi", specifier = ">=0.5.2" },
     { name = "lightgbm", specifier = ">=4.5.0" },
+    { name = "mapie", specifier = ">=1.6.0" },
     { name = "pyarrow", specifier = ">=26.0.0" },
     { name = "shap", specifier = ">=0.54.0" },
+    { name = "shapiq", specifier = ">=1.8.0" },
+    { name = "skchange", specifier = ">=0.18.0" },
+    { name = "sqlglot", specifier = ">=30.35.0" },
 ]
 
 [[package]]
@@ -4171,6 +4202,31 @@ wheels = [
 ]
 
 [[package]]
+name = "shapiq"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colour" },
+    { name = "joblib" },
+    { name = "matplotlib" },
+    { name = "networkx" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "requests" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/ec/9237d0e0c60be7fe4a82e4e11dabe71c881408e26bebb688ae152ae79295/shapiq-1.8.0.tar.gz", hash = "sha256:e1af659c5a5a0d251e40cd26dda298e532cb0340d66b8db9694ac793135de55a", size = 514875, upload-time = "2026-10-20T08:56:43.477Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/bc/a3b3d65e8960ac7ae0e296d16facd8587c4598bb1f42d64619adc0b825a7/shapiq-1.8.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:04a47b6d0e44ce6a732c2e8b9bfef7f623dd304cf32d77072d741e067bd50584", size = 891338, upload-time = "2026-10-20T08:56:25.169Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/27/183826b3084876db4f7228103d768c8759c3bf9aac8fd34bd1bbfda5e428/shapiq-1.8.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:6f8f8a5ceef45a10832b9c5cc696db2635232751c9b57c987e92d01a07a96e1c", size = 871710, upload-time = "2026-10-20T08:56:26.525Z" },
+    { url = "https://files.pythonhosted.org/packages/41/b1/ecf26a3fb047c670f636e951ae76bc77cd29eb1187b2c9dd0f64e0046fcf/shapiq-1.8.0-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:29e537531b3e507db7fed6997361b40232e247325c55e1e0259c72161b220c88", size = 3437207, upload-time = "2026-10-20T08:56:27.869Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/c8/b9685590c1ea2421b6b5a29eb31bbf4e71c61678e26a16058472958eedbc/shapiq-1.8.0-cp313-cp313-win_amd64.whl", hash = "sha256:a17535902b52b3daca14bc7840a24cc9b6ba6500f5a7b8bd05dde5b7ade0787d", size = 1055937, upload-time = "2026-10-20T08:56:29.286Z" },
+]
+
+[[package]]
 name = "shortuuid"
 version = "1.0.13"
 source = { registry = "https://pypi.org/simple" }
@@ -4195,6 +4251,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "skchange"
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scikit-learn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/03/5caac340b9b7b4b17a2aa8169929fcab49ad92cf9308eb4ab6cfb287c27f/skchange-0.18.0.tar.gz", hash = "sha256:da914922aa42fa063f87d2e444d1c4a3a63c197877bcad43011004f507149ffd", size = 2423949, upload-time = "2026-08-19T11:22:41.073Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/43/5c497bad7bab575b1e22b82b2d1f8e1a05081a66cabd2c60bc46c627fb5e/skchange-0.18.0-py3-none-any.whl", hash = "sha256:2b004eff22d21946d57a01f3b4091a7e45bb69279ad2cefc71dce43116c23369", size = 2518626, upload-time = "2026-08-19T11:22:39.448Z" },
 ]
 
 [[package]]
@@ -4312,6 +4381,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/41/1e/1b81e7d1ea49e099ac0881117ab411eab9bd3bb3d6202b54a82bd42e6e86/sqlalchemy-2.1.9-cp313-cp313-win_amd64.whl", hash = "sha256:7fa9e073eaabcd9286fd60ec587a9e0d7a2ff10136056df954c50639815785c6", size = 2442705, upload-time = "2026-11-16T21:20:56.402Z" },
     { url = "https://files.pythonhosted.org/packages/e8/b3/8ac26a983eeddee6bbd29691558ca8130a044badcca7a65a53b9ac15b635/sqlalchemy-2.1.9-cp313-cp313-win_arm64.whl", hash = "sha256:c3f64ba66781c76c22e092188ac138a25b046ddf55bb5bd341722bb5e787f8cd", size = 2406260, upload-time = "2026-11-16T21:53:37.374Z" },
     { url = "https://files.pythonhosted.org/packages/7a/ee/9926603a1f7e88b41bc0d1e068e889fc84981553fb4e6037426d6b174da3/sqlalchemy-2.1.9-py3-none-any.whl", hash = "sha256:449fed5c2caa3b278cc57499d09db001fb3f28dc7f18affc48142aee4dcc0cdf", size = 2071860, upload-time = "2026-11-16T21:16:28.413Z" },
+]
+
+[[package]]
+name = "sqlglot"
+version = "30.35.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/4d/4d544c0ecc71c6decd643297c9ca8150aaa3477e285ccc50bc7549b1eb04/sqlglot-30.35.0.tar.gz", hash = "sha256:cca0d94bd12026184b0ba9f0f9c78a34a932d730a598de7893de448debb0149d", size = 6295274, upload-time = "2026-11-24T20:15:24.424Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/4e/71e145862b2925aea5020d19fcf47a4a2683cf6a3ff5cdd1e296aad7e552/sqlglot-30.35.0-py3-none-any.whl", hash = "sha256:136757a9845f4225f25613b26fc4e778e679c7a40b15bcc9b84e61bfc50c6dd8", size = 846417, upload-time = "2026-11-24T20:15:22.11Z" },
 ]
 
 [[package]]

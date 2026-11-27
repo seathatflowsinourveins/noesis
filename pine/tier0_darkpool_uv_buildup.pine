@@ -1,12 +1,16 @@
 //@version=6
 indicator("Tier-0 Unusual Volume Buildup & Darkpool Proxy", shorttitle="T0_DP_UV", overlay=false, max_bars_back=500)
 
+import TradingView/ta/10 as tvta
+
 // ============================================================================
 // Tier-0 SOTA — Dedicated Pane-2 Unusual Volume Buildup & Institutional Darkpool Proxy
+// Official Upstreams: TradingView/ta/10 (STD;Relative%1Volume%1at%1Time v7.0,
+//                     STD;UP_DOWN_Volume v10.0, STD;VWAP v48.0)
 // Non-Repainting: barstate.isconfirmed + gaps=barmerge.gaps_off + lookahead=barmerge.lookahead_off
 // Pairs with: scanner.py FINRA TRF (Exchange D) darkpool_trf_ratio & vol_buildup_ratio
-// Proxy Signals: RVOL Z-Score, 3-Bar Volume Velocity Ramp, Effort-vs-Result Hidden Volume
-//                Ratio (HVR), VWAP-Pin Absorption Crosses, and Session CVD Divergence
+// Proxy Signals: Official RVOL@Time, RVOL Z-Score, 3-Bar Volume Velocity Ramp, Effort-vs-Result
+//                Hidden Volume Ratio (HVR), Official VWAP-Pin Absorption, & Intrabar TV CVD
 // ============================================================================
 
 grp_uv = "01 · Unusual Volume & Velocity Thresholds"
@@ -38,7 +42,9 @@ rvol_5m = not na(v5_sma) and v5_sma > 0 ? v5_cur / v5_sma : 1.0
 vol_safe   = nz(volume, 0.0)
 vol_sma    = ta.sma(vol_safe, i_len)
 vol_std    = ta.stdev(vol_safe, i_len)
-rvol       = vol_sma > 0 ? vol_safe / vol_sma : 1.0
+[tv_cur_vol, tv_past_vol, _] = tvta.relativeVolume(i_len, "1D", false, false)
+rvol_tod   = not na(tv_past_vol) and tv_past_vol > 0 ? tv_cur_vol / tv_past_vol : na
+rvol       = not na(rvol_tod) ? rvol_tod : (vol_sma > 0 ? vol_safe / vol_sma : 1.0)
 vol_zscore = vol_std > 0 ? (vol_safe - vol_sma) / vol_std : 0.0
 vol_3      = ta.sma(vol_safe, 3)
 vol_buildup_ratio = vol_sma > 0 ? math.max(0.0, math.round(vol_3 / vol_sma, 3)) : 1.0
@@ -52,18 +58,22 @@ day_dvol += dollar_vol
 day_dvol_m = day_dvol / 1000000.0
 liq_ok     = day_dvol_m >= i_dvol_min
 
-// ── Darkpool / Institutional Hidden-Volume Absorption Proxy ─────────────────
+// ── Darkpool / Institutional Hidden-Volume Absorption Proxy (Official TV Upstreams) ──
 atr_14    = ta.atr(14)
-vwap_val  = ta.vwap(hlc3)
+[vwap_val, _, _] = ta.vwap(hlc3, timeframe.change("D"), 1.0)
 bar_range = high - low
 clv       = bar_range > 0 ? (2.0 * close - high - low) / bar_range : 0.0
 
-// Session Buying/Selling Pressure (Cumulative Volume Delta Proxy)
-var float sess_cvd = 0.0
+// Official TradingView Intrabar Up/Down Volume & Session Cumulative Volume Delta
+string ltf_delta = timeframe.isseconds ? "1S" : timeframe.isintraday ? "1" : timeframe.isdaily ? "5" : "60"
+[tv_up_vol, tv_dn_vol, tv_bar_delta] = tvta.requestUpAndDownVolume(ltf_delta)
+[_, _, _, tv_sess_cvd] = tvta.requestVolumeDelta(ltf_delta, "1D")
+var float fallback_cvd = 0.0
 if timeframe.change("D")
-    sess_cvd := 0.0
-sess_cvd += vol_safe * clv
-cvd_ema   = ta.ema(sess_cvd, 9)
+    fallback_cvd := 0.0
+fallback_cvd += nz(tv_bar_delta, vol_safe * clv)
+sess_cvd = nz(tv_sess_cvd, fallback_cvd)
+cvd_ema  = ta.ema(sess_cvd, 9)
 
 lo_5 = ta.lowest(low, 5)[1]
 hi_5 = ta.highest(high, 5)[1]
@@ -74,13 +84,19 @@ cvd_bear_div = barstate.isconfirmed and not na(hi_5) and high >= hi_5 and sess_c
 hidden_vol_ratio = math.max(0.0, math.round(nz(rvol / math.max(0.25, bar_range / math.max(nz(atr_14, syminfo.mintick), syminfo.mintick)), 0.0), 2))
 vwap_pin_absorb  = barstate.isconfirmed and not na(vwap_val) and atr_14 > 0 and math.abs(close - vwap_val) <= atr_14 * i_vwap_atr and rvol >= i_rvol_hi and bar_range < atr_14 * i_rng_cap
 
+ny_h    = hour(time_close, "America/New_York")
+ny_m    = minute(time_close, "America/New_York")
+ny_mins = ny_h * 60 + ny_m
+is_pre  = ny_mins >= 240 and ny_mins < 570
+pre_vol_ignition = barstate.isconfirmed and is_pre and (rvol >= i_rvol_hi or vol_buildup_ratio >= i_vel_min) and clv >= 0.35 and close > open
+
 uv_ramp          = barstate.isconfirmed and ((rvol >= i_rvol_hi and vol_safe > nz(volume[1], 0.0) and nz(volume[1], 0.0) >= vol_sma) or (vol_zscore >= i_z_thresh and vol_buildup_ratio >= i_vel_min))
 dp_absorb_bull   = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_14 * i_rng_cap and hidden_vol_ratio >= i_hvr_min and (clv >= 0.55 or (vwap_pin_absorb and clv >= 0.20 and sess_cvd >= cvd_ema))
 dp_distrib_bear  = barstate.isconfirmed and rvol >= 2.0 and bar_range < atr_14 * i_rng_cap and hidden_vol_ratio >= i_hvr_min and (clv <= -0.55 or (vwap_pin_absorb and clv <= -0.20 and sess_cvd < cvd_ema))
 climax_spike     = barstate.isconfirmed and vol_zscore >= 3.0 and rvol >= 3.0
 
 // ── Pane-2 Visualizations ───────────────────────────────────────────────────
-hist_col = dp_absorb_bull ? color.lime : dp_distrib_bear ? color.maroon : climax_spike ? color.yellow : uv_ramp ? color.aqua : rvol >= i_rvol_hi ? color.teal : color.new(color.gray, 55)
+hist_col = pre_vol_ignition ? color.aqua : dp_absorb_bull ? color.lime : dp_distrib_bear ? color.maroon : climax_spike ? color.yellow : uv_ramp ? color.aqua : rvol >= i_rvol_hi ? color.teal : color.new(color.gray, 55)
 
 plot(math.min(10.0, rvol), "RVOL (Clamped 0-10x)", color=hist_col, style=plot.style_histogram, linewidth=3)
 plot(math.min(10.0, vol_buildup_ratio), "3-Bar Volume Velocity (VBR)", color=color.orange, linewidth=2)
@@ -94,11 +110,12 @@ hline(3.0, "3.0x EP Climax", color=color.new(color.yellow, 55), linestyle=hline.
 plotshape(vwap_pin_absorb, title="VWAP-Pin Darkpool Proxy", style=shape.diamond,      location=location.top,    color=color.aqua,   size=size.tiny)
 plotshape(dp_absorb_bull,  title="Darkpool Bull Absorb",    style=shape.triangleup,   location=location.bottom, color=color.lime,   size=size.tiny)
 plotshape(dp_distrib_bear, title="Darkpool Bear Distrib",   style=shape.triangledown, location=location.top,    color=color.red,    size=size.tiny)
-plotshape(cvd_bull_div,    title="CVD Bullish Divergence",  style=shape.circle,       location=location.bottom, color=color.green,  size=size.tiny)
-plotshape(cvd_bear_div,    title="CVD Bearish Divergence",  style=shape.circle,       location=location.top,    color=color.maroon, size=size.tiny)
+plotshape(cvd_bull_div,     title="CVD Bullish Divergence",    style=shape.circle,       location=location.bottom, color=color.green,  size=size.tiny)
+plotshape(cvd_bear_div,     title="CVD Bearish Divergence",    style=shape.circle,       location=location.top,    color=color.maroon, size=size.tiny)
+plotshape(pre_vol_ignition, title="Premarket Volume Ignition", style=shape.labelup,      location=location.bottom, color=color.aqua,   text="PRE", textcolor=color.black, size=size.tiny)
 
 // ── Institutional Volume & Darkpool Proxy HUD (Top-Right) ───────────────────
-var table vhud = table.new(position.top_right, 2, 8, border_width=1, border_color=color.new(color.gray, 55))
+var table vhud = table.new(position.top_right, 2, 9, border_width=1, border_color=color.new(color.gray, 55))
 if barstate.islast and i_show_hud
     string state_lbl = dp_absorb_bull ? "DARKPOOL ABSORB (+)" : dp_distrib_bear ? "DARKPOOL DISTRIB (-)" : vwap_pin_absorb ? "VWAP-PIN CROSS" : climax_spike ? "CLIMAX VOL SPIKE" : uv_ramp ? "UV VELOCITY RAMP" : "NORMAL FLOW"
     color state_bg   = dp_absorb_bull ? color.new(color.green, 50) : dp_distrib_bear ? color.new(color.maroon, 45) : vwap_pin_absorb ? color.new(color.teal, 45) : climax_spike ? color.new(color.olive, 45) : uv_ramp ? color.new(color.navy, 45) : color.new(color.gray, 80)
@@ -120,11 +137,14 @@ if barstate.islast and i_show_hud
     table.cell(vhud, 1, 6, cvd_txt,         bgcolor=sess_cvd >= cvd_ema ? color.new(color.green, 70) : color.new(color.maroon, 65), text_color=color.white, text_size=size.small)
     table.cell(vhud, 0, 7, "TRF Sync Note", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
     table.cell(vhud, 1, 7, "Chart Proxy · Pair w/ Scanner FINRA TRF", bgcolor=color.new(color.gray, 85), text_color=color.silver, text_size=size.small)
+    table.cell(vhud, 0, 8, "Premarket Ign", bgcolor=color.new(color.gray, 75), text_color=color.white, text_size=size.small)
+    table.cell(vhud, 1, 8, pre_vol_ignition ? "PREMARKET EARLY IGNITION [ACTIVE]" : is_pre ? "PREMARKET WATCH (04:00-09:30 ET)" : "OUTSIDE PREMARKET", bgcolor=pre_vol_ignition ? color.new(color.teal, 45) : color.new(color.gray, 85), text_color=pre_vol_ignition ? color.aqua : color.white, text_size=size.small)
 
 // ── Non-Repainting Alert Conditions ─────────────────────────────────────────
-alertcondition(uv_ramp,         title="Tier-0 UV Velocity Ramp",            message="T0_DP_UV Unusual Volume Ramp confirmed on {{ticker}} @ {{close}}")
-alertcondition(dp_absorb_bull,  title="Tier-0 Darkpool Bull Absorption",    message="T0_DP_UV Hidden-Volume Bull Absorption on {{ticker}} @ {{close}}")
-alertcondition(dp_distrib_bear, title="Tier-0 Darkpool Bear Distribution",  message="T0_DP_UV Hidden-Volume Bear Distribution on {{ticker}} @ {{close}}")
-alertcondition(vwap_pin_absorb, title="Tier-0 VWAP-Pin Darkpool Proxy",     message="T0_DP_UV VWAP-Pin Darkpool Absorption Proxy on {{ticker}} @ {{close}}")
-alertcondition(cvd_bull_div,    title="Tier-0 CVD Bullish Divergence",      message="T0_DP_UV CVD Bullish Accumulation Divergence on {{ticker}} @ {{close}}")
-alertcondition(cvd_bear_div,    title="Tier-0 CVD Bearish Divergence",      message="T0_DP_UV CVD Bearish Distribution Divergence on {{ticker}} @ {{close}}")
+alertcondition(uv_ramp,          title="Tier-0 UV Velocity Ramp",            message="T0_DP_UV Unusual Volume Ramp confirmed on {{ticker}} @ {{close}}")
+alertcondition(dp_absorb_bull,   title="Tier-0 Darkpool Bull Absorption",    message="T0_DP_UV Hidden-Volume Bull Absorption on {{ticker}} @ {{close}}")
+alertcondition(dp_distrib_bear,  title="Tier-0 Darkpool Bear Distribution",  message="T0_DP_UV Hidden-Volume Bear Distribution on {{ticker}} @ {{close}}")
+alertcondition(vwap_pin_absorb,  title="Tier-0 VWAP-Pin Darkpool Proxy",     message="T0_DP_UV VWAP-Pin Darkpool Absorption Proxy on {{ticker}} @ {{close}}")
+alertcondition(cvd_bull_div,     title="Tier-0 CVD Bullish Divergence",      message="T0_DP_UV CVD Bullish Accumulation Divergence on {{ticker}} @ {{close}}")
+alertcondition(cvd_bear_div,     title="Tier-0 CVD Bearish Divergence",      message="T0_DP_UV CVD Bearish Distribution Divergence on {{ticker}} @ {{close}}")
+alertcondition(pre_vol_ignition, title="Tier-0 Premarket Volume Ignition",   message="T0_DP_UV PREMARKET EARLY IGNITION volume surge on {{ticker}} @ {{close}}")

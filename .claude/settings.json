@@ -54,11 +54,6 @@
       "Read(**/.env)",
       "Read(**/.env.*)",
       "Read(~/.config/tier0/**)",
-      "Edit(/src/tier0_sota/risk.py)",
-      "Edit(./src/tier0_sota/risk.py)",
-      "mcp__alpaca-live__*",
-      "mcp__*alpaca*live*__*",
-      "Bash(*api.alpaca.markets*)",
       "Bash(*:4001*)",
       "Bash(*:7496*)",
       "Bash(*:8798*)",
@@ -69,7 +64,6 @@
       "Bash(*git*push*--force*)",
       "Bash(*git*push* -f*)",
       "Bash(*--no-verify*)",
-      "PowerShell(*api.alpaca.markets*)",
       "PowerShell(*:4001*)",
       "PowerShell(*:7496*)",
       "PowerShell(*:8798*)",
@@ -80,6 +74,14 @@
       "PowerShell(*git*push*--force*)",
       "PowerShell(*git*push* -f*)",
       "PowerShell(*--no-verify*)"
+    ],
+    "ask": [
+      "Edit(/src/tier0_sota/risk.py)",
+      "mcp__alpaca-live__place_*",
+      "mcp__alpaca-live__replace_*",
+      "mcp__alpaca-live__cancel_*",
+      "mcp__alpaca-live__close_*",
+      "mcp__alpaca-live__exercise_*"
     ]
   }
 }

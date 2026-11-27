@@ -788,6 +788,60 @@ def run_compounding_reflection(
     else:
         paper_summary = {"present": False, "paper_only": True, "live_execution_enabled": False}
     tv_half_auto_summary = _collect_tv_compounding_summary(target_manifest_dir, paper_doc)
+    starred_doc = _read_json_optional(
+        target_manifest_dir / "starred_frontier_landscape_manifest.json"
+    )
+    l15_doc = _read_json_optional(target_manifest_dir / "l15_supply_chain_and_formal_audit.json")
+
+    def _sub_dict(doc: dict[str, Any], key: str) -> dict[str, Any]:
+        val = doc.get(key)
+        return val if isinstance(val, dict) else {}
+
+    l15_am = _sub_dict(l15_doc, "alertmanager")
+    alertmanager_9093_healthy = (
+        bool(l15_doc.get("alertmanager_9093_healthy", l15_am.get("healthy_9093", False)))
+        if is_offline
+        else _http_reachable("http://127.0.0.1:9093/-/healthy")
+    )
+    starred_summary_block = _sub_dict(starred_doc, "summary")
+    starred_versions = _sub_dict(starred_doc, "versions")
+    starred_engines = _sub_dict(starred_doc, "engines") or _sub_dict(starred_doc, "capabilities")
+    starred_all_ok = bool(
+        starred_summary_block.get("all_engines_pass")
+        or starred_doc.get("all_ok")
+        or starred_doc.get("ok")
+        or (
+            bool(starred_engines)
+            and all(
+                (v.get("status") == "VERIFIED_PASS" if isinstance(v, dict) else bool(v))
+                for v in starred_engines.values()
+            )
+        )
+    )
+    starred_frontier_summary: dict[str, Any] = {
+        "present": bool(starred_doc),
+        "schema_version": starred_doc.get("schema_version"),
+        "generated_at_utc": starred_doc.get("generated_at_utc"),
+        "all_engines_ok": starred_all_ok,
+        "engines_verified_pass": int(
+            starred_summary_block.get("engines_verified_pass") or len(starred_engines)
+        ),
+        "engines_total": int(starred_summary_block.get("engines_total") or len(starred_engines)),
+        "graduated_packages": list(
+            starred_doc.get("graduated_packages") or sorted(starred_versions)
+        ),
+    }
+    l15_ch = _sub_dict(l15_doc, "crosshair")
+    l15_z3 = _sub_dict(l15_doc, "z3_formal_proofs")
+    l15_audit_summary: dict[str, Any] = {
+        "present": bool(l15_doc),
+        "schema_version": l15_doc.get("schema_version"),
+        "generated_at_utc": l15_doc.get("generated_at_utc"),
+        "overall_ok": bool(l15_doc.get("overall_ok", False)),
+        "z3_all_unsat": bool(l15_z3.get("all_unsat", False)),
+        "crosshair_ok": bool(l15_ch.get("ok", False)),
+        "alertmanager_9093_healthy": alertmanager_9093_healthy,
+    }
 
     live_dspy_reflection = run_live_dspy_reflection(
         {
@@ -877,6 +931,13 @@ def run_compounding_reflection(
                 metrics_to_log["scanner_ranked_count"] = float(
                     tv_half_auto_summary.get("scanner_ranked_count") or 0
                 )
+                metrics_to_log["alertmanager_9093_healthy"] = (
+                    1.0 if alertmanager_9093_healthy else 0.0
+                )
+                metrics_to_log["l15_formal_audit_ok"] = (
+                    1.0 if l15_audit_summary.get("overall_ok") else 0.0
+                )
+                metrics_to_log["starred_frontier_engines_ok"] = 1.0 if starred_all_ok else 0.0
                 mlflow.log_metrics(metrics_to_log)
                 mlflow_status = {
                     "uri": resolved_mlflow_uri,
@@ -967,6 +1028,9 @@ def run_compounding_reflection(
         "mlflow": mlflow_status,
         "paper_farm": paper_summary,
         "tv_half_auto": tv_half_auto_summary,
+        "alertmanager_9093_healthy": alertmanager_9093_healthy,
+        "starred_frontier_landscape": starred_frontier_summary,
+        "l15_formal_supply_chain_audit": l15_audit_summary,
         "xerj": xerj_status,
     }
 
