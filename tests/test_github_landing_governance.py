@@ -46,6 +46,7 @@ WRITE_GRANTS: dict[tuple[str, str], frozenset[str]] = {
     ("release.yml", "draft-release"): frozenset({"contents"}),
     ("multi-model-sota.yml", "claude-omniroute-or-anthropic-banked"): frozenset({"id-token"}),
     ("dependabot-auto-merge.yml", "enable-auto-merge"): frozenset({"contents", "pull-requests"}),
+    ("release.yml", "attest"): frozenset({"id-token", "attestations"}),
 }
 # (workflow file, job id, step name) -> the only step conditional a required job may carry.
 # `!cancelled()` runs the step whenever the default `success()` would, and also after a failure,
@@ -382,3 +383,31 @@ def test_dependency_review_runs_on_every_pull_request() -> None:
         "fail-on-scopes",
         "allow-ghsas",
     } & set(inputs)
+
+
+def test_release_attests_build_provenance_and_sbom() -> None:
+    jobs = _load_workflows()["release.yml"]["jobs"]
+    attest = jobs["attest"]
+    assert attest["needs"] == ["verify-and-package"]
+    assert not {"if", "continue-on-error"} & set(attest)
+    assert attest["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    # The signing job builds nothing: it attests the assets the verified job uploaded.
+    uses = [str(step.get("uses", "")) for step in attest["steps"]]
+    assert not any(u.startswith(("actions/checkout@", "astral-sh/setup-uv@")) for u in uses)
+    attest_steps = [
+        step for step in attest["steps"] if str(step.get("uses", "")).startswith("actions/attest@")
+    ]
+    assert len(attest_steps) == 2
+    assert not any({"if", "continue-on-error"} & set(step) for step in attest_steps)
+    # No predicate inputs: actions/attest generates SLSA build provenance for every asset
+    # listed in SHA256SUMS.txt.
+    assert attest_steps[0]["with"] == {"subject-checksums": "dist/SHA256SUMS.txt"}
+    assert attest_steps[1]["with"]["sbom-path"] == "dist/noesis.sbom.cdx.json"
+    assert "attest" in jobs["draft-release"]["needs"]
+    for job_id, job in jobs.items():
+        if job_id != "attest":
+            assert "id-token" not in job["permissions"], job_id

@@ -1,5 +1,6 @@
 # Upstream directives:
 #   - https://github.com/astral-sh/setup-uv | https://github.com/anchore/sbom-action | https://github.com/cli/cli
+#   - https://github.com/actions/attest (artifact attestations, SLSA v1.0 Build Level 2)
 
 name: noesis — Tier-0 SOTA Release
 
@@ -79,9 +80,43 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  attest:
+    name: Attest Build Provenance & SBOM
+    needs: [verify-and-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificate for the attestation (actions/attest)
+      attestations: write # persist the attestation (actions/attest)
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify artifact SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Attest build provenance for every checksummed asset
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
+
+      - name: Attest the CycloneDX SBOM for the wheel and sdist
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+          sbom-path: dist/noesis.sbom.cdx.json
+
   draft-release:
     name: Create Draft GitHub Release
-    needs: [verify-and-package]
+    needs: [verify-and-package, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
