@@ -1914,7 +1914,7 @@
           "version": "0.91.0",
           "installed_in_uv_lock": false,
           "official_mcp_repos": 0,
-          "role": "Stratum-1 Phase-3 earned-trigger paid additive market-data rail (NY4 colo MBO/MBP-10 & historical OPRA ticks, ~$0.04/GB); native NautilusTrader & hftbacktest adapters",
+          "role": "Stratum-1 Phase-3 earned-trigger paid additive market-data rail (NY4 colo MBO/MBP-10 & historical OPRA ticks, ~$0.04/GB); native NautilusTrader (US equities/OPRA) & hftbacktest (US equities MBO/MBP-10 only) adapters",
           "disposition": "optional_paid_additive_l4_data_rail"
         }
       ],
