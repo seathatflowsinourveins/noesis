@@ -216,6 +216,31 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     assert "./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" in am_svc["volumes"]
     assert am_svc["restart"] == "unless-stopped"
 
+    # Loopback-only host publication for unauthenticated local services (xerj, grafana).
+    for local_svc in ("xerj", "grafana"):
+        svc_ports = services[local_svc].get("ports", [])
+        assert svc_ports and all(str(p).startswith("127.0.0.1:") for p in svc_ports), (
+            f"{local_svc} must bind host ports strictly to 127.0.0.1: {svc_ports}"
+        )
+
+    # D6 exact tag-pin enforcement for docker/Dockerfile.xerj (alpine + XERJ_VERSION + sha256).
+    xerj_df = (REPO_ROOT / "docker" / "Dockerfile.xerj").read_text(encoding="utf-8")
+    xerj_froms = re.findall(r"(?m)^FROM\s+(\S+)", xerj_df)
+    assert len(xerj_froms) >= 2, f"Expected multi-stage alpine FROM lines, got: {xerj_froms}"
+    for img in xerj_froms:
+        assert re.fullmatch(r"alpine:\d+\.\d+(?:\.\d+)?(?:@sha256:[0-9a-f]{64})?", img), (
+            f"docker/Dockerfile.xerj must pin exact alpine tag (never latest): {img}"
+        )
+    xerj_ver_match = re.search(r"(?m)^ARG\s+XERJ_VERSION=(\S+)\s*$", xerj_df)
+    assert xerj_ver_match is not None, "docker/Dockerfile.xerj missing ARG XERJ_VERSION"
+    xerj_ver = xerj_ver_match.group(1)
+    assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?", xerj_ver), (
+        f"docker/Dockerfile.xerj XERJ_VERSION must pin exact semver/rc tag: {xerj_ver}"
+    )
+    assert len(re.findall(r"expected_sha=[0-9a-f]{64}", xerj_df)) >= 2, (
+        "docker/Dockerfile.xerj must pin amd64 and arm64 SHA-256 digests"
+    )
+
     for rel in (
         "docker/Dockerfile.research",
         "docker/Dockerfile.sandbox",
