@@ -202,7 +202,10 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     )
 
     am_svc = services["alertmanager"]
-    assert am_svc["image"] == "prom/alertmanager:v0.28.1"
+    # Exact release tag (optionally digest-pinned), never a floating tag such as latest or v0.
+    assert re.fullmatch(
+        r"prom/alertmanager:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?", am_svc["image"]
+    ), am_svc["image"]
     assert am_svc["profiles"] == ["alerting"]
     assert am_svc["cpus"] == "0.25"
     assert am_svc["mem_limit"] == "128m"

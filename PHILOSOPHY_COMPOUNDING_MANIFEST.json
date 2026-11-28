@@ -372,7 +372,7 @@
     "observability_and_docs": {
       "otel_collector": "http://127.0.0.1:9464/metrics",
       "alertmanager_profile_gated": "http://127.0.0.1:9093/-/healthy",
-      "alertmanager_summary": "prom/alertmanager v0.28.1 (15 Prometheus rules, just alerting-up)",
+      "alertmanager_summary": "prom/alertmanager v0.35.1 (15 Prometheus rules, just alerting-up)",
       "caddy_tearsheets": "http://127.0.0.1:8793/",
       "allure_test_reports": "http://127.0.0.1:8793/test-reports/allure/",
       "duckdb_sql_ui": "http://127.0.0.1:4213/",
