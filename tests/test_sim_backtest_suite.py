@@ -149,3 +149,15 @@ def test_parquet_catalog_roundtrip_and_official_nautilus_tearsheet(tmp_path: Pat
     html_text = ts_empirical.read_text(encoding="utf-8")
     assert "plotly" in html_text.lower()
     assert "nautilus" in html_text.lower()
+
+    bwf_index = bt_meta["bars_with_fills_by_symbol"]
+    assert sorted(bwf_index.keys()) == ["NVDA", "QQQ", "SOXX", "SPY"]
+    bwf_canonical = ts_empirical.parent / "nautilus_prewall_bars_with_fills.html"
+    assert bwf_canonical.is_file() and bwf_canonical.stat().st_size > 50_000
+    for sym in ("NVDA", "QQQ", "SOXX", "SPY"):
+        sym_html = ts_empirical.parent / f"nautilus_prewall_bars_with_fills_{sym}.html"
+        assert sym_html.is_file() and sym_html.stat().st_size > 50_000
+        assert bwf_index[sym]["symbol"] == sym
+        assert bwf_index[sym]["path"] == str(sym_html)
+    nvda_html = ts_empirical.parent / "nautilus_prewall_bars_with_fills_NVDA.html"
+    assert bwf_canonical.read_bytes() == nvda_html.read_bytes()

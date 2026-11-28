@@ -43,6 +43,9 @@ _HFTBACKTEST_LAST_RELEASE_DATE = date(2025, 12, 10)
 _HFTBACKTEST_STALENESS_DAYS = 365
 _PROMPTFOO_LAST_AUDITED_DATE = date(2026, 11, 27)
 _PROMPTFOO_AUDIT_CADENCE_DAYS = 90
+_XERJ_PINNED_VERSION = "1.0.0-rc.104"
+_XERJ_LAST_AUDITED_DATE = date(2026, 11, 28)
+_XERJ_AUDIT_CADENCE_DAYS = 90
 
 
 def _installed_pkg_version(dist_name: str) -> str:
@@ -76,6 +79,9 @@ def _evaluate_upstream_watch_triggers(*, today_utc: date | None = None) -> dict[
     pf_days = max(0, (ref_day - _PROMPTFOO_LAST_AUDITED_DATE).days)
     pf_due = pf_days >= _PROMPTFOO_AUDIT_CADENCE_DAYS
 
+    xerj_days = max(0, (ref_day - _XERJ_LAST_AUDITED_DATE).days)
+    xerj_due = xerj_days >= _XERJ_AUDIT_CADENCE_DAYS
+
     return {
         "nautilus_ga_reverification": {
             "check_kind": "installed_package_metadata",
@@ -105,6 +111,17 @@ def _evaluate_upstream_watch_triggers(*, today_utc: date | None = None) -> dict[
             "cadence_days": _PROMPTFOO_AUDIT_CADENCE_DAYS,
             "days_since_audit": pf_days,
             "audit_due": pf_due,
+            "adr_ref": "ADR-0024",
+        },
+        "xerj_rc_freshness": {
+            "check_kind": "calendar_review_timer",
+            "upstream": "xerj-org/xerj",
+            "pinned_version": _XERJ_PINNED_VERSION,
+            "spdx_license": "Apache-2.0",
+            "last_audited_utc": _XERJ_LAST_AUDITED_DATE.isoformat(),
+            "cadence_days": _XERJ_AUDIT_CADENCE_DAYS,
+            "days_since_audit": xerj_days,
+            "review_due": xerj_due,
             "adr_ref": "ADR-0024",
         },
     }
@@ -692,6 +709,7 @@ def frontier_trigger_telemetry() -> dict[str, object]:
             "promptfoo_quarterly_license_audit": bool(
                 upstream_watches["promptfoo_quarterly_license_audit"]["audit_due"]
             ),
+            "xerj_rc_freshness": bool(upstream_watches["xerj_rc_freshness"]["review_due"]),
         },
     }
     out_path = manifests_dir / "frontier_trigger_status.json"
