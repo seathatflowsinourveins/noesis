@@ -2140,7 +2140,7 @@ def build_llm_harness_manifest(
             "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
             "workflow_audit": "zizmor --offline --persona=pedantic .",
             "supply_chain_scan": (
-                "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL "
+                "trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL "
                 "--exit-code 1 --skip-dirs "
                 ".venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis ."
             ),

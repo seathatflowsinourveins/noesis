@@ -215,9 +215,9 @@ gitleaks:
 zizmor:
     zizmor --offline --persona=pedantic .
 
-# Scan repository misconfigurations & secrets with Trivy
+# Scan vulnerabilities, secrets & misconfigurations with Trivy (CI's required scan: vuln,secret)
 trivy:
-    trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .
+    trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .
 
 # Audit SPDX licenses via native Trivy fs (repo/lockfile) + rootfs (installed wheels; LGPL-3.0-only admitted per ADR-0016, zero non-OSI/strong-copyleft ignored)
 [unix]
