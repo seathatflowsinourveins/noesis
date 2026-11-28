@@ -422,7 +422,7 @@
       "graduated_or_admitted_entries": ["prometheus/alertmanager", "allure-framework/allure3", "marimo-team/marimo"],
       "unadmitted_watch_candidates": ["temporalio/temporal", "grafana/loki", "grafana/tempo", "grafana/pyroscope", "langfuse/langfuse"],
       "candidates": [
-        {"slug": "marimo-team/marimo", "spdx": "Apache-2.0", "status": "admitted_off_repo_interactive_workbench", "version": "0.26.0", "url": "http://127.0.0.1:2718/", "pure_py_pep723": true, "zero_ipynb": true, "adr": "ADR-0021", "trigger": "Live 5-tab reactive pure-.py interactive quant & DuckDB SQL workbench (/mnt/z/sota-data/hosted-research-frameworks/marimo-tier0-workbench/tier0_sota_workbench.py, strictly off-repo, zero raw HTML/JS/Plotly, zero uv.lock bloat)"},
+        {"slug": "marimo-team/marimo", "spdx": "Apache-2.0", "status": "admitted_off_repo_interactive_workbench", "version": "0.26.0", "url": "http://127.0.0.1:2718/", "pure_py_pep723": true, "zero_ipynb": true, "adr": "ADR-0021", "trigger": "Live 7-tab reactive pure-.py interactive quant & DuckDB SQL workbench (/mnt/z/sota-data/hosted-research-frameworks/marimo-tier0-workbench/tier0_sota_workbench.py, strictly off-repo, zero raw HTML/JS/Plotly, zero uv.lock bloat)"},
         {"slug": "temporalio/temporal", "alias": "Temporal", "status": "earned_trigger_watch", "trigger": "durable multi-hour loops"},
         {"slug": "grafana/loki", "status": "earned_trigger_watch", "trigger": "24/5 centralized logs"},
         {"slug": "grafana/tempo", "status": "earned_trigger_watch", "trigger": "distributed OTel trace storage"},
@@ -768,7 +768,7 @@
       {"repo": "microsoft/MarS", "spdx": "MIT", "decision": "earned_trigger_l13_watch", "reason": "Generative LMM L2/L3 order-book market simulator (OSI winner replacing unlicensed peernagy/LOBS5); awaits L3 data"},
       {"repo": "bashtage/arch", "version": "9.0.0", "spdx": "NCSA", "license_evidence": "https://github.com/bashtage/arch/blob/d3e858fc1c99932bb6936cbaf0d1b45b136266e5/LICENSE.md", "decision": "active_l5_winner", "reason": "Hansen SPA reality check (GitHub API reports NOASSERTION; NCSA verified in repo LICENSE.md)"},
       {"repo": "nkaz001/hftbacktest", "version": "2.4.4", "spdx": "MIT", "decision": "active_l3_l5_winner", "maintenance_freshness_note": "Last PyPI release 2025-12-10 (>11 months idle); monitor upstream maintenance", "reason": "Rust L1/L2/L3 queue & latency simulation"},
-      {"repo": "polakowo/vectorbt", "spdx": "Apache-2.0 (Pro commercial)", "decision": "banned_l3", "reason": "Vectorized bar engine breaking Sim==Paper==Live parity; commercial Pro fails OSI firewall"},
+      {"repo": "polakowo/vectorbt", "spdx": "Apache-2.0 + Commons Clause v1.0 (Non-OSI) / Pro commercial", "decision": "banned_l3", "reason": "Root LICENSE.md enforces non-OSI Commons Clause v1.0; vectorized bar engine breaks Sim==Paper==Live parity; commercial Pro fails OSI firewall"},
       {"repo": "mementum/backtrader", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Unmaintained bar-loop engine banned in upstream-map.toml and ast-grep"},
       {"repo": "stefan-jansen/zipline-reloaded", "spdx": "Apache-2.0", "decision": "banned_l3", "reason": "Legacy daily-centric engine banned in upstream-map.toml and ast-grep"},
       {"repo": "freqtrade/freqtrade", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Crypto-centric GPL-3.0 bot banned in upstream-map.toml and ast-grep"},
@@ -823,5 +823,131 @@
       {"tool": "ctrf-io/ctrf", "spdx": "MIT", "trigger": "Upstream Grafana test-health panel consumes CTRF without custom glue"}
     ],
     "rejected": ["Arize-ai/phoenix (ELv2)", "DeepEval (Inspect overlap)", "ReportPortal (>=6 GB / ~9 containers)", "pytest-html (Allure 3 overlap)", "boxed/cosmic-ray (mutmut overlap)"]
+  },
+  "us_equities_options_sota_convergence_audit": {
+    "verified_date": "2026-11-28",
+    "asset_scope": "US Equities, Stocks, and US Equity Options ONLY (zero crypto)",
+    "authoritative_adrs": ["ADR-0012", "ADR-0016", "ADR-0018", "ADR-0021", "ADR-0025"],
+    "canonical_manifest_path": "/mnt/z/sota-data/manifests/us_equities_options_sota_convergence_manifest.json",
+    "source_audits_fused": [
+      "/mnt/z/sota-data/manifests/swarm_us_eq_opt_naut_vs_lean.json",
+      "/mnt/z/sota-data/manifests/swarm_us_eq_opt_landscape_and_llm.json",
+      "/mnt/z/sota-data/manifests/swarm_us_eq_opt_pure_engines_audit.json",
+      "/mnt/z/sota-data/manifests/swarm_us_eq_opt_native_dashboards_audit.json",
+      "/mnt/z/sota-data/manifests/swarm_us_eq_opt_saas_llm_native_audit.json",
+      "/mnt/z/sota-data/manifests/swarm_sota_runtimes_convergence_audit.json"
+    ],
+    "paper_only": true,
+    "live_execution_enabled": false,
+    "risk_kernel_sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+    "excluded_crypto_only_repos": [
+      "freqtrade/freqtrade (57,343★, GPL-3.0)",
+      "hummingbot/hummingbot (21,417★, Apache-2.0)",
+      "ccxt/ccxt (45,008★, MIT)",
+      "barter-rs/barter-rs (2,379★, MIT, crypto-only connectors)",
+      "jesse-ai/jesse (MIT)"
+    ],
+    "two_horse_l3_verdict": {
+      "sovereign_active_core": "nautechsystems/nautilus_trader v2 (31,871★, LGPL-3.0-only, 2.0.0rc9) + nkaz001/hftbacktest (5,148★, MIT, 2.4.4, native databento.py L2/L3 converter) + alpacahq/alpaca-py (1,614★, Apache-2.0, 0.45.0, 24/5 BOATS + Options L1-L3 atomic MLEG) + immutable Decimal risk.py (Z3/CrossHair) + earned-trigger lballabio/QuantLib (7,812★, BSD-3-Clause, v1.44 American options PDE/trees & Heston/SABR)",
+      "nautilus_v2_rc9_us_options_gaps_verified": [
+        "OptionExerciseModule = 0 (only CfdSwapModule & FXRolloverInterestModule)",
+        "corporate actions / splits / dividends engine = 0",
+        "OCC / Reg-T combo spread margin = 0",
+        "native Alpaca / Polygon adapters = 0 (2/21 adapters serve US Equities/Options: interactive_brokers, databento)"
+      ],
+      "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, optionally attach paid off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) and/or ORATS ($199-$899/mo smoothed IV surfaces) strictly as an additive off-repo cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
+    },
+    "root_license_audit_findings": [
+      {"repo": "polakowo/vectorbt", "stars": 9970, "verified_license": "Apache-2.0 + Commons Clause v1.0 (Non-OSI) / Pro commercial ($25/mo)", "disposition": "banned_l3"},
+      {"repo": "StockSharp/StockSharp", "stars": 11171, "verified_license": "Proprietary Custom Source-Available (Non-OSI, API NOASSERTION)", "disposition": "rejected_non_osi_proprietary"},
+      {"repo": "Lumiwealth/lumibot", "stars": 2258, "verified_license": "GPL-3.0 (Strong Copyleft, coarse Python bar loop)", "disposition": "rejected_gpl3"},
+      {"repo": "mementum/backtrader", "stars": 23825, "verified_license": "GPL-3.0 (Strong Copyleft, unmaintained since 2024-08-19)", "disposition": "banned_l3"},
+      {"repo": "kernc/backtesting.py", "stars": 9308, "verified_license": "AGPL-3.0 (Network Copyleft, single-asset only)", "disposition": "rejected_agpl3"},
+      {"repo": "cvxgrp/cvxportfolio", "stars": 1327, "verified_license": "GPL-3.0 (Strong Copyleft)", "disposition": "reference_only_watch"},
+      {"repo": "lballabio/QuantLib", "stars": 7812, "verified_license": "BSD-3-Clause (OSI-approved; API NOASSERTION)", "disposition": "earned_trigger_us_options_pricing_winner"},
+      {"repo": "openbq-org/OpenBB", "stars": 75807, "verified_license": "Apache-2.0 (V5+ pure OSI; API NOASSERTION)", "disposition": "active_l10_terminal_winner"}
+    ],
+    "why_oss_engines_omit_web_dashboards": {
+      "oss_parity_finding": "Both NautilusTrader OSS (Plotly tearsheets + Parquet/Redis/Postgres; web UI reserved for NautilusTrader Pro/Cloud) and QuantConnect/LEAN OSS (local web GUI deprecated; static QuantConnect.Report lean report HTML only; interactive web IDE/Greeks reserved for Paid QuantConnect Cloud) omit bundled live web dashboards.",
+      "three_structural_reasons": [
+        "Hot-path determinism, latency & blast-radius isolation (no HTTP/WebSocket/JS/OAuth inside Rust/C# OMS)",
+        "Open-core commercial monetization boundary (Nautilus OSS vs Pro/Cloud; LEAN OSS vs QC Cloud)",
+        "Institutional separation of concerns (headless L3 OMS emitting open formats into specialized L6/L10 UIs: 7-tab marimo 0.26.0 :2718, OpenBB/FINOS options-ready terminal :1420/:6900, ml4t-diagnostic/skfolio/Nautilus native HTML :8793, Grafana :3001, MLflow 3 :5000, Optuna :8080)"
+      ]
+    },
+    "llm_native_and_mcp_convergence": {
+      "scientific_guardrail": "Glasserman & Lin (arXiv:2309.17322): pre-trained LLMs suffer both look-ahead bias and large-cap distraction effect -> zero LLMs on execution hot paths; deterministic compiled code + pre-wall PIT + 6-gate falsification + ticker anonymization on historical text evals.",
+      "active_l8_winners": ["stanfordnlp/dspy (39,268★, 3.5.0)", "gepa-ai/gepa (7,621★, 0.1.4)", "UKGovernmentBEIS/inspect_ai (3,354★, 0.3.292, 7/7 CI evals)"],
+      "audited_llm_quant_peers": {
+        "microsoft/RD-Agent": "15,526★ MIT v1.0.0 (arXiv:2505.15155) — off-repo research reference only (Qlib-coupled)",
+        "TauricResearch/TradingAgents": "123,953★ Apache-2.0 v1.0.1 — hot-path unsafe sequential LangGraph debate; conceptual cold-path reference only",
+        "AI4Finance-Foundation/FinRobot_and_FinRL": "8,491★ / 17,195★ — rejected (no PIT/6-gate/execution parity)"
+      },
+      "live_workstation_mcp_tools_d0533de": 226,
+      "live_cached_antigravity_mcp_tools_verified": 238,
+      "live_workstation_mcp_endpoints_d0533de": 9,
+      "active_runtimes_count": 8,
+      "multi_model_router": "cheaper-inference/OmniRoute :20128 (MIT, 591 live routed models)",
+      "watched_first_party_mcps": [
+        "openbb-mcp-server (v2.0.1, Apache-2.0)",
+        "IBKR Official Public MCP (https://api.ibkr.com/v1/api/mcp-public — Tier-3 broker/options-IV, zero backtester)",
+        "massive-com/mcp_massive (404★, MIT — Tier-3 US stocks/options market-data MCP)",
+        "Option Omega Official Remote MCP (https://mcp.optionomega.com/mcp — Tier-2 backtest-only 1m/1s-IMSL SPX/SPY 0DTE)",
+        "QuantConnect Cloud Remote MCP (optional paid off-repo US Options lab — sole Tier-1 GA full-lifecycle cloud MCP)"
+      ],
+      "official_databento_mcp_repos": 0,
+      "databento_note": "Zero official MCP repos under github.com/databento as of 2026-11-28; use official databento/databento-python (336★, Apache-2.0, v0.91.0) directly."
+    },
+    "paid_saas_llm_native_4tier_summary": {
+      "source_manifest": "/mnt/z/sota-data/manifests/swarm_us_eq_opt_saas_llm_native_audit.json",
+      "nothing_credible_missed": true,
+      "tier_1_code_first_executable_mcp": [
+        "QuantConnect Cloud (https://www.quantconnect.com/api/v2/mcp — sole GA Tier-1 60+ tool executable MCP + 2D/3D heatmaps + PSR + OPRA US Options; optional off-repo sidecar only)",
+        "NautilusTrader Pro / Cloud (1-node Free / multi-node Paid Dashboard + hosted docs MCP 2-5 tools / 10-200 req/day; Cloud rolling out)",
+        "TradingView (https://mcp.tradingview.com/mcp 38 tools + pinescript-mcp 12 tools — active half-auto visual/Pine v6 companion)"
+      ],
+      "tier_2_retail_nocode_excluded": [
+        "Option Omega (official backtest-only MCP + 1s IMSL SPX/SPY 0DTE; closed web-form backtester)",
+        "NexusTrade (official OAuth MCP 100+ tools 60 rpm; retail rule engine lacking Rust queue/CPCV/Z3)",
+        "Composer (REST API only; daily ETF/stock rebalancing)",
+        "Option Alpha, ORATS (best paid L4 vol-surface REST feed), OptionStrat/ONE, TradeStation/Wealth-Lab/Portfolio123/QuantRocket, TrendSpider/Trade Ideas/Surmount/QuantMage, FinChat/Koyfin/Perplexity Finance/Kavout/Danelfin/Magnifi"
+      ],
+      "tier_3_official_broker_data_mcps": [
+        "IBKR Official Public MCP (https://api.ibkr.com/v1/api/mcp-public)",
+        "alpacahq/alpaca-mcp-server (1,120★, MIT, 72 tools — active off-repo paper-only)",
+        "massive-com/mcp_massive (404★, MIT)",
+        "openbb-mcp-server (2.0.1, Apache-2.0)",
+        "edgartools-mcp (6.4.0, MIT — active repo stdio MCP)"
+      ],
+      "tier_4_enterprise_and_defunct": [
+        "Bloomberg BQuant / FactSet / Kensho / Qraft / Algotrader / Numerai (enterprise closed or tournament)",
+        "SigTech (sigtech.com — PERMANENTLY SHUT DOWN / DEFUNCT)",
+        "Capitalise.ai (ACQUIRED BY KRAKEN — pivoted to Kraken Pro crypto)"
+      ]
+    },
+    "sota_runtimes_48entry_convergence_summary": {
+      "source_manifest": "/mnt/z/sota-data/manifests/swarm_sota_runtimes_convergence_audit.json",
+      "candidates_audited_total": 48,
+      "active_8_runtimes_plus_router": [
+        "Antigravity (1.5.18 CLI / 2.35.2 Desktop; 9 live MCP endpoints / 238 live cached tools)",
+        "anthropics/claude-code (157,342★, 2.1.332)",
+        "openai/codex (136,659★, Apache-2.0, Rust 0.171.0)",
+        "google-gemini/gemini-cli (109,256★, Apache-2.0, 0.70.0)",
+        "anomalyco/opencode (redirect from sst/opencode, 229,657★, MIT, v2.3.0)",
+        "can1357/oh-my-pi (40,046★, MIT, omp/19.2.1)",
+        "earendil-works/pi (redirect from badlogic/pi-mono, 124,378★, MIT, 1.6.1)",
+        "stablyai/orca (142,809★, MIT, v1.4.280)",
+        "cheaper-inference/OmniRoute (redirect from diegosouzapw/OmniRoute, 90,809★, MIT, v3.8.54, :20128 591 routed models)"
+      ],
+      "key_peer_dispositions": [
+        "aaif-goose/goose (57,087★ Apache-2.0 Rust) & OpenHands (94,474★ MIT) — Watch overlap/benchmark",
+        "RooCodeInc/Roo-Code (24,238★) — ARCHIVED; Aider-AI/aider (50,288★) — Superseded",
+        "microsoft/autogen (61,967★) — ARCHIVED + CC-BY-4.0 non-OSI (microsoft/agent-framework HTTP 404)",
+        "BerriAI/litellm (64,050★) — NOASSERTION dual license + OmniRoute overlap",
+        "code-yeongyu/oh-my-openagent (renamed from oh-my-opencode, 71,160★) — NOASSERTION + purged hook overlay alongside OMC/OMX/oh-my-harness/superpowers/900s Codex stop-hooks",
+        "DSPy 3.5.0 + GEPA 0.1.4 + Inspect AI 0.3.292 active core; pydantic/pydantic-ai (21,436★ MIT) watch",
+        "AAIF standards: MCP (pinned 1.30.0 vs upstream v2.3.0), AGENTS.md (25,737★), Agent Skills (27,701★) active; A2A (v1.0.1), ACP (schema-v1.35.0), AG-UI watched"
+      ]
+    }
   }
 }
