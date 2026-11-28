@@ -247,8 +247,8 @@ agent-scan:
     targets=(.mcp.json .claude/settings.json .gemini/settings.json opencode.json .codex/config.toml .claude/skills)
     if command -v agent-scan >/dev/null 2>&1; then
       agent-scan inspect --opt-out "${targets[@]}"
-    elif command -v uvx >/dev/null 2>&1 && uvx --offline --from snyk-agent-scan agent-scan --help >/dev/null 2>&1; then
-      uvx --offline --from snyk-agent-scan agent-scan inspect --opt-out "${targets[@]}"
+    elif command -v uvx >/dev/null 2>&1 && uvx --offline --from snyk-agent-scan==0.7.1 agent-scan --help >/dev/null 2>&1; then
+      uvx --offline --from snyk-agent-scan==0.7.1 agent-scan inspect --opt-out "${targets[@]}"
     else
       echo "[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)"
     fi
@@ -256,7 +256,7 @@ agent-scan:
 # Run guarded offline static MCP & skills supply-chain audit via snyk/agent-scan (L15; telemetry off, zero secrets)
 [windows]
 agent-scan:
-    $env:SNYK_CFG_TELEMETRY = '0'; $env:SNYK_DISABLE_ANALYTICS = '1'; foreach ($v in @('SNYK_TOKEN','ALPACA_PA1_API_KEY','ALPACA_PA1_SECRET','ALPACA_PA1_SECRET_KEY','ALPACA_PA2_API_KEY','ALPACA_PA2_SECRET','ALPACA_PA2_SECRET_KEY','ALPACA_PA3_API_KEY','ALPACA_PA3_SECRET','ALPACA_PA3_SECRET_KEY','APCA_API_KEY_ID','APCA_API_SECRET_KEY','ALPACA_LIVE_API_KEY','ALPACA_LIVE_SECRET_KEY')) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }; $targets = @('.mcp.json','.claude/settings.json','.gemini/settings.json','opencode.json','.codex/config.toml','.claude/skills'); if (Get-Command agent-scan -ErrorAction SilentlyContinue) { agent-scan inspect --opt-out @targets } elseif (Get-Command uvx -ErrorAction SilentlyContinue) { & uvx --offline --from snyk-agent-scan agent-scan --help *> $null; if ($LASTEXITCODE -eq 0) { uvx --offline --from snyk-agent-scan agent-scan inspect --opt-out @targets } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' } } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' }
+    $env:SNYK_CFG_TELEMETRY = '0'; $env:SNYK_DISABLE_ANALYTICS = '1'; foreach ($v in @('SNYK_TOKEN','ALPACA_PA1_API_KEY','ALPACA_PA1_SECRET','ALPACA_PA1_SECRET_KEY','ALPACA_PA2_API_KEY','ALPACA_PA2_SECRET','ALPACA_PA2_SECRET_KEY','ALPACA_PA3_API_KEY','ALPACA_PA3_SECRET','ALPACA_PA3_SECRET_KEY','APCA_API_KEY_ID','APCA_API_SECRET_KEY','ALPACA_LIVE_API_KEY','ALPACA_LIVE_SECRET_KEY')) { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }; $targets = @('.mcp.json','.claude/settings.json','.gemini/settings.json','opencode.json','.codex/config.toml','.claude/skills'); if (Get-Command agent-scan -ErrorAction SilentlyContinue) { agent-scan inspect --opt-out @targets } elseif (Get-Command uvx -ErrorAction SilentlyContinue) { & uvx --offline --from snyk-agent-scan==0.7.1 agent-scan --help *> $null; if ($LASTEXITCODE -eq 0) { uvx --offline --from snyk-agent-scan==0.7.1 agent-scan inspect --opt-out @targets } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' } } else { Write-Host '[SKIP] agent-scan: snyk/agent-scan unavailable offline (SNYK_CFG_TELEMETRY=0 SNYK_DISABLE_ANALYTICS=1 SNYK_TOKEN unset)' }
 
 # Start WSL2/Docker hosted SOTA research stack (-p docker)
 docker-up:
