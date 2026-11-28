@@ -86,3 +86,46 @@ jobs:
           path: ${{ runner.temp }}/test-results/junit.xml
           retention-days: 14
           if-no-files-found: warn
+
+  upstream-drift-and-compose-audit:
+    name: Upstream Drift, Watch Triggers & Compose Config Audit
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate Docker Compose manifests (ADR-0032 container proof)
+        run: |
+          docker compose -f docker/compose.sota.yml config -q
+          docker compose -f docker/compose.ibkr-paper.yml config -q
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.10"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Sync locked environment
+        run: uv sync --frozen --no-progress
+
+      - name: Report upstream dependency drift (majors/caps) & watch triggers
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Direct Dependency Drift (\`uv tree --frozen --outdated --depth 1 --all-groups\`)"
+            echo '```text'
+            uv tree --frozen --outdated --depth 1 --all-groups --no-progress | tee /dev/stderr
+            echo '```'
+            echo "### Dagster Upstream Watch Triggers (\`tier0_sota.definitions\`)"
+            echo '```json'
+            uv run --no-sync python -c "import json; from tier0_sota.definitions import _evaluate_upstream_watch_triggers; print(json.dumps(_evaluate_upstream_watch_triggers(), indent=2, sort_keys=True))" | tee /dev/stderr
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

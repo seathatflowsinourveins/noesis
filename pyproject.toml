@@ -10,11 +10,13 @@ dependencies = [
     "duckdb>=1.4.0",
     "exchange-calendars>=4.13.2",
     "hftbacktest>=2.4.0",
+    # 2026-11-27: edgartools 6.4.0 [ai] requires mcp<2.0.0,>=1.28.1 (https://pypi.org/pypi/edgartools/6.4.0/json); re-open when edgartools ships its MCP server on mcp 2
     "mcp>=1.28.1,<2.0.0",
     "ml4t-diagnostic>=0.2.0",
     "ml4t-engineer>=0.2.0",
     "mlflow>=3.0.0",
     "nautilus_trader==2.0.0rc9",
+    # 2026-11-27: hftbacktest 2.4.4 requires numpy<2.3,>=2.0 (https://pypi.org/pypi/hftbacktest/2.4.4/json); re-open when an hftbacktest release allows numpy>=2.3
     "numpy>=2.0.0,<2.3",
     "pandas-market-calendars>=5.7.0",
     "pandera>=0.35.0",

@@ -8,7 +8,9 @@
 
 services:
   ibkr-paper:
-    image: ghcr.io/gnzsnz/ib-gateway:stable
+    # Pinned to exact numeric release tag (identical multi-arch OCI index to :stable on 2026-11-28)
+    # so Dependabot docker-compose tracks future releases cleanly per ADR-0032 §4.
+    image: ghcr.io/gnzsnz/ib-gateway:10.50
     container_name: ibkr-paper
     cpus: "2.0"
     mem_limit: 2048m
