@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 212,
+    "repository_files_count": 215,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -172,9 +172,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 28,
+    "total_adrs": 29,
     "counts_by_status": {
-      "accepted": 24,
+      "accepted": 25,
       "superseded": 4
     },
     "supersession_edges": [
@@ -211,7 +211,8 @@
         "ADR-0022",
         "ADR-0023",
         "ADR-0025",
-        "ADR-0026"
+        "ADR-0026",
+        "ADR-0032"
       ],
       "L1": [
         "ADR-0001",
@@ -339,7 +340,8 @@
         "ADR-0024",
         "ADR-0025",
         "ADR-0026",
-        "ADR-0028"
+        "ADR-0028",
+        "ADR-0032"
       ],
       "L8": [
         "ADR-0001",
@@ -358,12 +360,13 @@
         "ADR-0024",
         "ADR-0025",
         "ADR-0026",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0032"
       ]
     },
-    "fitness_bound_accepted_ratio": "24/24",
+    "fitness_bound_accepted_ratio": "25/25",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "9a933f0618f458ed9fed8911b722c22e315779c7c7157e51b102e6f9a39aede2"
+    "corpus_sha256": "a569ef75cda23c7f503a1c4f380636c2b4229e7fb7896954144e3f700bf9db1e"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -630,7 +633,8 @@
         "docs/adr/ADR-0025.md",
         "docs/adr/ADR-0026.md",
         "docs/adr/ADR-0027.md",
-        "docs/adr/ADR-0028.md"
+        "docs/adr/ADR-0028.md",
+        "docs/adr/ADR-0032.md"
       ]
     },
     "L7": {
@@ -880,6 +884,7 @@
     ".github/CODEOWNERS",
     ".github/dependabot.yml",
     ".github/pull_request_template.md",
+    ".github/rulesets/protect-main.json",
     ".github/trivy-license-fs.yaml",
     ".github/trivy-license-rootfs.yaml",
     ".github/workflows/ci.yml",
@@ -968,6 +973,7 @@
     "docs/adr/ADR-0026.md",
     "docs/adr/ADR-0027.md",
     "docs/adr/ADR-0028.md",
+    "docs/adr/ADR-0032.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
@@ -1044,6 +1050,7 @@
     "tests/test_early_mover_compounding.py",
     "tests/test_extreme_mover_calibration.py",
     "tests/test_formal_and_evals.py",
+    "tests/test_github_landing_governance.py",
     "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",
     "tests/test_live_merit.py",
