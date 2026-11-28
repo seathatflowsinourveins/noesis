@@ -13,6 +13,13 @@ on:
       - "upstream-map.toml"
       - "pyproject.toml"
       - "uv.lock"
+      - "AGENTS.md"
+      - "ARCHITECTURE_MANIFEST.json"
+      - "LLM_HARNESS_MANIFEST.json"
+      - "PHILOSOPHY_COMPOUNDING_MANIFEST.json"
+      - "SOTA_STARRED_AND_BEYOND_MANIFEST.json"
+      - "rules/zero_self_invention.yml"
+      - ".omp/**"
       - ".github/workflows/docs.yml"
   pull_request:
     branches: [main]
@@ -23,6 +30,13 @@ on:
       - "upstream-map.toml"
       - "pyproject.toml"
       - "uv.lock"
+      - "AGENTS.md"
+      - "ARCHITECTURE_MANIFEST.json"
+      - "LLM_HARNESS_MANIFEST.json"
+      - "PHILOSOPHY_COMPOUNDING_MANIFEST.json"
+      - "SOTA_STARRED_AND_BEYOND_MANIFEST.json"
+      - "rules/zero_self_invention.yml"
+      - ".omp/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 

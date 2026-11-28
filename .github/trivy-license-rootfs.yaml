@@ -1,0 +1,15 @@
+# Declarative Trivy v0.76.2 config for installed Python wheel SPDX license audit.
+# Only LGPL-3.0-only (nautilus_trader dynamic dependency) is admitted per ADR-0016;
+# zero non-OSI, commercial, or strong-copyleft licenses are ignored.
+exit-code: 1
+format: table
+severity:
+  - HIGH
+  - CRITICAL
+license:
+  full: false
+  ignored:
+    - LGPL-3.0-only
+scan:
+  scanners:
+    - license
