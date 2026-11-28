@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 217,
+    "repository_files_count": 218,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -370,7 +370,7 @@
     },
     "fitness_bound_accepted_ratio": "26/26",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "2f28ba91acea248c25165da05b4dbc8dc965e3665fc7a5cbb81744b7cc49d198"
+    "corpus_sha256": "93cc827fbb5cf9c4a8bd2ae9c836058970072c549928fa85467c8d15a8798e87"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -893,6 +893,7 @@
     ".github/trivy-license-fs.yaml",
     ".github/trivy-license-rootfs.yaml",
     ".github/workflows/ci.yml",
+    ".github/workflows/dependabot-auto-merge.yml",
     ".github/workflows/docs.yml",
     ".github/workflows/multi-model-sota.yml",
     ".github/workflows/release.yml",
