@@ -335,7 +335,7 @@
         "pinned": "1.0.0-rc.104",
         "spdx": "Apache-2.0",
         "dockerfile": "docker/Dockerfile.xerj",
-        "alpine_base": "alpine:3.24",
+        "alpine_base": "alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
         "amd64_sha256": "1628ee401a9a121156cc380950f9d48923e6e856458ae1e6648f0ef18db7b693",
         "arm64_sha256": "cd3acf3b37d7f942157bebb05efa4221651b25f07b18a85beeacb5757647ea4f"
       },

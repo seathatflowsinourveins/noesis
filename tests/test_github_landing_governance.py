@@ -533,8 +533,13 @@ def test_crosshair_pin_matches_across_justfile_ci_and_release() -> None:
     assert release_pins == just_pins, (release_pins, just_pins)
 
 
+# ADR-0032 §4 (M-R08): an image tag names a full patch release, [v]major.minor.patch, optionally
+# with a letter suffix on the patch (ib-gateway's 10.50.1h) and a -variant (-slim-bookworm).
+EXACT_IMAGE_TAG_RE = re.compile(r"v?\d+\.\d+\.\d+(?:[a-z][0-9a-z]*)?(?:-[A-Za-z0-9._-]+)?")
+
+
 def test_compose_images_have_no_unpinned_floating_tags() -> None:
-    """ADR-0032 §4: external images in docker/compose*.yml must never use floating tags."""
+    """ADR-0032 §4: external images in docker/compose*.yml name a full patch release or a digest."""
     compose_files = sorted((REPO_ROOT / "docker").glob("compose*.yml"))
     assert compose_files
     checked_external = 0
@@ -556,7 +561,7 @@ def test_compose_images_have_no_unpinned_floating_tags() -> None:
                 svc_name,
                 image,
             )
-            assert re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9._-]+)?", tag), (
+            assert EXACT_IMAGE_TAG_RE.fullmatch(tag), (
                 compose_path.name,
                 svc_name,
                 image,
@@ -612,3 +617,30 @@ def test_systemd_workstation_guard_pytest_hygiene_safety() -> None:
     assert 'chmod -R u+w "$$p"' in text
     assert 'name "garbage-*"' in text
     assert 'name "pytest-[0-9]*"' in text
+
+
+def test_dockerfile_images_pin_an_exact_version() -> None:
+    """ADR-0032 §4: every registry image a docker/Dockerfile* builds or copies from, or loads as its
+    `# syntax=` frontend, names a full patch release or a digest; build stages, scratch and the
+    local tier0-sota-* builds excepted."""
+    from_re = r"(?mi)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)"
+    dockerfiles = sorted((REPO_ROOT / "docker").glob("Dockerfile*"))
+    assert dockerfiles
+    for path in dockerfiles:
+        text = path.read_text(encoding="utf-8")
+        stages = {stage.lower() for _, stage in re.findall(from_re + r"\s+AS\s+(\S+)", text)}
+        stages.add("scratch")
+        refs = re.findall(from_re, text)
+        refs += re.findall(r"(?mi)^\s*COPY\b[^\n]*?--from=(\S+)", text)
+        refs += re.findall(r"--mount=\S*?\bfrom=([^,\s]+)", text)
+        refs += re.findall(r"(?mi)^#\s*syntax\s*=\s*(\S+)", text)
+        assert refs, path.name
+        for ref in refs:
+            if ref.lower() in stages or ref.isdigit() or ref.startswith("tier0-sota-"):
+                continue
+            if "@sha256:" in ref:
+                assert re.search(r"@sha256:[0-9a-f]{64}$", ref), (path.name, ref)
+                continue
+            last = ref.rsplit("/", 1)[-1]
+            assert ":" in last, (path.name, ref)
+            assert EXACT_IMAGE_TAG_RE.fullmatch(last.rsplit(":", 1)[1]), (path.name, ref)

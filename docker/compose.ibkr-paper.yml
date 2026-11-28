@@ -8,9 +8,9 @@
 
 services:
   ibkr-paper:
-    # Pinned to exact numeric release tag (identical multi-arch OCI index to :stable on 2026-11-28)
-    # so Dependabot docker-compose tracks future releases cleanly per ADR-0032 §4.
-    image: ghcr.io/gnzsnz/ib-gateway:10.50
+    # The upstream stable release: 10.50.1h has the digest of :stable and :10.50 (2026-11-28). A full
+    # patch tag plus digest per ADR-0032 §4; Dependabot docker-compose updates the two together.
+    image: ghcr.io/gnzsnz/ib-gateway:10.50.1h@sha256:4f2704a1ab2ebcd468ac6ca58e2b99d2c6c056b303a3f499b67fc80012ad5a10
     container_name: ibkr-paper
     cpus: "2.0"
     mem_limit: 2048m
