@@ -43,6 +43,7 @@ nav = [
   { "ADR-0028: Starred Repos & L10-L15 Frontier Convergence" = "adr/ADR-0028.md" },
   { "ADR-0032: Landing Through PRs & Upstream Maintenance" = "adr/ADR-0032.md" },
   { "ADR-0033: Agent Runtime Operation & Runtime Updates" = "adr/ADR-0033.md" },
+  { "ADR-0034: Dual-Machine Ecosystem & Tailscale Control Plane" = "adr/ADR-0034.md" },
 ]
 
 [project.theme]
