@@ -176,6 +176,28 @@
       "verification-before-completion"
     ]
   },
+  "runtime_worker_parity": {
+    "canonical_roles": [
+      "code-intel-redteam",
+      "memory-rag-evolution",
+      "observability-operator",
+      "paper-gatekeeper",
+      "pit-data-engineer",
+      "quant-falsifier",
+      "tier0-grand-central"
+    ],
+    "claude_agents": "7/7",
+    "codex_agents": "7/7",
+    "opencode_agents": "7/7",
+    "omp_agents": "7/7",
+    "paper_gatekeeper_read_only_enforced": true,
+    "paper_gatekeeper_enforcement": {
+      "claude": "permissionMode=plan + frontmatter disallowedTools(Write,Edit,MultiEdit,NotebookEdit,Bash,Agent,mcp__nautilus-engine__stage_semi_auto_order_preset,mcp__xerj__xerj_memory_store)",
+      "codex": "sandbox_mode=read-only + mcp_servers.{nautilus-engine,xerj}.disabled_tools",
+      "opencode": "permission.{edit,shell,subagent,nautilus-engine_stage_semi_auto_order_preset,xerj_xerj_memory_store}=deny",
+      "omp": "isReadOnlyAgent=true (tools=read,find,grep,glob,ast_grep subset of READ_ONLY_TOOL_NAMES; zero spawns/edit/write/bash/lsp/task)"
+    }
+  },
   "compounding_lanes": {
     "sim-backtest": {
       "command": ".claude/commands/lane-sim.md",
@@ -455,6 +477,12 @@
         "edgartools",
         "nautilus-engine",
         "xerj"
+      ],
+      ".omp/mcp.json": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
       ]
     },
     "parity_fields_verified": [
@@ -462,7 +490,7 @@
       "args",
       "env"
     ],
-    "parity_count": "5/5"
+    "parity_count": "6/6"
   },
   "skills_summary": {
     "lock_file": "UPSTREAM_SKILLS_LOCK.json",

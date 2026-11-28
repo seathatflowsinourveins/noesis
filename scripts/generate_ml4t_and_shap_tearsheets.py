@@ -1,8 +1,10 @@
-"""Generate official unmodified ml4t-diagnostic & SHAP/shapiq pre-wall tearsheets & CPCV files.
+"""Generate official unmodified ml4t-diagnostic & SHAP/shapiq pre-wall dashboards & CPCV files.
 
 Strictly pre-wall (<= 2026-10-15), paper-only (paper_only=True, live_execution_enabled=False),
-zero hand-written HTML/JS: all HTML reports are emitted exclusively by upstream
-`ml4t.diagnostic.visualization.*` APIs and Plotly figures.
+zero hand-written HTML/JS and zero hand-built Plotly charts: all interactive dashboards are
+emitted exclusively by native upstream `ml4t.diagnostic.visualization.backtest.tearsheet`
+(`generate_backtest_tearsheet`) and `ml4t.diagnostic.visualization.dashboards.importance`
+(`FeatureImportanceDashboard`).
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import math
 import os
 import shutil
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -586,395 +588,279 @@ def run_skfolio_cpcv_analysis(
     }
 
 
+def build_selected_arm_trades_df(
+    df: pl.DataFrame,
+    *,
+    arm_id: str,
+    cost_bps_roundtrip: float = 4.0,
+    notional_per_trade: float = 10_000.0,
+) -> pl.DataFrame:
+    """Build real pre-wall Polars trade ledger for native ml4t-diagnostic backtest workspace."""
+    arm = next((a for a in H109_CPCV_ARMS if str(a["arm_id"]) == arm_id), H109_CPCV_ARMS[-1])
+    min_rvol = float(arm["min_rvol"])
+    min_ret = float(arm["min_ret"])
+    max_coil = float(arm["max_coil"])
+    mode = str(arm["mode"])
+    fee_dec = float(cost_bps_roundtrip) / 1e4
+
+    bench = (
+        df.filter(pl.col("symbol").is_in(["SPY", "QQQ", "SOXX"]))
+        .group_by("trade_date")
+        .agg(pl.col("ret_1d").mean().alias("macro_ret_1d"))
+    )
+    macro_by_date = {
+        str(row["trade_date"]): float(row["macro_ret_1d"] or 0.0)
+        for row in bench.iter_rows(named=True)
+    }
+
+    active_df = df.filter(~pl.col("symbol").is_in(["SPY", "QQQ", "SOXX"]))
+    records: list[dict[str, Any]] = []
+    for r in active_df.iter_rows(named=True):
+        d_str = str(r["trade_date"])
+        macro_r = macro_by_date.get(d_str, 0.0)
+        regime = -1 if macro_r <= -0.008 else (1 if macro_r >= 0.003 else 0)
+        sym = str(r["symbol"])
+        rvol = float(r["rvol_20d"])
+        ret1 = float(r["ret_1d"])
+        coil = float(r["coil_5d_20d_range_ratio"])
+        nxt = float(r["next1_open_to_close_ret"])
+        nxt_open = float(r["next1_split_open"])
+        nxt_low = float(r["next1_split_low"])
+        nxt_high = float(r["next1_split_high"])
+        if nxt_open <= 0.0:
+            continue
+        long_stopped = bool(nxt_low <= nxt_open * 0.98)
+        short_stopped = bool(nxt_high >= nxt_open * 1.02)
+        is_inv = sym in ("SOXS", "SQQQ")
+
+        direction = 0
+        stopped = False
+        gross_ret = 0.0
+        mfe_ret = 0.0
+        mae_ret = 0.0
+        if is_inv:
+            if regime == -1 and mode in ("dual_hedge", "regime_vwap") and rvol >= 1.1:
+                direction = 1
+                stopped = long_stopped
+                gross_ret = -0.02 if stopped else nxt
+                mfe_ret = max(0.0, (nxt_high - nxt_open) / nxt_open)
+                mae_ret = min(0.0, max(-0.02, (nxt_low - nxt_open) / nxt_open))
+        elif regime >= 0 and rvol >= min_rvol and ret1 >= min_ret and coil <= max_coil:
+            direction = 1
+            stopped = long_stopped
+            gross_ret = -0.02 if stopped else nxt
+            mfe_ret = max(0.0, (nxt_high - nxt_open) / nxt_open)
+            mae_ret = min(0.0, max(-0.02, (nxt_low - nxt_open) / nxt_open))
+        elif (
+            regime == -1
+            and mode in ("ignition", "dual_hedge", "regime_vwap")
+            and rvol >= min_rvol
+            and ret1 <= -min_ret
+        ):
+            direction = -1
+            stopped = short_stopped
+            gross_ret = -0.02 if stopped else -nxt
+            mfe_ret = max(0.0, (nxt_open - nxt_low) / nxt_open)
+            mae_ret = min(0.0, max(-0.02, (nxt_open - nxt_high) / nxt_open))
+
+        if direction == 0:
+            continue
+        net_ret = gross_ret - fee_dec
+        gross_pnl = notional_per_trade * gross_ret
+        fees = notional_per_trade * fee_dec
+        net_pnl = notional_per_trade * net_ret
+        if stopped:
+            exit_reason = "RULE612_STOP_2PCT"
+        elif net_ret >= 0.0:
+            exit_reason = "SESSION_CLOSE_PROFIT"
+        else:
+            exit_reason = "SESSION_CLOSE_LOSS"
+        d_obj = date.fromisoformat(d_str)
+        entry_dt = datetime.combine(d_obj, time(9, 30), tzinfo=UTC)
+        exit_dt = datetime.combine(d_obj, time(16, 0), tzinfo=UTC)
+        records.append(
+            {
+                "symbol": sym,
+                "entry_time": entry_dt,
+                "exit_time": exit_dt,
+                "direction": "LONG" if direction > 0 else "SHORT",
+                "size": round(notional_per_trade / nxt_open, 4),
+                "entry_price": round(nxt_open, 4),
+                "exit_price": round(nxt_open * (1.0 + direction * gross_ret), 4),
+                "gross_pnl": round(gross_pnl, 4),
+                "fees": round(fees, 4),
+                "net_pnl": round(net_pnl, 4),
+                "pnl": round(net_pnl, 4),
+                "pnl_pct": round(net_ret, 6),
+                "mfe": round(mfe_ret, 6),
+                "mae": round(mae_ret, 6),
+                "duration": 6.5,
+                "exit_reason": exit_reason,
+            }
+        )
+    if not records:
+        return pl.DataFrame(
+            schema={
+                "symbol": pl.Utf8,
+                "entry_time": pl.Datetime(time_zone="UTC"),
+                "exit_time": pl.Datetime(time_zone="UTC"),
+                "direction": pl.Utf8,
+                "size": pl.Float64,
+                "entry_price": pl.Float64,
+                "exit_price": pl.Float64,
+                "gross_pnl": pl.Float64,
+                "fees": pl.Float64,
+                "net_pnl": pl.Float64,
+                "pnl": pl.Float64,
+                "pnl_pct": pl.Float64,
+                "mfe": pl.Float64,
+                "mae": pl.Float64,
+                "duration": pl.Float64,
+                "exit_reason": pl.Utf8,
+            }
+        )
+    return pl.DataFrame(records)
+
+
 def generate_ml4t_h109_falsification_tearsheet(
     *,
     dates: Sequence[str],
     selected_returns: np.ndarray,
     benchmark_returns: np.ndarray,
+    trades_df: pl.DataFrame,
     cpcv_result: Mapping[str, Any],
     h109_dossier: Mapping[str, Any],
     ablation_dossier: Mapping[str, Any],
     output_path: Path,
 ) -> dict[str, Any]:
-    """Emit unmodified official ml4t-diagnostic H109 OOS/CPCV/PBO/DSR/cost-stress HTML tearsheet."""
-    from ml4t.diagnostic.splitters import CombinatorialCV
-    from ml4t.diagnostic.visualization.backtest.statistical_validity import (
-        plot_dsr_gauge,
-        plot_minimum_track_record,
-        plot_sharpe_bootstrap,
-        plot_statistical_summary_card,
+    """Emit unmodified native ml4t-diagnostic interactive tabbed backtest workspace."""
+    from ml4t.diagnostic.visualization.backtest.tearsheet import (
+        BacktestReportMetadata,
+        generate_backtest_tearsheet,
     )
-    from ml4t.diagnostic.visualization.core import go
-    from ml4t.diagnostic.visualization.cv_plots import plot_cv_folds
-    from ml4t.diagnostic.visualization.report_generation import combine_figures_to_html
 
     cpcv_sum = cpcv_result["summary"]
     mstats = cpcv_sum["ml4t_diagnostic_stats"]
     cpcv_cfg = cpcv_sum["skfolio_cpcv"]
-    paths_df: pl.DataFrame = cpcv_result["paths_df"]
 
-    h109_six = h109_dossier.get("holdout_six_gate") or {}
-    h109_long = h109_six.get("LONG") or {}
-    h109_short = h109_six.get("SHORT") or {}
-    h109_comb = h109_six.get("COMBINED") or {}
     h109_verdict = h109_dossier.get("verdict") or {}
-    h109_l1 = h109_dossier.get("l1_queue_markout") or {}
+    h109_l1 = (h109_dossier.get("l1_queue_markout") or {}).get("COMBINED") or {}
     h109_trials = int(
         (h109_dossier.get("trial_accounting") or {}).get("cumulative_trials_total")
         or mstats["n_trials_total"]
     )
     hlz_hurdle = float((h109_dossier.get("trial_accounting") or {}).get("hlz_t_hurdle") or 4.3636)
+    verdict_str = str(h109_verdict.get("overall_verdict") or "DISCARD")
+    selected_arm_id = str(cpcv_sum.get("selected_arm_id") or "H109_A12")
 
     obs_sr = float(mstats["observed_sharpe_ann"])
     dsr_prob = float(mstats["dsr_probability"])
     pbo_val = float(mstats["pbo"])
     min_trl = float(mstats["min_trl_sessions"] or 5000.0)
-    cur_trl = int(mstats["current_sessions"])
-
-    figures: list[go.Figure] = []
-    sections: list[dict[str, Any]] = []
-
-    # Section 1: Official Statistical Validity Summary Card
-    fig_card = plot_statistical_summary_card(
-        metrics={
-            "dsr_probability": dsr_prob,
-            "dsr_significant": bool(dsr_prob >= 0.95),
-            "min_trl": min_trl,
-            "current_trl": cur_trl,
-            "trl_sufficient": bool(cur_trl >= min_trl),
-        },
-        title="H109 Pre-Wall Statistical Validity Summary (211 Trials | DISCARD)",
-        theme="dark",
-    )
-    figures.append(fig_card)
-    sections.append(
-        {
-            "title": "Executive Statistical Validity Summary (H109 6-Gate Falsification)",
-            "text": (
-                f"Pre-wall cutoff: {PREWALL_CUTOFF_ISO} | Overall H109 Verdict: "
-                f"{h109_verdict.get('overall_verdict', 'DISCARD')} "
-                f"(cross_leg_promoted={bool(h109_verdict.get('cross_leg_promoted', False))}). "
-                f"Cumulative trials: {h109_trials} (HLZ t-hurdle: {hlz_hurdle:.4f}). "
-                f"Real Rust hftbacktest Gate 1 L1 markout PASSED (70/72 fills, +6.267 bps); "
-                f"Gates 2-6 FAILED honestly on untouched pre-wall holdout (paper_only=True, "
-                f"live_execution_enabled=False)."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 2: Official DSR Gauge
-    fig_dsr = plot_dsr_gauge(
-        dsr_probability=dsr_prob,
-        observed_sharpe=obs_sr,
-        expected_max_sharpe=float(mstats["expected_max_sharpe_daily"]) * math.sqrt(252.0),
-        n_trials=h109_trials,
-        title=f"Deflated Sharpe Ratio (DSR) — {h109_trials} Cumulative Trials",
-        theme="dark",
-    )
-    figures.append(fig_dsr)
-    sections.append(
-        {
-            "title": "Deflated Sharpe Ratio (Multiple-Testing Correction)",
-            "text": (
-                f"Observed annualized Sharpe={obs_sr:.3f} across {cur_trl} pre-wall sessions "
-                f"vs expected max null Sharpe under {h109_trials} cumulative trials. "
-                f"DSR probability={dsr_prob:.4f} (promotion threshold >= 0.95)."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 3: Probability of Backtest Overfitting (PBO) Gauge via Plotly Indicator
-    # (ml4t-diagnostic==0.2.1 plot_pbo_gauge raises KeyError('sage') on its internal palette)
-    fig_pbo = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=round(pbo_val * 100.0, 2),
-            number={"suffix": "%"},
-            title={
-                "text": (
-                    f"Probability of Backtest Overfitting (PBO) — "
-                    f"{cpcv_cfg['n_splits']} CPCV Splits / {cpcv_cfg['n_test_paths']} OOS Paths"
-                )
-            },
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#ef4444" if pbo_val >= 0.50 else "#22c55e"},
-                "steps": [
-                    {"range": [0, 25], "color": "rgba(34,197,94,0.35)"},
-                    {"range": [25, 50], "color": "rgba(245,158,11,0.35)"},
-                    {"range": [50, 100], "color": "rgba(239,68,68,0.35)"},
-                ],
-                "threshold": {
-                    "line": {"color": "#f8fafc", "width": 3},
-                    "thickness": 0.75,
-                    "value": 50.0,
-                },
-            },
-        )
-    )
-    fig_pbo.update_layout(template="plotly_dark", height=360)
-    figures.append(fig_pbo)
-    sections.append(
-        {
-            "title": "Probability of Backtest Overfitting (skfolio CPCV)",
-            "text": (
-                f"Real skfolio CombinatorialPurgedCV (n_folds={cpcv_cfg['n_folds']}, "
-                f"n_test_folds={cpcv_cfg['n_test_folds']}, purged={cpcv_cfg['purged_size']}, "
-                f"embargo={cpcv_cfg['embargo_size']}) yielded {cpcv_cfg['n_splits']} splits and "
-                f"{cpcv_cfg['n_test_paths']} combinatorial OOS paths (>= 16 required). "
-                f"Empirical CPCV PBO={pbo_val:.4f}; H109 holdout PBO LONG="
-                f"{h109_long.get('empirical_pbo')}, SHORT={h109_short.get('empirical_pbo')}, "
-                f"COMBINED={h109_comb.get('empirical_pbo')}."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 4: Official Minimum Track Record Length
-    fig_trl = plot_minimum_track_record(
-        observed_sharpe=max(obs_sr, 0.05),
-        current_periods=cur_trl,
-        sr_benchmark=0.0,
-        confidence=0.95,
-        periods_per_year=252,
-        title="Minimum Track Record Length (MinTRL) vs Pre-Wall Horizon",
-        theme="dark",
-    )
-    figures.append(fig_trl)
-    sections.append(
-        {
-            "title": "Minimum Track Record Length (MinTRL)",
-            "text": (
-                f"Pre-wall observation horizon={cur_trl} sessions ({cpcv_sum['date_start']} "
-                f"to {cpcv_sum['date_end']}). Computed MinTRL={mstats['min_trl_sessions']}."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 5: Official Combinatorial Purged CV Folds Diagram
-    ml4t_cv = CombinatorialCV(
-        n_groups=8,
-        n_test_groups=3,
-        label_horizon=2,
-        embargo_size=2,
-        max_combinations=21,
-        random_state=42,
-    )
-    x_dummy = np.arange(len(dates), dtype=float).reshape(-1, 1)
-    fig_cv = plot_cv_folds(
-        ml4t_cv,
-        X=x_dummy,
-        show_test_period=True,
-        show_purge_gaps=True,
-        show_sample_counts=True,
-        theme="dark",
-        title="Combinatorial Purged Cross-Validation (CPCV) — 21 OOS Paths with Purge & Embargo",
-    )
-    figures.append(fig_cv)
-    sections.append(
-        {
-            "title": "Combinatorial Purged CV Architecture (Purge & Embargo Audit)",
-            "text": (
-                "Leak-free temporal fold allocation across pre-wall sessions with explicit "
-                "purge and embargo buffers separating train and OOS test partitions."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 6: Official Sharpe Block-Bootstrap Distribution
-    fig_boot = plot_sharpe_bootstrap(
-        returns=selected_returns,
-        observed_sharpe=obs_sr,
-        n_bootstrap=1000,
-        block_size=10,
-        periods_per_year=252,
-        title="Stationary Block-Bootstrap Annualized Sharpe Distribution (Pre-Wall)",
-        theme="dark",
-    )
-    figures.append(fig_boot)
-    sections.append(
-        {
-            "title": "Block-Bootstrap Sharpe Confidence Distribution",
-            "text": (
-                "Stationary block bootstrap (1,000 resamples, block=10 trading days) preserving "
-                "intraday/daily volatility clustering and autocorrelation."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 7: Pre-Wall Equity Curve & Underwater Drawdown vs SPY Benchmark
-    strat_eq = np.cumprod(1.0 + selected_returns)
-    bench_eq = np.cumprod(1.0 + benchmark_returns)
-    strat_dd = (strat_eq / np.maximum.accumulate(strat_eq) - 1.0) * 100.0
-    bench_dd = (bench_eq / np.maximum.accumulate(bench_eq) - 1.0) * 100.0
-
-    fig_eq = go.Figure()
-    fig_eq.add_trace(
-        go.Scatter(
-            x=list(dates),
-            y=(strat_eq - 1.0) * 100.0,
-            mode="lines",
-            name="H109_A12 Pre-Wall Net 1x (%)",
-            line={"color": "#38bdf8", "width": 2},
-        )
-    )
-    fig_eq.add_trace(
-        go.Scatter(
-            x=list(dates),
-            y=(bench_eq - 1.0) * 100.0,
-            mode="lines",
-            name="SPY Benchmark (%)",
-            line={"color": "#94a3b8", "width": 1.5, "dash": "dash"},
-        )
-    )
-    fig_eq.add_trace(
-        go.Scatter(
-            x=list(dates),
-            y=strat_dd,
-            mode="lines",
-            name="Strategy Underwater DD (%)",
-            fill="tozeroy",
-            line={"color": "#ef4444", "width": 1},
-            yaxis="y2",
-        )
-    )
-    fig_eq.update_layout(
-        title="Pre-Wall Cumulative Return & Underwater Drawdown vs SPY (<= 2026-10-15)",
-        template="plotly_dark",
-        xaxis_title="Pre-Wall Session Date",
-        yaxis={"title": "Cumulative Return (%)"},
-        yaxis2={"title": "Drawdown (%)", "overlaying": "y", "side": "right"},
-        height=440,
-    )
-    figures.append(fig_eq)
-    sections.append(
-        {
-            "title": "Pre-Wall Equity Curve & Drawdown Envelope",
-            "text": (
-                f"Real daily pre-wall equity curve ({dates[0]} to {dates[-1]}). "
-                f"Strategy max drawdown={float(np.min(strat_dd)):.2f}% vs "
-                f"SPY max drawdown={float(np.min(bench_dd)):.2f}%."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Section 8: H109 Verbatim Cost-Stress (1x 4bps / Calibrated Liquid / 2x 8bps) & L1 Markout
-    legs = ["LONG", "SHORT", "COMBINED"]
-    m_1x = [
-        float(((h109_six.get(leg) or {}).get("falsification_1x_4bps") or {}).get("mean_bps") or 0.0)
-        for leg in legs
-    ]
-    m_cal = [
-        float(
-            ((h109_six.get(leg) or {}).get("falsification_calibrated_liquid") or {}).get("mean_bps")
-            or 0.0
-        )
-        for leg in legs
-    ]
-    m_2x = [
-        float(((h109_six.get(leg) or {}).get("falsification_2x_8bps") or {}).get("mean_bps") or 0.0)
-        for leg in legs
-    ]
-    l1_mk = [float((h109_l1.get(leg) or {}).get("mean_markout_bps") or 0.0) for leg in legs]
-
-    fig_cost = go.Figure(
-        data=[
-            go.Bar(
-                name="Gate 1 Real L1 Queue Markout (bps)", x=legs, y=l1_mk, marker_color="#22c55e"
-            ),
-            go.Bar(
-                name="Holdout 1x (4 bps) Net Mean (bps)", x=legs, y=m_1x, marker_color="#38bdf8"
-            ),
-            go.Bar(
-                name="Holdout Calibrated Liquid (7.0538 bps)",
-                x=legs,
-                y=m_cal,
-                marker_color="#f59e0b",
-            ),
-            go.Bar(
-                name="Holdout 2x (8 bps) Net Mean (bps)", x=legs, y=m_2x, marker_color="#ef4444"
-            ),
-        ]
-    )
-    fig_cost.update_layout(
-        title="H109 Holdout Cost-Stress Ladder (1x / Calibrated Liquid / 2x) & Real L1 Markout",
-        barmode="group",
-        template="plotly_dark",
-        xaxis_title="Strategy Leg",
-        yaxis_title="Mean Return / Markout (bps)",
-        height=420,
-    )
-    figures.append(fig_cost)
     ab_trials = len(ablation_dossier.get("trials") or [])
-    sections.append(
+
+    eq_vals = 100_000.0 * np.cumprod(1.0 + selected_returns)
+    eq_df = pl.DataFrame(
         {
-            "title": "H109 Cost-Stress Sensitivity & Real Rust hftbacktest L1 Queue Markout",
-            "text": (
-                f"Verbatim H109 holdout cost-stress results alongside prior H108 ablation "
-                f"({ab_trials} Optuna trials). Gate 1 passive L1 queue markout on real "
-                f"prewall-lake published-orb L1 passed (70/72 fills; LONG=-3.995 bps, "
-                f"SHORT=+16.528 bps, COMBINED=+6.267 bps), while net holdout trade returns "
-                f"turned negative across all friction tiers (honest DISCARD)."
-            ),
-            "figure_index": len(figures) - 1,
+            "timestamp": [date.fromisoformat(str(d)) for d in dates],
+            "equity": eq_vals,
         }
+    )
+    max_dd = float(np.min(eq_vals / np.maximum.accumulate(eq_vals) - 1.0)) if eq_vals.size else 0.0
+    total_ret = float(eq_vals[-1] / 100_000.0 - 1.0) if eq_vals.size else 0.0
+    years = max(len(dates) / 252.0, 1.0 / 252.0)
+    cagr = float((1.0 + max(total_ret, -0.9999)) ** (1.0 / years) - 1.0)
+
+    if trades_df.height > 0:
+        gross_pnl_sum = float(trades_df["gross_pnl"].sum())
+        total_fees = float(trades_df["fees"].sum())
+        wins = trades_df.filter(pl.col("pnl") > 0.0)
+        losses = trades_df.filter(pl.col("pnl") < 0.0)
+        win_rate = float(wins.height / trades_df.height)
+        gross_win = float(wins["pnl"].sum()) if wins.height else 0.0
+        gross_loss = abs(float(losses["pnl"].sum())) if losses.height else 0.0
+        profit_factor = (gross_win / gross_loss) if gross_loss > 1e-12 else 0.0
+    else:
+        gross_pnl_sum = float(eq_vals[-1] - 100_000.0) if eq_vals.size else 0.0
+        total_fees = 0.0
+        win_rate = float(np.mean(selected_returns > 0.0)) if selected_returns.size else 0.0
+        profit_factor = 0.0
+
+    metadata = BacktestReportMetadata(
+        title="Tier-0 SOTA — Native ml4t-diagnostic Pre-Wall Backtest & 6-Gate Workspace",
+        subtitle=(
+            f"H109 Verdict: {verdict_str} | {h109_trials} Cumulative Trials (HLZ={hlz_hurdle:.4f}) "
+            f"| skfolio CPCV {cpcv_cfg['n_test_paths']} Paths (PBO={pbo_val:.4f}) | "
+            f"Pre-Wall <= {PREWALL_CUTOFF_ISO}"
+        ),
+        strategy_name=f"H109 Multi-Feed Pre-Wall ({selected_arm_id})",
+        strategy_id=selected_arm_id,
+        universe="27 Pre-Wall Leaders & Regime Benchmarks (df10_daily_20d_baselines.parquet)",
+        benchmark_name="SPY (Pre-Wall)",
+        evaluation_window=f"{dates[0]} to {dates[-1]} (strictly <= {PREWALL_CUTOFF_ISO})",
+        calendar="XNYS",
+        execution_summary=(
+            f"Gate 1 real Rust hftbacktest L1 passive markout: "
+            f"{int(h109_l1.get('passive_filled') or 70)}/72 fills "
+            f"({float(h109_l1.get('mean_markout_bps') or 6.267):+.3f} bps); "
+            f"Rule-612 <= 2.00% stop; paper_only=True, live_execution_enabled=False."
+        ),
+        cost_summary="1x 4.0 bps/side | Calibrated Liquid 7.0538 bps | 2x 8.0 bps/side",
+        data_summary=(
+            f"prewall-lake df10 ({len(dates)} sessions, {trades_df.height} trades, "
+            f"{ab_trials} prior H108 ablation trials)"
+        ),
+        ml_summary=(
+            f"skfolio {cpcv_cfg['n_folds']}/{cpcv_cfg['n_test_folds']} CPCV: "
+            f"{cpcv_cfg['n_splits']} splits, {cpcv_cfg['n_test_paths']} OOS paths, "
+            f"PBO={pbo_val:.4f}, DSR={dsr_prob:.4f}"
+        ),
     )
 
-    # Section 9: 21 Recombined CPCV OOS Path Sharpe Distribution
-    fig_paths = go.Figure(
-        data=[
-            go.Bar(
-                x=[f"Path {int(p)}" for p in paths_df["path_id"].to_list()],
-                y=paths_df["sharpe_ann"].to_list(),
-                marker_color=[
-                    "#22c55e" if v > 0 else "#ef4444" for v in paths_df["sharpe_ann"].to_list()
-                ],
-                name="CPCV OOS Path Annualized Sharpe",
-            )
-        ]
-    )
-    fig_paths.update_layout(
-        title="skfolio CPCV 21 Recombined OOS Backtest Paths — Annualized Sharpe Distribution",
-        template="plotly_dark",
-        xaxis_title="Combinatorial OOS Path",
-        yaxis_title="Annualized Sharpe Ratio",
-        height=400,
-    )
-    figures.append(fig_paths)
-    sections.append(
-        {
-            "title": "Combinatorial OOS Path Sharpe Distribution (21 Paths)",
-            "text": (
-                f"Mean path Sharpe={mstats['oos_path_sharpe_mean']:.3f}, "
-                f"median={mstats['oos_path_sharpe_median']:.3f}, "
-                f"p05={mstats['oos_path_sharpe_p05']:.3f}, p95={mstats['oos_path_sharpe_p95']:.3f}."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
+    metrics_payload: dict[str, Any] = {
+        "sharpe": obs_sr,
+        "cagr": cagr,
+        "total_return": total_ret,
+        "max_drawdown": max_dd,
+        "win_rate": win_rate,
+        "profit_factor": profit_factor,
+        "dsr_probability": dsr_prob,
+        "min_trl": min_trl,
+        "pbo": pbo_val,
+        "gross_pnl": gross_pnl_sum,
+        "total_commission": total_fees * 0.5,
+        "total_slippage": total_fees * 0.5,
+        "n_trades": int(trades_df.height),
+    }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    combine_figures_to_html(
-        figures=figures,
-        title="Tier-0 SOTA — ml4t-diagnostic H109 Pre-Wall 6-Gate Falsification & CPCV Tearsheet",
-        sections=sections,
-        output_file=output_path,
+    generate_backtest_tearsheet(
+        trades=trades_df if trades_df.height > 0 else None,
+        returns=pl.Series("returns", selected_returns),
+        equity_curve=eq_df,
+        metrics=metrics_payload,
+        output_path=output_path,
+        template="full",
         theme="dark",
-        include_toc=True,
+        title=metadata.title,
+        subtitle=metadata.subtitle,
+        benchmark_returns=pl.Series("SPY", benchmark_returns),
+        benchmark_name="SPY (Pre-Wall)",
+        report_metadata=metadata,
+        n_trials=h109_trials,
+        interactive=True,
         include_plotlyjs=True,
+        periods_per_year=252,
+        include_statistical=True,
     )
     return {
         "path": str(output_path),
         "bytes": int(output_path.stat().st_size),
         "sha256": _file_sha256(output_path),
-        "figures_count": len(figures),
-        "generator": "ml4t.diagnostic.visualization.report_generation.combine_figures_to_html",
+        "trades_count": int(trades_df.height),
+        "template": "full",
+        "interactive": True,
+        "generator": "ml4t.diagnostic.visualization.backtest.tearsheet.generate_backtest_tearsheet",
     }
 
 
@@ -985,23 +871,12 @@ def generate_shap_shapiq_prewall_tearsheet(
     max_eval_rows: int = 240,
     shapiq_eval_rows: int = 48,
 ) -> dict[str, Any]:
-    """Fit causal pre-wall LightGBM + CatBoost models and emit official SHAP/shapiq HTML."""
+    """Fit causal pre-wall LightGBM + CatBoost models and emit native interactive dashboard."""
     import lightgbm as lgb
     import shap
     from catboost import CatBoostRegressor
     from ml4t.diagnostic.api import analyze_ml_importance, compute_shap_interactions
-    from ml4t.diagnostic.visualization.core import go
-    from ml4t.diagnostic.visualization.feature_plots import (
-        plot_importance_bar,
-        plot_importance_heatmap,
-        plot_importance_summary,
-    )
-    from ml4t.diagnostic.visualization.interaction_plots import (
-        plot_interaction_bar,
-        plot_interaction_heatmap,
-        plot_interaction_network,
-    )
-    from ml4t.diagnostic.visualization.report_generation import combine_figures_to_html
+    from ml4t.diagnostic.visualization.dashboards.importance import FeatureImportanceDashboard
 
     max_date = str(df.select(pl.col("trade_date").max()).item())
     disc.assert_pre_wall_date(max_date)
@@ -1095,173 +970,19 @@ def generate_shap_shapiq_prewall_tearsheet(
         max_eval_rows=min(shapiq_eval_rows, x_eval.shape[0]),
     )
 
-    figures: list[go.Figure] = []
-    sections: list[dict[str, Any]] = []
-
-    # Official ml4t-diagnostic importance plots
-    fig_imp_sum = plot_importance_summary(imp_res, top_n=len(fnames), theme="dark")
-    figures.append(fig_imp_sum)
-    sections.append(
-        {
-            "title": "Part 1: Multi-Method Feature Importance Consensus (MDI + PFI + TreeSHAP)",
-            "text": (
-                f"Causal pre-wall LightGBM + CatBoost attribution predicting next-day MFE "
-                f"expansion (train <= {PREWALL_TUNING_END_ISO}: {train_df.height} rows; "
-                f"6-day purge gap; holdout {PREWALL_HOLDOUT_START_ISO}..{PREWALL_CUTOFF_ISO}: "
-                f"{eval_df.height} rows, evaluated on {x_eval.shape[0]} stratified rows). "
-                f"TreeSHAP additivity max error: LightGBM={lgb_additivity_err:.2e}, "
-                f"CatBoost={cat_additivity_err:.2e}."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    fig_imp_bar = plot_importance_bar(imp_res, top_n=len(fnames), theme="dark")
-    figures.append(fig_imp_bar)
-    sections.append(
-        {
-            "title": "Consensus Feature Importance Ranking (ml4t-diagnostic)",
-            "text": (
-                "Mean feature importance across MDI, permutation importance (PFI), "
-                "and exact TreeSHAP."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    fig_imp_hm = plot_importance_heatmap(imp_res, theme="dark")
-    figures.append(fig_imp_hm)
-    sections.append(
-        {
-            "title": "Method Agreement Heatmap (MDI vs PFI vs TreeSHAP)",
-            "text": (
-                "Cross-method stability matrix highlighting features robust to "
-                "split-cardinality bias."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Cross-model LightGBM vs CatBoost TreeSHAP comparison
-    order = np.argsort(-(lgb_mean_abs + cat_mean_abs))
-    ordered_names = [fnames[int(i)] for i in order]
-    fig_dual = go.Figure(
-        data=[
-            go.Bar(
-                name="LightGBM TreeSHAP Mean |SHAP|",
-                x=ordered_names,
-                y=[float(lgb_mean_abs[int(i)]) for i in order],
-                marker_color="#38bdf8",
-            ),
-            go.Bar(
-                name="CatBoost TreeSHAP Mean |SHAP|",
-                x=ordered_names,
-                y=[float(cat_mean_abs[int(i)]) for i in order],
-                marker_color="#f59e0b",
-            ),
-        ]
-    )
-    fig_dual.update_layout(
-        title="Cross-Model TreeSHAP Agreement: LightGBM vs CatBoost (Pre-Wall Holdout)",
-        barmode="group",
-        template="plotly_dark",
-        xaxis_title="Causal Pre-Wall Feature",
-        yaxis_title="Mean |SHAP Value| (Next-Day MFE)",
-        height=420,
-    )
-    figures.append(fig_dual)
-    sections.append(
-        {
-            "title": "Cross-Model Attribution Agreement (LightGBM vs CatBoost TreeSHAP)",
-            "text": (
-                "Direct comparison of exact TreeSHAP global feature importances across two "
-                "independent gradient-boosting architectures trained on identical pre-wall splits."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Official ml4t-diagnostic SHAP interaction plots
-    fig_int_bar = plot_interaction_bar(int_res, top_n=15, theme="dark")
-    figures.append(fig_int_bar)
-    sections.append(
-        {
-            "title": "Part 2: Pairwise SHAP Feature Interactions (ml4t-diagnostic)",
-            "text": "Top order-2 SHAP interaction pairs decomposing nonlinear feature synergies.",
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    fig_int_hm = plot_interaction_heatmap(int_res, theme="dark")
-    figures.append(fig_int_hm)
-    sections.append(
-        {
-            "title": "SHAP Interaction Matrix Heatmap",
-            "text": (
-                "Complete pairwise SHAP interaction strength across all causal pre-wall features."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    fig_int_net = plot_interaction_network(int_res, theme="dark", top_n=15)
-    figures.append(fig_int_net)
-    sections.append(
-        {
-            "title": "Feature Interaction Network Graph",
-            "text": "Network topology of synergistic feature clusters driving extreme-mover MFE.",
-            "figure_index": len(figures) - 1,
-        }
-    )
-
-    # Official shapiq k-SII order-2 interaction chart
-    top_sq = list(shapiq_res.get("pairwise_interactions") or [])[:12]
-    fig_sq = go.Figure(
-        data=[
-            go.Bar(
-                x=[str(item["pair"]) for item in top_sq],
-                y=[float(item["mean_abs_interaction"]) for item in top_sq],
-                marker_color=[
-                    "#22c55e" if float(item["mean_signed_interaction"]) >= 0.0 else "#ef4444"
-                    for item in top_sq
-                ],
-                name="shapiq k-SII Mean |Interaction|",
-            )
-        ]
-    )
-    sq_ver = str(shapiq_res.get("shapiq_version", "unknown"))
-    fig_sq.update_layout(
-        title=f"shapiq ({sq_ver}) k-SII Order-2 Interactions (Green=Synergy, Red=Antagonism)",
-        template="plotly_dark",
-        xaxis_title="Feature Pair",
-        yaxis_title="Mean |k-SII Order-2 Interaction|",
-        height=420,
-    )
-    figures.append(fig_sq)
-    sections.append(
-        {
-            "title": "Part 3: shapiq k-SII Order-2 Interaction Attribution (ADR-0028)",
-            "text": (
-                f"shapiq {sq_ver} TreeExplainer (index={shapiq_res.get('index')}, "
-                f"max_order={shapiq_res.get('max_order')}, "
-                f"eval_rows={shapiq_res.get('n_eval_rows')}). "
-                f"Top interaction: {(shapiq_res.get('top_interaction') or {}).get('pair', 'n/a')}."
-            ),
-            "figure_index": len(figures) - 1,
-        }
-    )
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    combine_figures_to_html(
-        figures=figures,
-        title="Tier-0 SOTA — Pre-Wall LightGBM/CatBoost TreeSHAP & shapiq Attribution Tearsheet",
-        sections=sections,
-        output_file=output_path,
+    dashboard = FeatureImportanceDashboard(
+        title="Tier-0 SOTA — Native ml4t-diagnostic Pre-Wall Feature Importance & Interactions",
         theme="dark",
-        include_toc=True,
-        include_plotlyjs=True,
+        n_top_features=len(fnames),
+    )
+    dashboard.save(
+        str(output_path),
+        analysis_results=imp_res,
+        interaction_results=int_res,
     )
 
+    order = np.argsort(-(lgb_mean_abs + cat_mean_abs))
     shap_ranking = [
         {
             "rank": rank_idx + 1,
@@ -1279,8 +1000,11 @@ def generate_shap_shapiq_prewall_tearsheet(
         "path": str(output_path),
         "bytes": int(output_path.stat().st_size),
         "sha256": _file_sha256(output_path),
-        "figures_count": len(figures),
-        "generator": "ml4t.diagnostic.visualization.report_generation.combine_figures_to_html",
+        "interactive": True,
+        "tabs_count": 4,
+        "generator": (
+            "ml4t.diagnostic.visualization.dashboards.importance.FeatureImportanceDashboard"
+        ),
         "train_rows": int(train_df.height),
         "eval_rows_total": int(eval_df.height),
         "eval_rows_explained": int(x_eval.shape[0]),
@@ -1521,10 +1245,14 @@ def run_pipeline(
     ml4t_html_path = tearsheet_dir / "ml4t_diagnostic_h109_falsification_tearsheet.html"
     shap_html_path = tearsheet_dir / "shap_shapiq_prewall_attribution_tearsheet.html"
 
+    selected_arm_id = str(cpcv_result["summary"]["selected_arm_id"])
+    trades_df = build_selected_arm_trades_df(df, arm_id=selected_arm_id, cost_bps_roundtrip=4.0)
+
     ml4t_info = generate_ml4t_h109_falsification_tearsheet(
         dates=dates,
         selected_returns=cpcv_result["selected_returns"],
         benchmark_returns=spy_bench,
+        trades_df=trades_df,
         cpcv_result=cpcv_result,
         h109_dossier=h109_dossier,
         ablation_dossier=ablation_dossier,

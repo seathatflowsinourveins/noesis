@@ -246,7 +246,7 @@
         "pschanely/CrossHair (isolated uvx crosshair-tool==0.0.114)",
         "boxed/mutmut (v3.8.1 isolated WSL report-only)",
         "osprey-oss/deptry",
-        "aquasecurity/trivy",
+        "aquasecurity/trivy (misconfig/secret + just license-audit fs/rootfs SPDX wired into just security)",
         "anchore/syft",
         "koalaman/shellcheck",
         "zizmorcore/zizmor",
@@ -254,6 +254,7 @@
         "dependabot/dependabot-core",
         "snyk/agent-scan (admitted offline CLI just agent-scan)"
       ],
+      "duplicate_winner_prohibition": "Enforced mechanically in scripts/sync_manifest.py::validate_clean_sota_harness() across ALL [layers.L0..L10] (intra_layer_duplicate_winners == [] and cross_layer_duplicate_winners == [])",
       "artifacts": [
         ".github/workflows/",
         "justfile",
@@ -289,19 +290,44 @@
         "cheaper-inference/OmniRoute",
         "DeusData/codebase-memory-mcp",
         "xerj-org/xerj",
-        "modelcontextprotocol/python-sdk"
+        "modelcontextprotocol/python-sdk",
+        "can1357/oh-my-pi (omp v19.2.1)",
+        "earendil-works/pi (v1.6.1)"
       ],
+      "pi_family_role_split": {
+        "oh-my-pi": "Rust+TS Pi-family declarative worker harness (.omp/agents/*.md, .omp/mcp.json) replacing broken OMX/OMC/Codex plugin hooks",
+        "pi": "Minimalist headless/RPC Pi core routed via OmniRoute :20128"
+      },
       "cross_layer_mcp_references": [
         "dgunning/edgartools (canonical L1 package exposed in L9 via edgartools-mcp)"
       ],
+      "multi_runtime_worker_parity": {
+        "canonical_roles": 7,
+        "runtimes": [".claude/agents/*.md", ".codex/agents/*.toml", "opencode.json agent", ".omp/agents/*.md"],
+        "mcp_parity": "6/6 exact stdio parity (.mcp.json, .claude/settings.json, .codex/config.toml, .gemini/settings.json, opencode.json, .omp/mcp.json)",
+        "paper_gatekeeper_enforcement": {
+          "claude": "YAML frontmatter permissionMode=plan + disallowedTools(Write,Edit,MultiEdit,NotebookEdit,Bash,Agent,mcp__nautilus-engine__stage_semi_auto_order_preset,mcp__xerj__xerj_memory_store)",
+          "codex": "sandbox_mode=read-only + mcp_servers.{nautilus-engine,xerj}.disabled_tools",
+          "opencode": "permission.{edit,shell,subagent,nautilus-engine_stage_semi_auto_order_preset,xerj_xerj_memory_store}=deny",
+          "omp": "isReadOnlyAgent=true (tools=[read,find,grep,glob,ast_grep] subset of READ_ONLY_TOOL_NAMES; zero spawns/edit/write/bash/lsp/task)"
+        },
+        "clean_host_reset_policy": "Purged ~/.codex/plugins/cache/{oh-my-codex-local,openai-api-curated} and stale codex@0.169.0 mise shim; zero legacy OMX/OMC agents or codex@openai-codex 900s stop-hooks; superpowers disabled; Codex hooks=false; zero .omp/hooks*; omp 19.2.1 + pi 1.6.1 via OmniRoute :20128; 28/28 synced host tier0-* skills across 7 trees; 6/6 global charter SHA-256 match"
+      },
       "artifacts": [
         "AGENTS.md",
         "CLAUDE.md",
         "orca.yaml",
         ".mcp.json",
+        ".claude/agents/",
         ".claude/mcp-lanes/",
         ".claude/skills/",
+        ".codex/config.toml",
+        ".codex/agents/",
+        "opencode.json",
+        ".omp/agents/",
+        ".omp/mcp.json",
         "UPSTREAM_SKILLS_LOCK.json",
+        "LLM_HARNESS_MANIFEST.json",
         "scripts/nautilus_mcp_server.py"
       ]
     },
@@ -497,7 +523,7 @@
           "plugin_name": "alpaca-sota-mcp",
           "plugin_path": "~/.gemini/config/plugins/alpaca-sota-mcp/",
           "tools_count": 72,
-          "repo_mcp_parity_impact": "none (off-repo global Antigravity plugin via runtime fnox exec --profile paper; preserves exact 4-stdio-MCP parity across all 5 repo configs and zero pyproject.toml/uv.lock addition)",
+          "repo_mcp_parity_impact": "none (off-repo global Antigravity plugin via runtime fnox exec --profile paper; preserves exact 4-stdio-MCP parity across all 6 repo configs and zero pyproject.toml/uv.lock addition)",
           "fail_closed_guards": [
             "ALPACA_PAPER_TRADE=True",
             "LIVE_EXECUTION_ENABLED=false",
@@ -555,7 +581,7 @@
           "plan_requirement": "TradingView Essential+ paid plans",
           "zero_cdp": true,
           "status": "admitted_user_oauth_connector",
-          "repo_mcp_parity_impact": "none (user/IDE OAuth connector in Antigravity/Claude/Cursor; preserves exact 4-stdio-MCP parity across all 5 repo configs)",
+          "repo_mcp_parity_impact": "none (user/IDE OAuth connector in Antigravity/Claude/Cursor; preserves exact 4-stdio-MCP parity across all 6 repo configs)",
           "capabilities": [
             "watchlists_crud: list_watchlists, get_watchlist, get_active_watchlist, create_watchlist, delete_watchlist, add_to_watchlist, remove_from_watchlist, update_watchlist",
             "alerts_crud_and_logs",
@@ -650,7 +676,7 @@
         "name": "Unmodified Interactive Plotly HTML Tearsheets",
         "repos": [
           {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "status": "release_candidate", "spdx": "LGPL-3.0-only", "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark')"},
-          {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.report_generation.combine_figures_to_html (pure Plotly HTML; Streamlit [dashboard] extra excluded)"},
+          {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.backtest.tearsheet.generate_backtest_tearsheet(template='full', interactive=True) & FeatureImportanceDashboard (pure native interactive tabbed HTML; Streamlit [dashboard] extra & hand-built go.Figure blocked by no-handbuilt-plotly-chart)"},
           {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution"},
           {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution"},
           {"repo": "caddyserver/caddy", "version": "2.11.9-alpine", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:8793/tearsheets/"}
@@ -742,13 +768,21 @@
       ],
       "s3_llm_and_agent_evals": ["UKGovernmentBEIS/inspect_ai==0.3.292 (:7575)", "mlflow/mlflow==3.18.0 (:5000)", "stanfordnlp/dspy==3.5.0 + gepa==0.1.4", "NVIDIA/SkillEvaluator"],
       "s4_test_dashboard": {"tool": "allure-framework/allure3==3.33.0 + allure-pytest==2.16.2", "spdx": "Apache-2.0", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "junit_url": "http://127.0.0.1:8793/test-reports/junit.xml", "custom_html_js_mjs": false},
-      "s5_static_supply_chain": ["ruff", "ty", "deptry", "ast-grep (21 rules)", "prek (10/10)", "gitleaks", "zizmor", "trivy", "syft", "shellcheck", "CodeQL (Default Setup)", "Dependabot"]
+      "s5_static_supply_chain": ["ruff", "ty", "deptry", "ast-grep (21 rules)", "prek (10/10)", "gitleaks", "zizmor", "trivy (misconfig/secret + just license-audit fs/rootfs SPDX wired into just security over installed venv wheels)", "syft", "shellcheck", "CodeQL (Default Setup)", "Dependabot"]
+    },
+    "mechanized_dagster_upstream_watches": {
+      "anchor": "src/tier0_sota/definitions.py::frontier_trigger_telemetry (_evaluate_upstream_watch_triggers + _parse_pep440_prerelease)",
+      "watches": [
+        "nautilus_ga_reverification (check_kind=installed_package_metadata via PEP-440 grammar against nautilus_trader, ADR-0016)",
+        "hftbacktest_release_freshness (check_kind=calendar_review_timer, >365d staleness review from 2025-12-10, ADR-0016)",
+        "promptfoo_quarterly_license_audit (check_kind=calendar_review_timer, 90d MIT/neutrality cadence from 2026-11-27, ADR-0024)"
+      ]
     },
     "not_applicable": [
       {"tool": "cargo-nextest / proptest / kani", "reason": "not_applicable_no_owned_rust — repository owns zero Rust crates (consumes NautilusTrader and hftbacktest as wheels)"}
     ],
     "watches_with_triggers": [
-      {"tool": "promptfoo/promptfoo", "spdx": "MIT", "note": "Retained MIT post-OpenAI acquisition; quarterly license & neutrality check required"},
+      {"tool": "promptfoo/promptfoo", "spdx": "MIT", "note": "Retained MIT post-OpenAI acquisition; mechanized 90d check via frontier_trigger_telemetry.upstream_watch_triggers.promptfoo_quarterly_license_audit"},
       {"tool": "harbor-framework/harbor", "spdx": "Apache-2.0", "trigger": "Containerized agent harness benchmarking"},
       {"tool": "schemathesis/schemathesis", "spdx": "MIT", "trigger": "Repo owns an HTTP/OpenAPI service (0 owned servers today)"},
       {"tool": "microsoft/playwright", "spdx": "Apache-2.0", "trigger": "Repo authors an owned FINOS plugin or UI"},

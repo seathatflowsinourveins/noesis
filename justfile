@@ -219,8 +219,22 @@ zizmor:
 trivy:
     trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .
 
-# Run full supply-chain & workflow security gates (gitleaks + zizmor + trivy)
-security: gitleaks zizmor trivy
+# Audit SPDX licenses via native Trivy fs (repo/lockfile) + rootfs (installed wheels; LGPL-3.0-only admitted per ADR-0016, zero non-OSI/strong-copyleft ignored)
+[unix]
+license-audit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trivy fs --scanners license --license-full --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .
+    site_pkgs=$({{uv_run}} python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+    trivy rootfs --scanners license --severity HIGH,CRITICAL --ignored-licenses LGPL-3.0-only --exit-code 1 "$site_pkgs"
+
+# Audit SPDX licenses via native Trivy fs (repo/lockfile) + rootfs (installed wheels; LGPL-3.0-only admitted per ADR-0016, zero non-OSI/strong-copyleft ignored)
+[windows]
+license-audit:
+    $ErrorActionPreference = 'Stop'; trivy fs --scanners license --license-full --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $sitePkgs = (uv run --no-sync python -c "import sysconfig; print(sysconfig.get_path('purelib'))").Trim(); trivy rootfs --scanners license --severity HIGH,CRITICAL --ignored-licenses LGPL-3.0-only --exit-code 1 $sitePkgs; exit $LASTEXITCODE
+
+# Run full supply-chain & workflow security gates (gitleaks + zizmor + trivy + license-audit)
+security: gitleaks zizmor trivy license-audit
 
 # Run guarded offline static MCP & skills supply-chain audit via snyk/agent-scan (L15; telemetry off, zero secrets)
 [unix]

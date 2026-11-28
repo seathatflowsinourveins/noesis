@@ -162,7 +162,8 @@ rejected_overlaps = ["deepeval"]
 
 [layers.L9]
 name = "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs"
-winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp"]
+# Non-overlapping roles: oh-my-pi (v19.2.1, MIT, can1357/oh-my-pi) = Rust+TS Pi-family declarative worker harness replacing broken OMX/OMC/Codex plugin hooks; pi (v1.6.1, MIT, earendil-works/pi) = minimalist headless/RPC Pi core.
+winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp", "oh-my-pi", "pi"]
 cross_layer_references = ["edgartools-mcp (canonical library edgartools owned in L1)"]
 rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses", "cdp-tradingview-mcp", "revanthpobala/pinescript-vscode-extension"]
 
@@ -230,7 +231,7 @@ why = "Uses official alpaca-py data/trading/option/news clients and offline-firs
 how = "integrate"
 upstream = "nautilus_trader"
 secondary_upstreams = ["alpaca-py", "duckdb"]
-feature = "3-lane non-overlapping Alpaca Paper (1000rpm ALPACA_PAPER_1000) + IBKR :4002 (3000rpm) adapter, 4-session 24/5 lossless trailing presets (native TrailingStopOrderRequest vs collared STOP_LIMIT), NVDA->NVDS inverse hedge routing, isolated per-account DuckDB & ADR-0020 Stage-4 K3/K4/3-way restart reconciliation drills"
+feature = "3-lane non-overlapping Alpaca Paper (ALPACA_PA1..PA3 default 200 rpm ALPACA_PAPER_200 per lane via ALPACA_PAPER_DEFAULT_MAX_RPM / resolve_alpaca_paper_venue_profile(), with optional 1,000 rpm ALPACA_PAPER_1000 via TIER0_ALPACA_RPM) + IBKR :4002 (3000rpm) adapter, 4-session 24/5 lossless trailing presets (native TrailingStopOrderRequest vs collared STOP_LIMIT), NVDA->NVDS inverse hedge routing, isolated per-account DuckDB & ADR-0020 Stage-4 K3/K4/3-way restart reconciliation drills"
 why = "Delegates Paper Farm execution, native trailing order requests, NautilusTrader v2 RiskEngine/TradingState drills and isolated per-account telemetry to pinned upstreams"
 
 [files."src/tier0_sota/live/runner.py"]
@@ -334,8 +335,29 @@ why = "Replaces ad-hoc Python infinite sleep loops with native OS systemd timer 
 how = "integrate"
 upstream = "systemd"
 secondary_upstreams = ["fnox", "uv", "alpaca-py", "nautilus_trader"]
-feature = "WSL2 native persistent systemd supervisor running 24/5 ALPACA_PAPER_1000 (1,000 rpm) continuous SIP+BOATS lossless trailing and zero-latency TV preset adoption"
+feature = "WSL2 native persistent systemd supervisor running 24/5 continuous SIP+BOATS lossless trailing and zero-latency TV preset adoption (default ALPACA_PA1..PA3 200 rpm per lane in paper_farm.py, with systemd unit configured for optional TIER0_ALPACA_RPM=1000 ALPACA_PAPER_1000 override)"
 why = "Delegates always-on process supervision, restart recovery, and cgroup bounds strictly to native OS systemd with passive live-port and immutable risk.py pre-start checks"
+
+[files."docker/compose.sota.yml"]
+how = "integrate"
+upstream = "mlflow"
+secondary_upstreams = ["dagster-webserver", "optuna-dashboard", "inspect-ai", "zensical", "otel-collector-contrib", "prometheus", "alertmanager", "grafana", "xerj", "caddy", "finos-workspace", "aideml"]
+feature = "Official containerized L6/L8/L10 research & telemetry portals stack (MLflow :5000, Optuna :8080, Dagster code/webserver/daemon :3000, Inspect View :7575, Zensical :8010, OTel Collector :4317/:4318/:9464, Prometheus :9090, profile-gated Alertmanager :9093, Grafana :3001, XERJ :9200, Caddy :8793/:4213, profile-gated FINOS :1420, profile-gated aideml-sandbox)"
+why = "Runs every hosted portal, telemetry service, and agent sandbox strictly inside pinned upstream images and compose topology with loopback bindings and resource caps"
+
+[files."docker/Caddyfile"]
+how = "integrate"
+upstream = "caddy"
+secondary_upstreams = ["nautilus_trader", "ml4t-diagnostic", "allure-report", "duckdb"]
+feature = "Loopback-bound (bind 127.0.0.1) Caddy v2.11.9 server hosting unmodified Nautilus/ml4t/SHAP tearsheets & Allure 3 test reports (:8793) plus Origin-normalising CSRF proxy for DuckDB SQL UI (:4213 -> 127.0.0.1:4214)"
+why = "Serves unmodified upstream static HTML/test reports and preserves DuckDB UI HTTP 401 CSRF rejection on foreign Origins strictly via declarative Caddyfile with zero custom web servers"
+
+[files."docker/otel-collector-config.yaml"]
+how = "integrate"
+upstream = "otel-collector-contrib"
+secondary_upstreams = ["opentelemetry-sdk", "prometheus"]
+feature = "OpenTelemetry Collector Contrib v0.166.0 metrics pipeline routing OTLP gRPC (:4317) / HTTP (:4318), collector self-telemetry (:8888), and host_metrics via memory_limiter + batch into Prometheus exporter (:9464) with health_check (:13133)"
+why = "Delegates host and live OTLP telemetry ingestion and OpenMetrics exposition strictly to the official OpenTelemetry Collector Contrib upstream"
 
 [files."docker/compose.ibkr-paper.yml"]
 how = "integrate"
@@ -427,6 +449,13 @@ secondary_upstreams = ["prometheus", "otel-collector-contrib"]
 feature = "Declarative 10-panel Grafana Sim-Backtest & Official Control Center dashboard provisioned automatically on :3001"
 why = "Renders sim-backtest and control-center telemetry strictly via declarative Grafana JSON with zero hand-written HTML/JS"
 
+[files.".omp/mcp.json"]
+how = "integrate"
+upstream = "oh-my-pi"
+secondary_upstreams = ["mcp", "codebase-memory-mcp", "xerj"]
+feature = "Canonical 4-stdio MCP server contract (codebase-memory, xerj, nautilus-engine, edgartools) enforcing 6/6 repo parity for oh-my-pi (omp v19.2.1) alongside 7/7 declarative .omp/agents/*.md workers"
+why = "Eliminates broken legacy OMX/OMC/Codex plugin hooks with a clean, MIT declarative Rust+TS Pi-family worker harness and exact MCP parity"
+
 [official_upstream_org_audit]
 verified_date = "2026-11-27"
 alpacahq_active_admitted = ["alpacahq/alpaca-py (Apache-2.0, 0.45.0)", "alpacahq/alpaca-mcp-server (MIT, 2.4.1, off-repo paper-only plugin alpaca-sota-mcp)"]
@@ -439,4 +468,4 @@ tradingview_active_admitted = ["tradingview/lightweight-charts (Apache-2.0)", "t
 pinecoders_osi_references = ["pinecoders/awesome-pinescript (MIT)", "pinecoders/pinescript-enums (MPL-2.0)", "pinecoders/pynescript (LGPL-3.0)"]
 pinecoders_excluded = ["pinecoders/pine-utils (GPL-3.0)", "pinecoders/tradingview-pinescript-indicators (GPL-3.0)", "pinecoders/pinescript-cheatsheet (GPL-3.0)", "pinecoders/pine-script-mode (GPL-2.0)", "pinecoders/vim-pine-script (GPL-2.0)", "pinecoders/sublime-pine (GPL-3.0)", "pinecoders/pine-script-syntax-highlighting (archived NOASSERTION)", "pinecoders/pynecore (L3 single-engine overlap)"]
 off_repo_paper_plugins = ["tradingview-sota-mcp", "alpaca-sota-mcp"]
-repo_mcp_parity_preserved = "4-stdio-MCP (codebase-memory, edgartools, nautilus-engine, xerj) across all 5 repo configs"
+repo_mcp_parity_preserved = "4-stdio-MCP (codebase-memory, edgartools, nautilus-engine, xerj) across all 6 repo configs (.mcp.json, .claude/settings.json, .codex/config.toml, .gemini/settings.json, opencode.json, .omp/mcp.json)"

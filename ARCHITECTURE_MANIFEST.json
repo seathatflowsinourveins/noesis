@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 189,
+    "repository_files_count": 204,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -98,7 +98,8 @@
       ".claude/settings.json",
       ".codex/config.toml",
       ".gemini/settings.json",
-      "opencode.json"
+      "opencode.json",
+      ".omp/mcp.json"
     ],
     "mcp_lanes": {
       "gate": ".claude/mcp-lanes/gate.mcp.json",
@@ -362,12 +363,14 @@
     },
     "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "674e881e8120817703497e9a0e18317faf7a90c98e2b6f853068f7bc1b215b83"
+    "corpus_sha256": "21beb22d9e974ab5e501e5fa1aa9132bfb5a11a7aea412bccdd68f24ddc4a986"
   },
   "clean_sota_harness": {
     "ok": true,
     "zero_banned_in_uv_lock": true,
     "zero_winner_overlap_with_rejected": true,
+    "intra_layer_duplicate_winners": [],
+    "cross_layer_duplicate_winners": [],
     "zero_pre_commit_overlap": true,
     "spdx_firewall_count": 7,
     "src_files_mapped_ratio": "15/15",
@@ -725,7 +728,9 @@
         "omniroute",
         "codebase-memory-mcp",
         "xerj",
-        "mcp"
+        "mcp",
+        "oh-my-pi",
+        "pi"
       ],
       "rejected_overlaps": [
         "third-party-agent-wrappers",
@@ -860,6 +865,13 @@
     ".claude/mcp-lanes/sim.mcp.json",
     ".claude/mcp-lanes/tv.mcp.json",
     ".claude/settings.json",
+    ".codex/agents/code-intel-redteam.toml",
+    ".codex/agents/memory-rag-evolution.toml",
+    ".codex/agents/observability-operator.toml",
+    ".codex/agents/paper-gatekeeper.toml",
+    ".codex/agents/pit-data-engineer.toml",
+    ".codex/agents/quant-falsifier.toml",
+    ".codex/agents/tier0-grand-central.toml",
     ".codex/config.toml",
     ".editorconfig",
     ".env.example",
@@ -876,6 +888,14 @@
     ".gitignore",
     ".gitleaks.toml",
     ".mcp.json",
+    ".omp/agents/code-intel-redteam.md",
+    ".omp/agents/memory-rag-evolution.md",
+    ".omp/agents/observability-operator.md",
+    ".omp/agents/paper-gatekeeper.md",
+    ".omp/agents/pit-data-engineer.md",
+    ".omp/agents/quant-falsifier.md",
+    ".omp/agents/tier0-grand-central.md",
+    ".omp/mcp.json",
     ".opencode/commands/verify-tier0.md",
     ".pre-commit-config.yaml",
     ".python-version",

@@ -130,7 +130,7 @@ def test_layers_l0_to_l10_and_spdx_firewall() -> None:
 
     ast_rules_text = (REPO_ROOT / "rules" / "zero_self_invention.yml").read_text(encoding="utf-8")
     rule_ids = re.findall(r"(?m)^id:\s*(\S+)", ast_rules_text)
-    assert len(rule_ids) == 21 and len(set(rule_ids)) == 21
+    assert len(rule_ids) == 22 and len(set(rule_ids)) == 22
 
 
 def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
@@ -145,12 +145,14 @@ def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
     claude_cfg = json.loads((REPO_ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
     gemini_cfg = json.loads((REPO_ROOT / ".gemini/settings.json").read_text(encoding="utf-8"))
     opencode_cfg = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))
+    omp_cfg = json.loads((REPO_ROOT / ".omp/mcp.json").read_text(encoding="utf-8"))
     codex_cfg = tomllib.loads((REPO_ROOT / ".codex/config.toml").read_text(encoding="utf-8"))
 
     assert "hooks" not in claude_cfg
     assert "hooks" not in gemini_cfg
     assert "hooks" not in codex_cfg
     assert codex_cfg.get("features", {}).get("hooks", False) is False
+    assert not list((REPO_ROOT / ".omp").glob("hooks*"))
 
     for name, section in (
         (".mcp.json", root_cfg["mcpServers"]),
@@ -158,6 +160,7 @@ def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
         (".gemini/settings.json", gemini_cfg["mcpServers"]),
         ("opencode.json", opencode_cfg["mcp"]),
         (".codex/config.toml", codex_cfg["mcp_servers"]),
+        (".omp/mcp.json", omp_cfg["mcpServers"]),
     ):
         assert sorted(section.keys()) == EXPECTED_MCP_SERVERS, f"MCP mismatch in {name}"
         if name == "opencode.json":
@@ -395,7 +398,7 @@ def test_philosophy_and_llm_harness_manifests() -> None:
         "half-auto-tv",
         "live",
     }
-    assert llm["mcp_servers"]["parity_count"] == "5/5"
+    assert llm["mcp_servers"]["parity_count"] == "6/6"
     assert llm["live_hosted_portals_count"] == 15
     assert len(llm["live_hosted_portals"]) == 15
 
@@ -739,6 +742,8 @@ def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
     assert rep["ok"] is True
     assert rep["zero_banned_in_uv_lock"] is True
     assert rep["zero_winner_overlap_with_rejected"] is True
+    assert rep["intra_layer_duplicate_winners"] == []
+    assert rep["cross_layer_duplicate_winners"] == []
     assert rep["zero_pre_commit_overlap"] is True
     assert rep["spdx_firewall_count"] == len(NON_OSI_REPOS)
     mapped_num, mapped_den = (int(x) for x in str(rep["src_files_mapped_ratio"]).split("/"))
@@ -751,6 +756,39 @@ def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
 
     manifest = _load_manifest()
     assert manifest.get("clean_sota_harness") == rep
+
+
+def test_clean_sota_harness_rejects_cross_layer_duplicate_winners() -> None:
+    import copy
+
+    from scripts.sync_manifest import validate_clean_sota_harness
+
+    upstream_doc = tomllib.loads((REPO_ROOT / "upstream-map.toml").read_text(encoding="utf-8"))
+    dup_upstream = copy.deepcopy(upstream_doc)
+    dup_upstream["layers"]["L9"]["winners"] = [
+        *dup_upstream["layers"]["L9"]["winners"],
+        "edgartools",
+    ]
+    with pytest.raises(ValueError, match=r"Cross-layer duplicate winners.*edgartools:L1,L9"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=dup_upstream)
+
+    intra_dup_upstream = copy.deepcopy(upstream_doc)
+    intra_dup_upstream["layers"]["L1"]["winners"] = [
+        *intra_dup_upstream["layers"]["L1"]["winners"],
+        "polars",
+    ]
+    with pytest.raises(ValueError, match=r"Intra-layer duplicate winners.*polars:L1"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=intra_dup_upstream)
+
+    missing_layer_upstream = copy.deepcopy(upstream_doc)
+    del missing_layer_upstream["layers"]["L10"]
+    with pytest.raises(ValueError, match=r"missing required layer table \[layers\.L10\]"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=missing_layer_upstream)
+
+    empty_winners_upstream = copy.deepcopy(upstream_doc)
+    empty_winners_upstream["layers"]["L1"]["winners"] = []
+    with pytest.raises(ValueError, match=r"\[layers\.L1\] must declare a non-empty winners list"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=empty_winners_upstream)
 
 
 def test_workstation_lazy_imports_and_thread_bounds_fitness(
