@@ -42,6 +42,7 @@ nav = [
   { "ADR-0027: Full-Landscape SOTA TradingView 24/5 Practice & Cockpit" = "adr/ADR-0027.md" },
   { "ADR-0028: Starred Repos & L10-L15 Frontier Convergence" = "adr/ADR-0028.md" },
   { "ADR-0032: Landing Through PRs & Upstream Maintenance" = "adr/ADR-0032.md" },
+  { "ADR-0033: Agent Runtime Operation & Runtime Updates" = "adr/ADR-0033.md" },
 ]
 
 [project.theme]
