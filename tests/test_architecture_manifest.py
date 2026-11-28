@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -42,14 +43,22 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     assert manifest["repo_name"] == "noesis"
     git = shutil.which("git")
     assert git is not None
-    branch = subprocess.run(
-        [git, "symbolic-ref", "--quiet", "--short", "HEAD"],
+    default_branch = subprocess.run(
+        [
+            git,
+            "-c",
+            f"safe.directory={REPO_ROOT.as_posix()}",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/HEAD",
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert manifest["branch"] == (branch.stdout.strip() or "main")
+    expected_branch = default_branch.stdout.strip().removeprefix("refs/remotes/origin/")
+    assert manifest["branch"] == (expected_branch or "main")
     assert manifest["standalone_repo"] is True
 
     safety = manifest["safety_invariants"]
@@ -484,6 +493,44 @@ def test_sync_manifest_check_zero_drift() -> None:
     )
     assert proc.returncode == 0, f"sync_manifest.py --check failed:\n{proc.stderr}\n{proc.stdout}"
     assert "SYNC_MANIFEST_CHECK_OK=1" in proc.stdout
+
+
+def test_sync_manifest_branch_is_default_branch_on_any_checkout(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.sync_manifest import _detect_branch
+
+    git = shutil.which("git")
+    assert git is not None
+    for var in [name for name in os.environ if name.startswith("GIT_")]:
+        monkeypatch.delenv(var)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "manifest-test")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "manifest-test@example.invalid")
+
+    def run_git(cwd: pathlib.Path, *args: str) -> None:
+        subprocess.run([git, *args], cwd=cwd, capture_output=True, text=True, check=True)
+
+    # A default branch other than "main" proves the value comes from origin/HEAD, not a fallback.
+    run_git(tmp_path, "init", "--quiet", "--initial-branch=trunk", "origin")
+    run_git(tmp_path / "origin", "commit", "--quiet", "--allow-empty", "-m", "seed")
+    run_git(tmp_path, "clone", "--quiet", str(tmp_path / "origin"), "clone")
+    clone = tmp_path / "clone"
+
+    run_git(clone, "switch", "--quiet", "-c", "land/feature-branch")
+    assert _detect_branch(clone) == "trunk"
+
+    # A local branch named like the remote ref makes `symbolic-ref --short` ambiguous.
+    run_git(clone, "branch", "origin/trunk")
+    assert _detect_branch(clone) == "trunk"
+
+    run_git(clone, "switch", "--quiet", "--detach", "HEAD")
+    assert _detect_branch(clone) == "trunk"
+
+    run_git(clone, "remote", "set-head", "origin", "--delete")
+    assert _detect_branch(clone) == "main"
 
 
 def test_meta_convergence_and_zero_banned_caps_in_skills_and_readme() -> None:
