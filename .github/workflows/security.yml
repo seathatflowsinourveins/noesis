@@ -88,3 +88,56 @@ jobs:
           advanced-security: "false"
           strict-collection: "true"
           version: "1.32.0"
+
+  trivy-license-audit:
+    name: SPDX License Audit (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Sync locked environment
+        run: uv sync --frozen --no-progress
+
+      - name: Run Trivy fs SPDX license audit (repo & lockfile)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          scanners: "license"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          format: "table"
+          skip-dirs: ".venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis"
+          trivy-config: ".github/trivy-license-fs.yaml"
+          version: "v0.76.2"
+
+      - name: Resolve synced site-packages path
+        id: venv
+        run: |
+          site_pkgs="$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          printf 'site_pkgs=%s\n' "$site_pkgs" >> "$GITHUB_OUTPUT"
+
+      - name: Run Trivy rootfs SPDX license audit (installed wheels; LGPL-3.0-only per ADR-0016)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: "rootfs"
+          scan-ref: ${{ steps.venv.outputs.site_pkgs }}
+          scanners: "license"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          format: "table"
+          trivy-config: ".github/trivy-license-rootfs.yaml"
+          version: "v0.76.2"

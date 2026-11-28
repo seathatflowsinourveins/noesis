@@ -1,0 +1,21 @@
+# Declarative Trivy v0.76.2 config for repo/lockfile SPDX license audit (matches `just license-audit`).
+exit-code: 1
+format: table
+severity:
+  - HIGH
+  - CRITICAL
+license:
+  full: true
+  ignored: []
+scan:
+  scanners:
+    - license
+  skip-dirs:
+    - .venv
+    - .git
+    - site
+    - .claude/skills
+    - .cache
+    - .ruff_cache
+    - .pytest_cache
+    - .hypothesis
