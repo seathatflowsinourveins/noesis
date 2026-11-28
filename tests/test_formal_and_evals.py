@@ -493,7 +493,7 @@ def test_crosshair_symbolic_risk_contracts_and_parity() -> None:
             [
                 uvx_exe,
                 "--from",
-                "crosshair-tool",
+                "crosshair-tool==0.0.114",
                 "crosshair",
                 "check",
                 "--per_condition_timeout=10",
