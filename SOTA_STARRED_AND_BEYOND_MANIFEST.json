@@ -330,6 +330,15 @@
         "oh-my-pi": "Rust+TS Pi-family declarative worker harness (.omp/agents/*.md, .omp/mcp.json) replacing broken OMX/OMC/Codex plugin hooks",
         "pi": "Minimalist headless/RPC Pi core routed via OmniRoute :20128"
       },
+      "xerj_pin": {
+        "repo": "xerj-org/xerj",
+        "pinned": "1.0.0-rc.104",
+        "spdx": "Apache-2.0",
+        "dockerfile": "docker/Dockerfile.xerj",
+        "alpine_base": "alpine:3.24",
+        "amd64_sha256": "1628ee401a9a121156cc380950f9d48923e6e856458ae1e6648f0ef18db7b693",
+        "arm64_sha256": "cd3acf3b37d7f942157bebb05efa4221651b25f07b18a85beeacb5757647ea4f"
+      },
       "cross_layer_mcp_references": [
         "dgunning/edgartools (canonical L1 package exposed in L9 via edgartools-mcp)"
       ],
@@ -1862,7 +1871,7 @@
         "OCC / Reg-T combo spread margin = 0",
         "native Alpaca / Polygon adapters = 0 (2/21 adapters serve US Equities/Options: interactive_brokers, databento)"
       ],
-      "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, pair Phase-1 paid additive L4 data rails (Databento OPRA and/or ORATS $199-$899/mo smoothed IV/Greeks feed) and earned-trigger local lballabio/QuantLib with optional Stratum-2 off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) as an additive cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
+      "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, pair paid additive L4 data rails (Phase-1 ORATS $199-$899/mo smoothed IV/Greeks feed and Phase-3 earned-trigger Databento OPRA per ADR-0013) and earned-trigger local lballabio/QuantLib with optional Stratum-2 off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) as an additive cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
     },
     "paid_additive_us_options_sidecar": {
       "asset_scope": "US Equities, Stocks, and US Equity Options ONLY",
@@ -1886,26 +1895,26 @@
       "local_refalsification_required_before_execution": true,
       "paid_additive_stratum1_data_rails": [
         {
+          "provider": "ORATS",
+          "layer": "L4",
+          "phase": "Phase 1 (First Paid Upgrade, ADR-0013)",
+          "spdx": "LicenseRef-Commercial-Data-Feed",
+          "spdx_note": "Proprietary commercial REST/FTP US Equity Options vol-surface data API (no repo code admitted into uv.lock)",
+          "pricing_floor": "$199-$899/mo",
+          "installed_in_uv_lock": false,
+          "role": "Stratum-1 Phase-1 paid additive L4 smoothed IV surface, historical Greeks, and US Equity Options data rail (excluded as a core L3 execution engine; distinct from Stratum-2 QuantConnect Cloud lab)",
+          "disposition": "optional_paid_additive_l4_data_rail"
+        },
+        {
           "provider": "Databento OPRA / US Equities MBO-MBP10",
           "layer": "L4",
-          "phase": "Phase 1 (Paid Options & Microstructure Data Rail, ADR-0013)",
+          "phase": "Phase 3 (Earned-Trigger Microstructure & Flow, ADR-0013)",
           "client_repo": "databento/databento-python",
           "spdx": "Apache-2.0",
           "version": "0.91.0",
           "installed_in_uv_lock": false,
           "official_mcp_repos": 0,
-          "role": "Stratum-1 paid additive market-data rail (NY4 colo MBO/MBP-10 & historical OPRA ticks, ~$0.04/GB); native NautilusTrader & hftbacktest adapters",
-          "disposition": "optional_paid_additive_l4_data_rail"
-        },
-        {
-          "provider": "ORATS",
-          "layer": "L4",
-          "phase": "Phase 1 (First Paid Upgrade, ADR-0013)",
-          "spdx": "Commercial-Data-Feed",
-          "spdx_note": "Proprietary commercial REST/FTP US Equity Options vol-surface data API (no repo code admitted into uv.lock)",
-          "pricing_floor": "$199-$899/mo",
-          "installed_in_uv_lock": false,
-          "role": "Stratum-1 Phase-1 paid additive L4 smoothed IV surface, historical Greeks, and US Equity Options data rail (excluded as a core L3 execution engine; distinct from Stratum-2 QuantConnect Cloud lab)",
+          "role": "Stratum-1 Phase-3 earned-trigger paid additive market-data rail (NY4 colo MBO/MBP-10 & historical OPRA ticks, ~$0.04/GB); native NautilusTrader & hftbacktest adapters",
           "disposition": "optional_paid_additive_l4_data_rail"
         }
       ],
