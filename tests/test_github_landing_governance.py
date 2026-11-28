@@ -351,3 +351,34 @@ def test_dependabot_auto_merge_is_scoped_and_spoof_proof() -> None:
     )
     (actions,) = [u for u in dependabot["updates"] if u["package-ecosystem"] == "github-actions"]
     assert "actions-in-required-checks" in actions["groups"]
+
+
+def test_dependency_review_runs_on_every_pull_request() -> None:
+    doc = _load_workflows()["dependency-review.yml"]
+    triggers = _triggers(doc)
+    assert set(triggers) == {"pull_request"}
+    assert not set(triggers["pull_request"]) & {"paths", "paths-ignore", "branches-ignore", "types"}
+    assert "main" in triggers["pull_request"].get("branches", ["main"])
+    (job_id,) = doc["jobs"]
+    job = doc["jobs"][job_id]
+    assert job["name"] == "Dependency Review"
+    # A skipped or tolerated job reports success, which a check that may become required
+    # must not do.
+    assert not {"if", "needs", "strategy", "continue-on-error"} & set(job)
+    (review,) = [
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/dependency-review-action@")
+    ]
+    assert not {"if", "continue-on-error"} & set(review)
+    inputs = review.get("with", {})
+    assert inputs.get("fail-on-severity") in {"low", "moderate", "high", "critical"}
+    # warn-only overrides fail-on-severity; vulnerability-check: false skips the check itself;
+    # a config-file can set either unseen; fail-on-scopes and allow-ghsas narrow what fails.
+    assert not {
+        "warn-only",
+        "vulnerability-check",
+        "config-file",
+        "fail-on-scopes",
+        "allow-ghsas",
+    } & set(inputs)

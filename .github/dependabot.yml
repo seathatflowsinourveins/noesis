@@ -59,7 +59,8 @@ updates:
         update-types:
           - "minor"
           - "patch"
-      # Actions used only by release.yml, docs.yml or multi-model-sota.yml: no required check runs them.
+      # Actions that no required job runs: those used only by release.yml, docs.yml,
+      # multi-model-sota.yml, dependabot-auto-merge.yml or dependency-review.yml.
       actions-elsewhere:
         applies-to: version-updates
         patterns:
