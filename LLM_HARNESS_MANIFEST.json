@@ -24,7 +24,9 @@
     "Gemini CLI",
     "OpenCode",
     "Antigravity",
-    "Orca"
+    "Orca",
+    "oh-my-pi",
+    "pi"
   ],
   "source_of_truth_hierarchy": {
     "sole_source_of_truth": "sota-upstream-convergence-per-core-trading-philosophy",

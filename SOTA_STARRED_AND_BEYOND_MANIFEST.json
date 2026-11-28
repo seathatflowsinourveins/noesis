@@ -3,7 +3,12 @@
   "repo_name": "noesis",
   "zero_self_invented_hooks": true,
   "standalone_repo": true,
-  "static_security_gate_home": [".pre-commit-config.yaml", "rules/zero_self_invention.yml", "pytest", "deptry"],
+  "static_security_gate_home": [
+    ".pre-commit-config.yaml",
+    "rules/zero_self_invention.yml",
+    "pytest",
+    "deptry"
+  ],
   "spdx_license_firewall": [
     {
       "repo": "treeverse/lakeFS",
@@ -143,8 +148,21 @@
   "active_winners_by_layer": {
     "L0": {
       "name": "Runtime, Lockfile & Provenance",
-      "winners": ["astral-sh/uv", "jdx/mise", "casey/just", "jdx/fnox", "FiloSottile/age"],
-      "artifacts": ["pyproject.toml", "uv.lock", ".python-version", "mise.toml", "justfile", "fnox.toml"]
+      "winners": [
+        "astral-sh/uv",
+        "jdx/mise",
+        "casey/just",
+        "jdx/fnox",
+        "FiloSottile/age"
+      ],
+      "artifacts": [
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version",
+        "mise.toml",
+        "justfile",
+        "fnox.toml"
+      ]
     },
     "L1": {
       "name": "Data, Schema Validation, Calendars & Causal PIT",
@@ -159,7 +177,11 @@
         "mortada/fredapi",
         "tobymao/sqlglot"
       ],
-      "artifacts": ["src/tier0_sota/discovery.py", "src/tier0_sota/live/paper_farm.py", "src/tier0_sota/tv/bridge.py"]
+      "artifacts": [
+        "src/tier0_sota/discovery.py",
+        "src/tier0_sota/live/paper_farm.py",
+        "src/tier0_sota/tv/bridge.py"
+      ]
     },
     "L2": {
       "name": "Features, Streaming Drift, Regime Change, Explainability & ML",
@@ -174,7 +196,9 @@
         "NorskRegnesentral/skchange",
         "mmschlk/shapiq"
       ],
-      "artifacts": ["src/tier0_sota/discovery.py"]
+      "artifacts": [
+        "src/tier0_sota/discovery.py"
+      ]
     },
     "L3": {
       "name": "Single-Engine Sim == Paper == Live Execution",
@@ -182,11 +206,17 @@
         "nautechsystems/nautilus_trader (v2.0.0rc9, status: release-candidate, LGPL-3.0-only)",
         "nkaz001/hftbacktest (v2.4.4, watch maintenance freshness)"
       ],
-      "artifacts": ["src/tier0_sota/engine.py", "src/tier0_sota/risk.py"]
+      "artifacts": [
+        "src/tier0_sota/engine.py",
+        "src/tier0_sota/risk.py"
+      ]
     },
     "L4": {
       "name": "Paper Broker Adapters & Market Data Feeds",
-      "winners": ["alpacahq/alpaca-py", "tradermonty/claude-trading-skills"],
+      "winners": [
+        "alpacahq/alpaca-py",
+        "tradermonty/claude-trading-skills"
+      ],
       "artifacts": [
         "src/tier0_sota/live/scanner.py",
         "src/tier0_sota/live/paper_farm.py",
@@ -204,7 +234,9 @@
         "oxfordcontrol/Clarabel.rs (clarabel)",
         "scikit-learn-contrib/MAPIE"
       ],
-      "artifacts": ["src/tier0_sota/research.py"]
+      "artifacts": [
+        "src/tier0_sota/research.py"
+      ]
     },
     "L6": {
       "name": "Hosted Research Portals, Orchestration, Observability & ADR Docs",
@@ -303,7 +335,12 @@
       ],
       "multi_runtime_worker_parity": {
         "canonical_roles": 7,
-        "runtimes": [".claude/agents/*.md", ".codex/agents/*.toml", "opencode.json agent", ".omp/agents/*.md"],
+        "runtimes": [
+          ".claude/agents/*.md",
+          ".codex/agents/*.toml",
+          "opencode.json agent",
+          ".omp/agents/*.md"
+        ],
         "mcp_parity": "6/6 exact stdio parity (.mcp.json, .claude/settings.json, .codex/config.toml, .gemini/settings.json, opencode.json, .omp/mcp.json)",
         "paper_gatekeeper_enforcement": {
           "claude": "YAML frontmatter permissionMode=plan + disallowedTools(Write,Edit,MultiEdit,NotebookEdit,Bash,Agent,mcp__nautilus-engine__stage_semi_auto_order_preset,mcp__xerj__xerj_memory_store)",
@@ -347,7 +384,12 @@
         "plotly-charts@2.5.0",
         "@finos-workspace/mermaid@1.0.0"
       ],
-      "watches": ["rerun-io/rerun", "uwdata/mosaic", "finos/FDC3", "evidence-dev/evidence"],
+      "watches": [
+        "rerun-io/rerun",
+        "uwdata/mosaic",
+        "finos/FDC3",
+        "evidence-dev/evidence"
+      ],
       "artifacts": [
         "src/tier0_sota/live/performance.py",
         "src/tier0_sota/tv/bridge.py",
@@ -375,61 +417,309 @@
   "earned_trigger_frontier_l11_to_l15": {
     "L11": {
       "name": "High-Volume Data Lake, Multimodal Filings, Versioning & SQL Lint",
-      "graduated_or_admitted_entries": ["tobymao/sqlglot"],
-      "unadmitted_watch_candidates": ["treeverse/dvc", "vortex-data/vortex", "apache/iceberg-python", "lancedb/lancedb", "dlt-hub/dlt"],
+      "graduated_or_admitted_entries": [
+        "tobymao/sqlglot"
+      ],
+      "unadmitted_watch_candidates": [
+        "treeverse/dvc",
+        "vortex-data/vortex",
+        "apache/iceberg-python",
+        "lancedb/lancedb",
+        "dlt-hub/dlt"
+      ],
       "candidates": [
-        {"slug": "treeverse/dvc", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "multi-snapshot versioned dataset sync or remote object-store lake (optional [dependency-groups] data-versioning)"},
-        {"slug": "vortex-data/vortex", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "lake > 100 GB/run (currently ~28.5-29.1 GiB)"},
-        {"slug": "apache/iceberg-python", "alias": "pyiceberg", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "multi-writer ACID Parquet table snapshots"},
-        {"slug": "lancedb/lancedb", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "multimodal SEC filings"},
-        {"slug": "tobymao/sqlglot", "spdx": "MIT", "status": "graduated", "graduated_to": "L1", "version": "30.35.0", "adr": "ADR-0028", "trigger": "PIT SQL static transpilation (GRADUATED to active L1 in ADR-0028: validate_pit_duckdb_sql in src/tier0_sota/discovery.py)"},
-        {"slug": "dlt-hub/dlt", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "declarative PIT ingest pipelines"}
+        {
+          "slug": "treeverse/dvc",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "multi-snapshot versioned dataset sync or remote object-store lake (optional [dependency-groups] data-versioning)"
+        },
+        {
+          "slug": "vortex-data/vortex",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "lake > 100 GB/run (currently ~28.5-29.1 GiB)"
+        },
+        {
+          "slug": "apache/iceberg-python",
+          "alias": "pyiceberg",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "multi-writer ACID Parquet table snapshots"
+        },
+        {
+          "slug": "lancedb/lancedb",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "multimodal SEC filings"
+        },
+        {
+          "slug": "tobymao/sqlglot",
+          "spdx": "MIT",
+          "status": "graduated",
+          "graduated_to": "L1",
+          "version": "30.35.0",
+          "adr": "ADR-0028",
+          "trigger": "PIT SQL static transpilation (GRADUATED to active L1 in ADR-0028: validate_pit_duckdb_sql in src/tier0_sota/discovery.py)"
+        },
+        {
+          "slug": "dlt-hub/dlt",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "declarative PIT ingest pipelines"
+        }
       ]
     },
     "L12": {
       "name": "Tabular Foundation, Time-Series Foundation, Drift & Attribution",
-      "graduated_or_admitted_entries": ["mmschlk/shapiq", "NorskRegnesentral/skchange"],
-      "unadmitted_watch_candidates": ["soda-inria/tabicl", "yandex-research/tabm", "autogluon/tabarena", "amazon-science/chronos-forecasting", "DataDog/toto", "SalesforceAIResearch/gift-eval", "evidentlyai/evidently"],
+      "graduated_or_admitted_entries": [
+        "mmschlk/shapiq",
+        "NorskRegnesentral/skchange"
+      ],
+      "unadmitted_watch_candidates": [
+        "soda-inria/tabicl",
+        "yandex-research/tabm",
+        "autogluon/tabarena",
+        "amazon-science/chronos-forecasting",
+        "DataDog/toto",
+        "SalesforceAIResearch/gift-eval",
+        "evidentlyai/evidently"
+      ],
       "candidates": [
-        {"slug": "soda-inria/tabicl", "alias": "TabICLv2", "spdx": "BSD-3-Clause", "status": "earned_trigger_watch", "trigger": "in-context tabular benchmark (replaces non-commercial TabPFN weights)"},
-        {"slug": "yandex-research/tabm", "alias": "TabM", "status": "earned_trigger_watch", "trigger": "parameter-efficient MLP tabular"},
-        {"slug": "autogluon/tabarena", "alias": "TabArena", "status": "earned_trigger_watch", "trigger": "tabular arena evaluation"},
-        {"slug": "amazon-science/chronos-forecasting", "alias": "Chronos-2", "status": "earned_trigger_watch", "trigger": "L5 proof + pre-wall audit"},
-        {"slug": "DataDog/toto", "alias": "Toto", "status": "earned_trigger_watch", "trigger": "time-series foundation eval"},
-        {"slug": "SalesforceAIResearch/gift-eval", "alias": "GIFT-Eval", "status": "earned_trigger_watch", "trigger": "time-series benchmark gate"},
-        {"slug": "mmschlk/shapiq", "alias": "shapiq", "spdx": "MIT", "status": "graduated", "graduated_to": "L2", "version": "1.8.0", "adr": "ADR-0028", "trigger": "interaction Shapley attribution (GRADUATED to active L2 in ADR-0028: compute_shapiq_interactions in src/tier0_sota/discovery.py)"},
-        {"slug": "evidentlyai/evidently", "alias": "evidently", "status": "earned_trigger_watch", "trigger": "production feature drift"},
-        {"slug": "NorskRegnesentral/skchange", "alias": "skchange", "spdx": "BSD-3-Clause", "status": "graduated", "graduated_to": "L2", "version": "0.18.0", "adr": "ADR-0028", "trigger": "online changepoint upgrade (GRADUATED to active L2 in ADR-0028: detect_skchange_regime_anomalies in src/tier0_sota/discovery.py)"}
+        {
+          "slug": "soda-inria/tabicl",
+          "alias": "TabICLv2",
+          "spdx": "BSD-3-Clause",
+          "status": "earned_trigger_watch",
+          "trigger": "in-context tabular benchmark (replaces non-commercial TabPFN weights)"
+        },
+        {
+          "slug": "yandex-research/tabm",
+          "alias": "TabM",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "parameter-efficient MLP tabular"
+        },
+        {
+          "slug": "autogluon/tabarena",
+          "alias": "TabArena",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "tabular arena evaluation"
+        },
+        {
+          "slug": "amazon-science/chronos-forecasting",
+          "alias": "Chronos-2",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "L5 proof + pre-wall audit"
+        },
+        {
+          "slug": "DataDog/toto",
+          "alias": "Toto",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "time-series foundation eval"
+        },
+        {
+          "slug": "SalesforceAIResearch/gift-eval",
+          "alias": "GIFT-Eval",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "time-series benchmark gate"
+        },
+        {
+          "slug": "mmschlk/shapiq",
+          "alias": "shapiq",
+          "spdx": "MIT",
+          "status": "graduated",
+          "graduated_to": "L2",
+          "version": "1.8.0",
+          "adr": "ADR-0028",
+          "trigger": "interaction Shapley attribution (GRADUATED to active L2 in ADR-0028: compute_shapiq_interactions in src/tier0_sota/discovery.py)"
+        },
+        {
+          "slug": "evidentlyai/evidently",
+          "alias": "evidently",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "production feature drift"
+        },
+        {
+          "slug": "NorskRegnesentral/skchange",
+          "alias": "skchange",
+          "spdx": "BSD-3-Clause",
+          "status": "graduated",
+          "graduated_to": "L2",
+          "version": "0.18.0",
+          "adr": "ADR-0028",
+          "trigger": "online changepoint upgrade (GRADUATED to active L2 in ADR-0028: detect_skchange_regime_anomalies in src/tier0_sota/discovery.py)"
+        }
       ]
     },
     "L13": {
       "name": "Zero-Copy IPC, Generative L2 Sim, Portfolio Opt, Causal & UQ",
-      "graduated_or_admitted_entries": ["scikit-learn-contrib/MAPIE"],
-      "unadmitted_watch_candidates": ["eclipse-iceoryx/iceoryx2", "microsoft/MarS", "cvxgrp/cvxportfolio", "ERGO-Code/HiGHS", "DoubleML/doubleml-for-py", "meta-pytorch/botorch", "meta/Ax"],
+      "graduated_or_admitted_entries": [
+        "scikit-learn-contrib/MAPIE"
+      ],
+      "unadmitted_watch_candidates": [
+        "eclipse-iceoryx/iceoryx2",
+        "microsoft/MarS",
+        "cvxgrp/cvxportfolio",
+        "ERGO-Code/HiGHS",
+        "DoubleML/doubleml-for-py",
+        "meta-pytorch/botorch",
+        "meta/Ax"
+      ],
       "candidates": [
-        {"slug": "eclipse-iceoryx/iceoryx2", "status": "earned_trigger_watch", "trigger": "zero-copy Rust IPC"},
-        {"slug": "microsoft/MarS", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "generative L2 market simulation (OSI winner replacing un-licensed LOBS5)"},
-        {"slug": "cvxgrp/cvxportfolio", "status": "reference_only_watch", "trigger": "> 10 concurrent multi-day positions", "spdx_note": "GPL-3.0 copyleft (reference-only, not imported in src/ per ADR-0015)"},
-        {"slug": "ERGO-Code/HiGHS", "status": "earned_trigger_watch", "trigger": "MILP/LP portfolio constraints"},
-        {"slug": "DoubleML/doubleml-for-py", "alias": "DoubleML", "status": "earned_trigger_watch", "trigger": "causal factor neutralization"},
-        {"slug": "meta-pytorch/botorch", "alias": "BoTorch", "status": "earned_trigger_watch", "trigger": "multi-objective Bayesian HPO"},
-        {"slug": "meta/Ax", "alias": "Ax", "status": "earned_trigger_watch", "trigger": "adaptive experimentation"},
-        {"slug": "scikit-learn-contrib/MAPIE", "alias": "MAPIE", "spdx": "BSD-3-Clause", "status": "graduated", "graduated_to": "L5", "version": "1.6.0", "adr": "ADR-0028", "trigger": "conformal prediction intervals (GRADUATED to active L5 in ADR-0028: fit_conformal_excursion_intervals in src/tier0_sota/research.py, clamped <= 2.00%)"}
+        {
+          "slug": "eclipse-iceoryx/iceoryx2",
+          "spdx": "Apache-2.0 OR MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "zero-copy Rust IPC"
+        },
+        {
+          "slug": "microsoft/MarS",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "generative L2 market simulation (OSI winner replacing un-licensed LOBS5)"
+        },
+        {
+          "slug": "cvxgrp/cvxportfolio",
+          "spdx": "GPL-3.0",
+          "status": "reference_only_watch",
+          "trigger": "> 10 concurrent multi-day positions",
+          "spdx_note": "GPL-3.0 copyleft (reference-only, not imported in src/ per ADR-0015)"
+        },
+        {
+          "slug": "ERGO-Code/HiGHS",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "MILP/LP portfolio constraints"
+        },
+        {
+          "slug": "DoubleML/doubleml-for-py",
+          "alias": "DoubleML",
+          "spdx": "BSD-3-Clause",
+          "status": "earned_trigger_watch",
+          "trigger": "causal factor neutralization"
+        },
+        {
+          "slug": "meta-pytorch/botorch",
+          "alias": "BoTorch",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "multi-objective Bayesian HPO"
+        },
+        {
+          "slug": "meta/Ax",
+          "alias": "Ax",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "adaptive experimentation"
+        },
+        {
+          "slug": "scikit-learn-contrib/MAPIE",
+          "alias": "MAPIE",
+          "spdx": "BSD-3-Clause",
+          "status": "graduated",
+          "graduated_to": "L5",
+          "version": "1.6.0",
+          "adr": "ADR-0028",
+          "trigger": "conformal prediction intervals (GRADUATED to active L5 in ADR-0028: fit_conformal_excursion_intervals in src/tier0_sota/research.py, clamped <= 2.00%)"
+        }
       ]
     },
     "L14": {
       "name": "Interactive Notebooks, Durable Workflows, Observability & LLM Tracing",
-      "graduated_or_admitted_entries": ["prometheus/alertmanager", "allure-framework/allure3", "marimo-team/marimo"],
-      "unadmitted_watch_candidates": ["temporalio/temporal", "grafana/loki", "grafana/tempo", "grafana/pyroscope", "langfuse/langfuse"],
+      "graduated_or_admitted_entries": [
+        "prometheus/alertmanager",
+        "allure-framework/allure3",
+        "marimo-team/marimo"
+      ],
+      "unadmitted_watch_candidates": [
+        "temporalio/temporal",
+        "grafana/loki",
+        "grafana/tempo",
+        "grafana/pyroscope",
+        "langfuse/langfuse"
+      ],
       "candidates": [
-        {"slug": "marimo-team/marimo", "spdx": "Apache-2.0", "status": "admitted_off_repo_interactive_workbench", "version": "0.26.0", "url": "http://127.0.0.1:2718/", "pure_py_pep723": true, "zero_ipynb": true, "adr": "ADR-0021", "trigger": "Live 7-tab reactive pure-.py interactive quant & DuckDB SQL workbench (/mnt/z/sota-data/hosted-research-frameworks/marimo-tier0-workbench/tier0_sota_workbench.py, strictly off-repo, zero raw HTML/JS/Plotly, zero uv.lock bloat)"},
-        {"slug": "temporalio/temporal", "alias": "Temporal", "status": "earned_trigger_watch", "trigger": "durable multi-hour loops"},
-        {"slug": "grafana/loki", "status": "earned_trigger_watch", "trigger": "24/5 centralized logs"},
-        {"slug": "grafana/tempo", "status": "earned_trigger_watch", "trigger": "distributed OTel trace storage"},
-        {"slug": "grafana/pyroscope", "status": "earned_trigger_watch", "trigger": "continuous Rust/Python profiling"},
-        {"slug": "prometheus/alertmanager", "spdx": "Apache-2.0", "status": "admitted_profile_gated", "compose_profile": "alerting", "version": "0.28.1", "recipe": "just alerting-up", "port": 9093, "live_verified": true, "inhibit_rules_count": 2, "prometheus_rules_count": 15, "artifacts": ["docker/compose.sota.yml", "docker/prometheus.yml", "docker/prometheus_rules.yml", "docker/alertmanager.yml"], "adr": "ADR-0028", "trigger": "24/5 alert routing with critical/down inhibit_rules"},
-        {"slug": "allure-framework/allure3", "spdx": "Apache-2.0", "status": "admitted_test_reports_group", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "pyproject_group": "test-reports", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "license_evidence": "https://github.com/allure-framework/allure3/blob/82bcaf76619b004269bc1621d53bb223ff63bf16/LICENSE.txt", "adr": "ADR-0021 / ADR-0024", "trigger": "Zero-container static single-file upstream test dashboard served via Caddy :8793/test-reports/allure/ (crossed gap trigger: repo had 0 test-result UI)"},
-        {"slug": "langfuse/langfuse", "status": "earned_trigger_watch", "trigger": "LLM trace scaling beyond MLflow"}
+        {
+          "slug": "marimo-team/marimo",
+          "spdx": "Apache-2.0",
+          "status": "admitted_off_repo_interactive_workbench",
+          "version": "0.26.0",
+          "url": "http://127.0.0.1:2718/",
+          "pure_py_pep723": true,
+          "zero_ipynb": true,
+          "adr": "ADR-0021",
+          "trigger": "Live 7-tab reactive pure-.py interactive quant & DuckDB SQL workbench (/mnt/z/sota-data/hosted-research-frameworks/marimo-tier0-workbench/tier0_sota_workbench.py, strictly off-repo, zero raw HTML/JS/Plotly, zero uv.lock bloat)"
+        },
+        {
+          "slug": "temporalio/temporal",
+          "alias": "Temporal",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "durable multi-hour loops"
+        },
+        {
+          "slug": "grafana/loki",
+          "spdx": "AGPL-3.0-only",
+          "status": "earned_trigger_watch",
+          "trigger": "24/5 centralized logs"
+        },
+        {
+          "slug": "grafana/tempo",
+          "spdx": "AGPL-3.0-only",
+          "status": "earned_trigger_watch",
+          "trigger": "distributed OTel trace storage"
+        },
+        {
+          "slug": "grafana/pyroscope",
+          "spdx": "AGPL-3.0-only",
+          "status": "earned_trigger_watch",
+          "trigger": "continuous Rust/Python profiling"
+        },
+        {
+          "slug": "prometheus/alertmanager",
+          "spdx": "Apache-2.0",
+          "status": "admitted_profile_gated",
+          "compose_profile": "alerting",
+          "version": "0.28.1",
+          "recipe": "just alerting-up",
+          "port": 9093,
+          "live_verified": true,
+          "inhibit_rules_count": 2,
+          "prometheus_rules_count": 15,
+          "artifacts": [
+            "docker/compose.sota.yml",
+            "docker/prometheus.yml",
+            "docker/prometheus_rules.yml",
+            "docker/alertmanager.yml"
+          ],
+          "adr": "ADR-0028",
+          "trigger": "24/5 alert routing with critical/down inhibit_rules"
+        },
+        {
+          "slug": "allure-framework/allure3",
+          "spdx": "Apache-2.0",
+          "status": "admitted_test_reports_group",
+          "version": "3.33.0",
+          "pytest_plugin": "allure-pytest==2.16.2",
+          "pyproject_group": "test-reports",
+          "recipe": "just test-report",
+          "url": "http://127.0.0.1:8793/test-reports/allure/",
+          "license_evidence": "https://github.com/allure-framework/allure3/blob/82bcaf76619b004269bc1621d53bb223ff63bf16/LICENSE.txt",
+          "adr": "ADR-0021 / ADR-0024",
+          "trigger": "Zero-container static single-file upstream test dashboard served via Caddy :8793/test-reports/allure/ (crossed gap trigger: repo had 0 test-result UI)"
+        },
+        {
+          "slug": "langfuse/langfuse",
+          "spdx": "MIT (OSS core; ee/ commercial folders — GitHub API NOASSERTION; require MIT-only build verification before admission)",
+          "status": "earned_trigger_watch",
+          "trigger": "LLM trace scaling beyond MLflow"
+        }
       ]
     },
     "L15": {
@@ -483,38 +773,220 @@
         "mlflow/mlflow-mcp"
       ],
       "candidates": [
-        {"slug": "pschanely/CrossHair", "spdx": "MIT", "version": "0.0.114", "status": "admitted_isolated_uvx_cli", "recipe": "just crosshair", "zero_mypy_in_uv_lock": true, "artifacts": ["evals/symbolic_risk_crosshair.py"], "adr": "ADR-0028", "trigger": "bounded symbolic exploration on risk.py (ADMITTED via isolated uvx crosshair-tool==0.0.114 in ADR-0028: 5 PEP-316 contracts + 30 parity cases, 0 counterexamples, 0 mypy in uv.lock)"},
-        {"slug": "boxed/mutmut", "spdx": "BSD-3-Clause", "status": "admitted_isolated_uvx_cli", "version": "3.8.1", "recipe": "just mutate-risk", "wsl_only_fork": true, "never_mutates_tracked_risk_py": true, "artifacts": ["justfile", "src/tier0_sota/risk.py"], "adr": "ADR-0024", "trigger": "isolated temp-copy mutation sensitivity audit on risk.py (ADMITTED WSL-only mktemp -d report-only via just mutate-risk; 0 tracked mutations)"},
-        {"slug": "schemathesis/schemathesis", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "OpenAPI schema property fuzzing when repo exposes an owned HTTP/OpenAPI server (currently 0 owned HTTP servers; fuzzing upstream OpenBB excluded)"},
-        {"slug": "microsoft/playwright", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "browser E2E + Trace Viewer only if repo authors an owned FINOS widget plugin or web UI"},
-        {"slug": "ctrf-io/ctrf", "alias": "pytest-json-ctrf", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "JSON test telemetry when a Grafana upstream datasource consumes CTRF directly without custom glue"},
-        {"slug": "pytest-dev/pytest-xdist", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "conditional ADR-0026 parallel execution only after -n 4 --dist loadfile passes 3 consecutive runs cleanly with isolated DuckDB/MLflow state"},
-        {"slug": "nextest-rs/nextest", "alias": "cargo-nextest", "spdx": "Apache-2.0", "status": "not_applicable_no_owned_rust", "trigger": "N/A until repository owns/vendors a Rust workspace crate (currently consumes NautilusTrader/hftbacktest as wheels; same for proptest/kani)"},
-        {"slug": "opengrep/opengrep", "spdx": "LGPL-2.1", "status": "earned_trigger_watch", "trigger": "OSI cross-file SAST beyond ast-grep + CodeQL (replaces non-OSI Semgrep rules)"},
-        {"slug": "sigstore/cosign", "status": "earned_trigger_watch", "trigger": "container artifact signing"},
-        {"slug": "slsa-framework/slsa-verifier", "status": "earned_trigger_watch", "trigger": "build provenance verification"},
-        {"slug": "open-policy-agent/opa", "status": "earned_trigger_watch", "trigger": "policy-as-code admission gates"},
-        {"slug": "harbor-framework/harbor", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "live containerized agent benchmark harness"},
-        {"slug": "promptfoo/promptfoo", "spdx": "MIT", "status": "earned_trigger_watch", "note": "MIT license retained post-OpenAI acquisition (verified 2026-11-27); quarterly license & neutrality audit required before any admission", "trigger": "CI prompt red-teaming and regression matrix beyond Inspect AI + MLflow GenAI"},
-        {"slug": "OpenHands/OpenHands", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "autonomous containerized coding benchmarks"},
-        {"slug": "microsoft/PyRIT", "status": "earned_trigger_watch", "trigger": "automated LLM red-teaming"},
-        {"slug": "ethz-spylab/agentdojo", "status": "earned_trigger_watch", "trigger": "prompt-injection benchmark"},
-        {"slug": "superradcompany/microsandbox", "status": "earned_trigger_watch", "trigger": "libkrun microVM agent isolation"},
-        {"slug": "pydantic/monty", "status": "earned_trigger_watch", "trigger": "Rust Python sandbox"},
-        {"slug": "gvisor/gvisor", "status": "earned_trigger_watch", "trigger": "user-space container kernel"},
-        {"slug": "e2b-dev/E2B", "status": "earned_trigger_watch", "trigger": "cloud microVM sandbox"},
-        {"slug": "meridianlabs-ai/inspect_scout", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "agent transcript failure scanner"},
-        {"slug": "SakanaAI/ShinkaEvolve", "status": "earned_trigger_watch", "trigger": "sandbox evolutionary coding"},
-        {"slug": "algorithmicsuperintelligence/openevolve", "status": "earned_trigger_watch", "trigger": "open-ended evolutionary search"},
-        {"slug": "snyk/agent-scan", "spdx": "Apache-2.0", "status": "admitted_offline_cli", "recipe": "just agent-scan", "telemetry_disabled": true, "trigger": "static MCP & skill supply-chain audit"},
-        {"slug": "agentskills/agentskills", "status": "earned_trigger_watch", "trigger": "cross-runtime skill spec"},
-        {"slug": "a2aproject/A2A", "status": "earned_trigger_watch", "trigger": "agent-to-agent interoperability"},
-        {"slug": "agentclientprotocol/agent-client-protocol", "alias": "ACP", "status": "earned_trigger_watch", "trigger": "client/editor agent protocol"},
-        {"slug": "ag-ui-protocol/ag-ui", "status": "earned_trigger_watch", "trigger": "agent-to-UI event stream"},
-        {"slug": "PrefectHQ/fastmcp", "status": "earned_trigger_watch", "trigger": "Pythonic MCP server primitives"},
-        {"slug": "pydantic/pydantic-ai", "status": "earned_trigger_watch", "trigger": "typed agent orchestration"},
-        {"slug": "upstash/context7", "status": "earned_trigger_watch", "trigger": "live versioned library docs MCP"},
-        {"slug": "vectorize-io/hindsight", "status": "earned_trigger_watch", "trigger": "long-horizon agent memory"},
+        {
+          "slug": "pschanely/CrossHair",
+          "spdx": "MIT",
+          "version": "0.0.114",
+          "status": "admitted_isolated_uvx_cli",
+          "recipe": "just crosshair",
+          "zero_mypy_in_uv_lock": true,
+          "artifacts": [
+            "evals/symbolic_risk_crosshair.py"
+          ],
+          "adr": "ADR-0028",
+          "trigger": "bounded symbolic exploration on risk.py (ADMITTED via isolated uvx crosshair-tool==0.0.114 in ADR-0028: 5 PEP-316 contracts + 30 parity cases, 0 counterexamples, 0 mypy in uv.lock)"
+        },
+        {
+          "slug": "boxed/mutmut",
+          "spdx": "BSD-3-Clause",
+          "status": "admitted_isolated_uvx_cli",
+          "version": "3.8.1",
+          "recipe": "just mutate-risk",
+          "wsl_only_fork": true,
+          "never_mutates_tracked_risk_py": true,
+          "artifacts": [
+            "justfile",
+            "src/tier0_sota/risk.py"
+          ],
+          "adr": "ADR-0024",
+          "trigger": "isolated temp-copy mutation sensitivity audit on risk.py (ADMITTED WSL-only mktemp -d report-only via just mutate-risk; 0 tracked mutations)"
+        },
+        {
+          "slug": "schemathesis/schemathesis",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "OpenAPI schema property fuzzing when repo exposes an owned HTTP/OpenAPI server (currently 0 owned HTTP servers; fuzzing upstream OpenBB excluded)"
+        },
+        {
+          "slug": "microsoft/playwright",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "browser E2E + Trace Viewer only if repo authors an owned FINOS widget plugin or web UI"
+        },
+        {
+          "slug": "ctrf-io/ctrf",
+          "alias": "pytest-json-ctrf",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "JSON test telemetry when a Grafana upstream datasource consumes CTRF directly without custom glue"
+        },
+        {
+          "slug": "pytest-dev/pytest-xdist",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "conditional ADR-0026 parallel execution only after -n 4 --dist loadfile passes 3 consecutive runs cleanly with isolated DuckDB/MLflow state"
+        },
+        {
+          "slug": "nextest-rs/nextest",
+          "alias": "cargo-nextest",
+          "spdx": "Apache-2.0",
+          "status": "not_applicable_no_owned_rust",
+          "trigger": "N/A until repository owns/vendors a Rust workspace crate (currently consumes NautilusTrader/hftbacktest as wheels; same for proptest/kani)"
+        },
+        {
+          "slug": "opengrep/opengrep",
+          "spdx": "LGPL-2.1",
+          "status": "earned_trigger_watch",
+          "trigger": "OSI cross-file SAST beyond ast-grep + CodeQL (replaces non-OSI Semgrep rules)"
+        },
+        {
+          "slug": "sigstore/cosign",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "container artifact signing"
+        },
+        {
+          "slug": "slsa-framework/slsa-verifier",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "build provenance verification"
+        },
+        {
+          "slug": "open-policy-agent/opa",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "policy-as-code admission gates"
+        },
+        {
+          "slug": "harbor-framework/harbor",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "live containerized agent benchmark harness"
+        },
+        {
+          "slug": "promptfoo/promptfoo",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "note": "MIT license retained post-OpenAI acquisition (verified 2026-11-27); quarterly license & neutrality audit required before any admission",
+          "trigger": "CI prompt red-teaming and regression matrix beyond Inspect AI + MLflow GenAI"
+        },
+        {
+          "slug": "OpenHands/OpenHands",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "autonomous containerized coding benchmarks"
+        },
+        {
+          "slug": "microsoft/PyRIT",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "automated LLM red-teaming"
+        },
+        {
+          "slug": "ethz-spylab/agentdojo",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "prompt-injection benchmark"
+        },
+        {
+          "slug": "superradcompany/microsandbox",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "libkrun microVM agent isolation"
+        },
+        {
+          "slug": "pydantic/monty",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "Rust Python sandbox"
+        },
+        {
+          "slug": "gvisor/gvisor",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "user-space container kernel"
+        },
+        {
+          "slug": "e2b-dev/E2B",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "cloud microVM sandbox"
+        },
+        {
+          "slug": "meridianlabs-ai/inspect_scout",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "agent transcript failure scanner"
+        },
+        {
+          "slug": "SakanaAI/ShinkaEvolve",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "sandbox evolutionary coding"
+        },
+        {
+          "slug": "algorithmicsuperintelligence/openevolve",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "open-ended evolutionary search"
+        },
+        {
+          "slug": "snyk/agent-scan",
+          "spdx": "Apache-2.0",
+          "status": "admitted_offline_cli",
+          "recipe": "just agent-scan",
+          "telemetry_disabled": true,
+          "trigger": "static MCP & skill supply-chain audit"
+        },
+        {
+          "slug": "agentskills/agentskills",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "cross-runtime skill spec"
+        },
+        {
+          "slug": "a2aproject/A2A",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "agent-to-agent interoperability"
+        },
+        {
+          "slug": "agentclientprotocol/agent-client-protocol",
+          "alias": "ACP",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "client/editor agent protocol"
+        },
+        {
+          "slug": "ag-ui-protocol/ag-ui",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "agent-to-UI event stream"
+        },
+        {
+          "slug": "PrefectHQ/fastmcp",
+          "spdx": "Apache-2.0",
+          "status": "earned_trigger_watch",
+          "trigger": "Pythonic MCP server primitives"
+        },
+        {
+          "slug": "pydantic/pydantic-ai",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "typed agent orchestration"
+        },
+        {
+          "slug": "upstash/context7",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "live versioned library docs MCP"
+        },
+        {
+          "slug": "vectorize-io/hindsight",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "trigger": "long-horizon agent memory"
+        },
         {
           "slug": "alpacahq/alpaca-mcp-server",
           "spdx": "MIT",
@@ -569,14 +1041,43 @@
           "status": "earned_trigger_watch",
           "trigger": "Python ANTLR4 Pine Script AST parser (watch-only; defer unless local offline AST linting beyond official TradingView MCP & pinescript-mcp is earned)"
         },
-        {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "status": "reference_only_defer", "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"},
-        {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "status": "admitted_on_demand_companion", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "invocation": "uvx pinescript-mcp", "role": "zero_cdp_local_pine_v6_companion_mcp", "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"},
-        {"slug": "TradersPost/pine-mcp", "spdx": "MIT", "status": "earned_trigger_watch", "zero_cdp": true, "npm": "pinescript-mcp-server", "invocation": "npx -y pinescript-mcp-server", "role": "zero_cdp_local_pine_v6_docs_companion_mcp", "scope_boundary": "MIT Pine Script docs MCP ONLY; TradersPost proprietary commercial SaaS webhook relay remains excluded under SPDX OSI firewall", "trigger": "on-demand zero-CDP MIT Node Pine Script v6 docs companion MCP via npx -y pinescript-mcp-server (Pine docs MCP only; commercial SaaS relay excluded)"},
+        {
+          "slug": "trugurpala/pinescriptv6",
+          "spdx": "MIT",
+          "zero_cdp": true,
+          "status": "reference_only_defer",
+          "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"
+        },
+        {
+          "slug": "paulieb89/pinescript-mcp",
+          "spdx": "MIT",
+          "status": "admitted_on_demand_companion",
+          "zero_cdp": true,
+          "pypi": "pinescript-mcp==0.7.7",
+          "invocation": "uvx pinescript-mcp",
+          "role": "zero_cdp_local_pine_v6_companion_mcp",
+          "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"
+        },
+        {
+          "slug": "TradersPost/pine-mcp",
+          "spdx": "MIT",
+          "status": "earned_trigger_watch",
+          "zero_cdp": true,
+          "npm": "pinescript-mcp-server",
+          "invocation": "npx -y pinescript-mcp-server",
+          "role": "zero_cdp_local_pine_v6_docs_companion_mcp",
+          "scope_boundary": "MIT Pine Script docs MCP ONLY; TradersPost proprietary commercial SaaS webhook relay remains excluded under SPDX OSI firewall",
+          "trigger": "on-demand zero-CDP MIT Node Pine Script v6 docs companion MCP via npx -y pinescript-mcp-server (Pine docs MCP only; commercial SaaS relay excluded)"
+        },
         {
           "slug": "optuna/optuna-mcp",
           "spdx": "MIT",
           "pypi": "optuna-mcp==0.2.0",
-          "runtime_pins": ["optuna==5.1.0", "mcp==1.30.0", "python==3.13"],
+          "runtime_pins": [
+            "optuna==5.1.0",
+            "mcp==1.30.0",
+            "python==3.13"
+          ],
           "status": "admitted_off_repo_research_mcp_plugin",
           "plugin_name": "quant-research-sota-mcp",
           "plugin_path": "~/.gemini/config/plugins/quant-research-sota-mcp/",
@@ -592,7 +1093,11 @@
           "alias": "mlflow[mcp]",
           "spdx": "Apache-2.0",
           "pypi": "mlflow==3.18.0",
-          "runtime_pins": ["fastmcp==2.14.7", "mcp==1.30.0", "python==3.13"],
+          "runtime_pins": [
+            "fastmcp==2.14.7",
+            "mcp==1.30.0",
+            "python==3.13"
+          ],
           "status": "admitted_off_repo_research_mcp_plugin",
           "plugin_name": "quant-research-sota-mcp",
           "plugin_path": "~/.gemini/config/plugins/quant-research-sota-mcp/",
@@ -643,54 +1148,186 @@
       "repos_total": 93,
       "archived_count": 29,
       "active_admitted": [
-        {"repo": "alpacahq/alpaca-py", "spdx": "Apache-2.0", "pinned": "0.45.0", "layer": "L4", "role": "Official Python SDK (SIP/BOATS/FINRA TRF/OPRA/Paper Trading)"},
-        {"repo": "alpacahq/alpaca-mcp-server", "spdx": "MIT", "pinned": "2.4.1", "layer": "L15_off_repo_plugin", "role": "Official first-party MCP isolated in off-repo paper-only plugin alpaca-sota-mcp (72 tools, ALPACA_PAPER_TRADE=True)"}
+        {
+          "repo": "alpacahq/alpaca-py",
+          "spdx": "Apache-2.0",
+          "pinned": "0.45.0",
+          "layer": "L4",
+          "role": "Official Python SDK (SIP/BOATS/FINRA TRF/OPRA/Paper Trading)"
+        },
+        {
+          "repo": "alpacahq/alpaca-mcp-server",
+          "spdx": "MIT",
+          "pinned": "2.4.1",
+          "layer": "L15_off_repo_plugin",
+          "role": "Official first-party MCP isolated in off-repo paper-only plugin alpaca-sota-mcp (72 tools, ALPACA_PAPER_TRADE=True)"
+        }
       ],
       "active_watches": [
-        {"repo": "alpacahq/alpaca-skills", "spdx": "Apache-2.0", "role": "Official Alpaca SKILL.md pack (deferred outside UPSTREAM_SKILLS_LOCK.json)"},
-        {"repo": "alpacahq/cli", "spdx": "Apache-2.0", "role": "Go Trading API CLI (redundant with alpaca-py + alpaca-mcp-server)"}
+        {
+          "repo": "alpacahq/alpaca-skills",
+          "spdx": "Apache-2.0",
+          "role": "Official Alpaca SKILL.md pack (deferred outside UPSTREAM_SKILLS_LOCK.json)"
+        },
+        {
+          "repo": "alpacahq/cli",
+          "spdx": "Apache-2.0",
+          "role": "Go Trading API CLI (redundant with alpaca-py + alpaca-mcp-server)"
+        }
       ],
       "excluded_archived_or_legacy": [
-        {"repo": "alpacahq/alpaca-trade-api-python", "spdx": "Apache-2.0", "archived": true, "reason": "Archived deprecated predecessor to alpaca-py"},
-        {"repo": "alpacahq/pylivetrader", "spdx": "Apache-2.0", "archived": false, "reason": "Legacy stale (2022) zipline-interface runner; zipline banned"},
-        {"repo": "alpacahq/alpaca-backtrader-api", "spdx": "Apache-2.0", "archived": false, "reason": "Banned backtrader engine integration"},
-        {"repo": "alpacahq/alpaca-zipline", "spdx": "NONE", "archived": false, "reason": "Unlicensed legacy zipline integration; zipline banned"},
-        {"repo": "alpacahq/backtrader", "spdx": "GPL-3.0", "archived": true, "reason": "Archived GPL-3.0 fork of banned backtrader"},
-        {"repo": "alpacahq/Lean", "spdx": "Apache-2.0", "archived": true, "reason": "Archived rejected L3 engine overlap"},
-        {"repo": "alpacahq/example-hftish", "spdx": "NONE", "archived": false, "reason": "Unlicensed sample repo (also example-scalping, Momentum-Trading-Example)"}
+        {
+          "repo": "alpacahq/alpaca-trade-api-python",
+          "spdx": "Apache-2.0",
+          "archived": true,
+          "reason": "Archived deprecated predecessor to alpaca-py"
+        },
+        {
+          "repo": "alpacahq/pylivetrader",
+          "spdx": "Apache-2.0",
+          "archived": false,
+          "reason": "Legacy stale (2022) zipline-interface runner; zipline banned"
+        },
+        {
+          "repo": "alpacahq/alpaca-backtrader-api",
+          "spdx": "Apache-2.0",
+          "archived": false,
+          "reason": "Banned backtrader engine integration"
+        },
+        {
+          "repo": "alpacahq/alpaca-zipline",
+          "spdx": "NONE",
+          "archived": false,
+          "reason": "Unlicensed legacy zipline integration; zipline banned"
+        },
+        {
+          "repo": "alpacahq/backtrader",
+          "spdx": "GPL-3.0",
+          "archived": true,
+          "reason": "Archived GPL-3.0 fork of banned backtrader"
+        },
+        {
+          "repo": "alpacahq/Lean",
+          "spdx": "Apache-2.0",
+          "archived": true,
+          "reason": "Archived rejected L3 engine overlap"
+        },
+        {
+          "repo": "alpacahq/example-hftish",
+          "spdx": "NONE",
+          "archived": false,
+          "reason": "Unlicensed sample repo (also example-scalping, Momentum-Trading-Example)"
+        }
       ]
     },
     "nautechsystems": {
       "repos_total": 6,
       "archived_count": 2,
       "active_admitted": [
-        {"repo": "nautechsystems/nautilus_trader", "spdx": "LGPL-3.0-only", "pinned": "2.0.0rc9", "status": "release_candidate", "ga_reverification_required": true, "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "layer": "L3", "role": "Single-engine Rust-native Sim == Paper == Live execution, BacktestEngine/SANDBOX SSOT & built-in InteractiveBrokers adapter (:4002 paper-only)"}
+        {
+          "repo": "nautechsystems/nautilus_trader",
+          "spdx": "LGPL-3.0-only",
+          "pinned": "2.0.0rc9",
+          "status": "release_candidate",
+          "ga_reverification_required": true,
+          "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE",
+          "layer": "L3",
+          "role": "Single-engine Rust-native Sim == Paper == Live execution, BacktestEngine/SANDBOX SSOT & built-in InteractiveBrokers adapter (:4002 paper-only)"
+        }
       ],
       "active_watches": [
-        {"repo": "nautechsystems/nautilus_agents", "spdx": "LGPL-3.0", "role": "Official Rust Agents SDK (earned-trigger watch; strictly off synchronous execution hot path)"},
-        {"repo": "nautechsystems/nautilus_engineering", "spdx": "LGPL-3.0", "role": "Official NautilusTrader engineering standards & lint/pre-commit reference"}
+        {
+          "repo": "nautechsystems/nautilus_agents",
+          "spdx": "LGPL-3.0",
+          "role": "Official Rust Agents SDK (earned-trigger watch; strictly off synchronous execution hot path)"
+        },
+        {
+          "repo": "nautechsystems/nautilus_engineering",
+          "spdx": "LGPL-3.0",
+          "role": "Official NautilusTrader engineering standards & lint/pre-commit reference"
+        }
       ],
       "excluded_archived_or_unlicensed": [
-        {"repo": "nautechsystems/nautilus_ibapi", "spdx": "NONE", "archived": true, "reason": "Archived IB API mirror superseded by native nautilus_trader InteractiveBrokers adapter"},
-        {"repo": "nautechsystems/nautilus_experiments", "spdx": "NONE", "archived": true, "reason": "Archived experimental scratch repo"}
+        {
+          "repo": "nautechsystems/nautilus_ibapi",
+          "spdx": "NONE",
+          "archived": true,
+          "reason": "Archived IB API mirror superseded by native nautilus_trader InteractiveBrokers adapter"
+        },
+        {
+          "repo": "nautechsystems/nautilus_experiments",
+          "spdx": "NONE",
+          "archived": true,
+          "reason": "Archived experimental scratch repo"
+        }
       ]
     },
     "tradingview_and_pinecoders": {
       "tradingview_repos_total": 39,
       "pinecoders_repos_total": 16,
       "active_admitted": [
-        {"repo": "tradingview/lightweight-charts", "spdx": "Apache-2.0", "layer": "L10", "role": "Official HTML5 Canvas charting v5"},
-        {"repo": "tradingview/fancy-canvas", "spdx": "MIT", "layer": "L10", "role": "Official canvas helper for lightweight-charts"},
-        {"repo": "tradingview/mcp-official", "spdx": "Platform-OAuth-2.1", "license_category": "hosted_saas_oauth_service", "spdx_carve_out_note": "Hosted TradingView endpoint (OAuth 2.1 SaaS connector, non-package)", "layer": "L15_off_repo_plugin", "role": "Official first-party https://mcp.tradingview.com/mcp (zero CDP, watchlists/alerts/Pine v6)"},
-        {"repo": "paulieb89/pinescript-mcp", "spdx": "MIT", "pinned": "0.7.7", "layer": "L15_off_repo_plugin", "role": "Zero-CDP MIT local Pine v6 docs/syntax companion MCP"},
-        {"repo": "TradingView/ta/10 + TradingView/TechnicalRating/3 + STD;VWAP", "spdx": "Official-Pine-StdLib", "license_category": "platform_builtin_stdlib", "spdx_carve_out_note": "TradingView built-in Pine Script v6 standard runtime libraries evaluated server-side on TradingView (non-package)", "layer": "L3_Pine_v6", "role": "Official TradingView Pine Script v6 libraries imported in pine/*.pine"}
+        {
+          "repo": "tradingview/lightweight-charts",
+          "spdx": "Apache-2.0",
+          "layer": "L10",
+          "role": "Official HTML5 Canvas charting v5"
+        },
+        {
+          "repo": "tradingview/fancy-canvas",
+          "spdx": "MIT",
+          "layer": "L10",
+          "role": "Official canvas helper for lightweight-charts"
+        },
+        {
+          "repo": "tradingview/mcp-official",
+          "spdx": "Platform-OAuth-2.1",
+          "license_category": "hosted_saas_oauth_service",
+          "spdx_carve_out_note": "Hosted TradingView endpoint (OAuth 2.1 SaaS connector, non-package)",
+          "layer": "L15_off_repo_plugin",
+          "role": "Official first-party https://mcp.tradingview.com/mcp (zero CDP, watchlists/alerts/Pine v6)"
+        },
+        {
+          "repo": "paulieb89/pinescript-mcp",
+          "spdx": "MIT",
+          "pinned": "0.7.7",
+          "layer": "L15_off_repo_plugin",
+          "role": "Zero-CDP MIT local Pine v6 docs/syntax companion MCP"
+        },
+        {
+          "repo": "TradingView/ta/10 + TradingView/TechnicalRating/3 + STD;VWAP",
+          "spdx": "Official-Pine-StdLib",
+          "license_category": "platform_builtin_stdlib",
+          "spdx_carve_out_note": "TradingView built-in Pine Script v6 standard runtime libraries evaluated server-side on TradingView (non-package)",
+          "layer": "L3_Pine_v6",
+          "role": "Official TradingView Pine Script v6 libraries imported in pine/*.pine"
+        }
       ],
       "verified_osi_references": [
-        {"repo": "pinecoders/awesome-pinescript", "spdx": "MIT", "role": "Curated MIT Pine Script reference directory"},
-        {"repo": "pinecoders/pinescript-enums", "spdx": "MPL-2.0", "role": "Reference Pine enum conventions"},
-        {"repo": "pinecoders/pynescript", "spdx": "LGPL-3.0", "role": "ANTLR4 Pine Script AST parser (watch-only)"},
-        {"repo": "pinecoders/pynecore", "spdx": "Apache-2.0", "role": "Pine-compatible Python runtime (excluded from src/ to preserve NautilusTrader v2 single-engine L3 SSOT)"},
-        {"repo": "trugurpala/pinescriptv6", "spdx": "MIT", "role": "Reference-only Pine Script v6 Markdown docs repo (zero CDP; deferred unless runnable package ships)"}
+        {
+          "repo": "pinecoders/awesome-pinescript",
+          "spdx": "MIT",
+          "role": "Curated MIT Pine Script reference directory"
+        },
+        {
+          "repo": "pinecoders/pinescript-enums",
+          "spdx": "MPL-2.0",
+          "role": "Reference Pine enum conventions"
+        },
+        {
+          "repo": "pinecoders/pynescript",
+          "spdx": "LGPL-3.0",
+          "role": "ANTLR4 Pine Script AST parser (watch-only)"
+        },
+        {
+          "repo": "pinecoders/pynecore",
+          "spdx": "Apache-2.0",
+          "role": "Pine-compatible Python runtime (excluded from src/ to preserve NautilusTrader v2 single-engine L3 SSOT)"
+        },
+        {
+          "repo": "trugurpala/pinescriptv6",
+          "spdx": "MIT",
+          "role": "Reference-only Pine Script v6 Markdown docs repo (zero CDP; deferred unless runnable package ships)"
+        }
       ],
       "excluded_firewall": [
         "GPL-2.0 / GPL-3.0 strong copyleft PineCoders repos excluded from src/: pinecoders/pine-utils (GPL-3.0), pinecoders/tradingview-pinescript-indicators (GPL-3.0), pinecoders/pinescript-cheatsheet (GPL-3.0), pinecoders/pine-script-mode (GPL-2.0), pinecoders/vim-pine-script (GPL-2.0), pinecoders/sublime-pine (GPL-3.0)",
@@ -701,50 +1338,181 @@
   },
   "backtest_platform_and_dashboard_form_audit": {
     "verified_date": "2026-11-27",
-    "authoritative_adrs": ["ADR-0003", "ADR-0016", "ADR-0017", "ADR-0018", "ADR-0021", "ADR-0024", "ADR-0026", "ADR-0028"],
+    "authoritative_adrs": [
+      "ADR-0003",
+      "ADR-0016",
+      "ADR-0017",
+      "ADR-0018",
+      "ADR-0021",
+      "ADR-0024",
+      "ADR-0026",
+      "ADR-0028"
+    ],
     "canonical_manifest_path": "/mnt/z/sota-data/manifests/backtest_platform_and_dashboard_sota_manifest.json",
     "architectural_principle": "Decoupled Rust-native execution & microstructure queue engines (NautilusTrader v2 + hftbacktest) with LLM strictly as outer research operator (arXiv:2309.17322), composed with official OSI upstream dashboard forms (ADR-0021 section 4: four deployed, one watched) fed by declarative artifacts and the upstreams' own report functions. Under the dashboards rule (owner decision 2026-11-27) no figure, page or table renderer is written here except the TradingView Pine lane; two figure specifications (src/tier0_sota/live/performance.py, src/tier0_sota/tv/tickets.py) remain open as lane work items.",
     "five_upstream_dashboard_forms": {
       "form_a_static_tearsheets": {
         "name": "Upstream Report Functions (one upstream call per file, run data only)",
         "repos": [
-          {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "status": "release_candidate", "spdx": "LGPL-3.0-only", "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark') & create_bars_with_fills(theme='nautilus_dark')"},
-          {"repo": "skfolio/skfolio", "version": "1.14.6", "spdx": "BSD-3-Clause", "api": "skfolio.model_selection.CombinatorialPurgedCV.plot_train_test_folds + skfolio.population.Population.plot_distribution (the upstream Plotly figures written with write_html)"}, {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.backtest.generate_backtest_tearsheet(template='full', interactive=True) + ml4t.diagnostic.visualization.FeatureImportanceDashboard (Streamlit [dashboard] extra excluded; the earlier combine_figures_to_html page composition was retired 2026-11-27; hand-built figures blocked by ast-grep no-handbuilt-plotly-chart)"},
-          {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution (values feed the ml4t dashboards and DuckDB tables)"},
-          {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution (DuckDB interaction table)"},
-          {"repo": "caddyserver/caddy", "version": "2.11.9-alpine", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:8793/tearsheets/"}
+          {
+            "repo": "nautechsystems/nautilus_trader",
+            "version": "2.0.0rc9",
+            "status": "release_candidate",
+            "spdx": "LGPL-3.0-only",
+            "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE",
+            "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark') & create_bars_with_fills(theme='nautilus_dark')"
+          },
+          {
+            "repo": "skfolio/skfolio",
+            "version": "1.14.6",
+            "spdx": "BSD-3-Clause",
+            "api": "skfolio.model_selection.CombinatorialPurgedCV.plot_train_test_folds + skfolio.population.Population.plot_distribution (the upstream Plotly figures written with write_html)"
+          },
+          {
+            "repo": "ml4t/diagnostic",
+            "version": "0.2.1",
+            "spdx": "MIT",
+            "api": "ml4t.diagnostic.visualization.backtest.generate_backtest_tearsheet(template='full', interactive=True) + ml4t.diagnostic.visualization.FeatureImportanceDashboard (Streamlit [dashboard] extra excluded; the earlier combine_figures_to_html page composition was retired 2026-11-27; hand-built figures blocked by ast-grep no-handbuilt-plotly-chart)"
+          },
+          {
+            "repo": "shap/shap",
+            "version": "0.54.1",
+            "spdx": "MIT",
+            "api": "TreeExplainer exact additivity attribution (values feed the ml4t dashboards and DuckDB tables)"
+          },
+          {
+            "repo": "mmschlk/shapiq",
+            "version": "1.8.0",
+            "spdx": "MIT",
+            "api": "k-SII order-2 interaction attribution (DuckDB interaction table)"
+          },
+          {
+            "repo": "caddyserver/caddy",
+            "version": "2.11.9-alpine",
+            "spdx": "Apache-2.0",
+            "endpoint": "http://127.0.0.1:8793/tearsheets/"
+          }
         ]
       },
       "form_b_control_planes": {
         "name": "Experiment, Hyperparameter, Asset-Lineage, Safety Eval, Test-Report & Living ADR Control Planes",
         "repos": [
-          {"repo": "mlflow/mlflow", "version": "3.18.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:5000"},
-          {"repo": "optuna/optuna-dashboard", "version": "0.21.0", "spdx": "MIT", "endpoint": "http://127.0.0.1:8080/dashboard"},
-          {"repo": "dagster-io/dagster", "version": "1.13.31", "spdx": "Apache-2.0", "note": "OSS core only (commercial Dagster+ excluded)", "endpoint": "http://127.0.0.1:3000"},
-          {"repo": "UKGovernmentBEIS/inspect_ai", "version": "0.3.292", "spdx": "MIT", "endpoint": "http://127.0.0.1:7575"},
-          {"repo": "zensical/zensical", "version": "0.1.3", "spdx": "MIT", "endpoint": "http://127.0.0.1:8010"},
-          {"repo": "allure-framework/allure3", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "spdx": "Apache-2.0", "license_evidence": "https://github.com/allure-framework/allure3/blob/82bcaf76619b004269bc1621d53bb223ff63bf16/LICENSE.txt", "endpoint": "http://127.0.0.1:8793/test-reports/allure/"}
+          {
+            "repo": "mlflow/mlflow",
+            "version": "3.18.0",
+            "spdx": "Apache-2.0",
+            "endpoint": "http://127.0.0.1:5000"
+          },
+          {
+            "repo": "optuna/optuna-dashboard",
+            "version": "0.21.0",
+            "spdx": "MIT",
+            "endpoint": "http://127.0.0.1:8080/dashboard"
+          },
+          {
+            "repo": "dagster-io/dagster",
+            "version": "1.13.31",
+            "spdx": "Apache-2.0",
+            "note": "OSS core only (commercial Dagster+ excluded)",
+            "endpoint": "http://127.0.0.1:3000"
+          },
+          {
+            "repo": "UKGovernmentBEIS/inspect_ai",
+            "version": "0.3.292",
+            "spdx": "MIT",
+            "endpoint": "http://127.0.0.1:7575"
+          },
+          {
+            "repo": "zensical/zensical",
+            "version": "0.1.3",
+            "spdx": "MIT",
+            "endpoint": "http://127.0.0.1:8010"
+          },
+          {
+            "repo": "allure-framework/allure3",
+            "version": "3.33.0",
+            "pytest_plugin": "allure-pytest==2.16.2",
+            "spdx": "Apache-2.0",
+            "license_evidence": "https://github.com/allure-framework/allure3/blob/82bcaf76619b004269bc1621d53bb223ff63bf16/LICENSE.txt",
+            "endpoint": "http://127.0.0.1:8793/test-reports/allure/"
+          }
         ]
       },
       "form_c_institutional_terminal": {
         "name": "Institutional Terminal & Streaming Arrow Blotter",
         "repos": [
-          {"repo": "openbq-org/finos-workspace", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:1420"},
-          {"repo": "openbq-org/finos-workspace-plugins", "spdx": "Apache-2.0", "plugins": ["ag-grid@2.3.0", "plotly-charts@2.5.0", "@finos-workspace/mermaid@1.0.0"]},
-          {"repo": "OpenBB-finance/OpenBB", "spdx": "Apache-2.0", "note": "V5+ Apache-2.0 (migrated from V4 AGPL-3.0-only); paired with openbq-org/backends-for-openbb MIT on :6900"},
-          {"repo": "finos/perspective", "spdx": "Apache-2.0", "note": "WASM/Rust Arrow streaming grid with memory64 & DuckDB/Polars virtual server"},
-          {"repo": "tradingview/lightweight-charts", "spdx": "Apache-2.0", "note": "v5 HTML5 canvas charts"},
-          {"repo": "ag-grid/ag-grid", "spdx": "MIT", "note": "ag-grid-community ONLY; Enterprise commercial EULA blocked"}
+          {
+            "repo": "openbq-org/finos-workspace",
+            "spdx": "Apache-2.0",
+            "endpoint": "http://127.0.0.1:1420"
+          },
+          {
+            "repo": "openbq-org/finos-workspace-plugins",
+            "spdx": "Apache-2.0",
+            "plugins": [
+              "ag-grid@2.3.0",
+              "plotly-charts@2.5.0",
+              "@finos-workspace/mermaid@1.0.0"
+            ]
+          },
+          {
+            "repo": "OpenBB-finance/OpenBB",
+            "spdx": "Apache-2.0",
+            "note": "V5+ Apache-2.0 (migrated from V4 AGPL-3.0-only); paired with openbq-org/backends-for-openbb MIT on :6900"
+          },
+          {
+            "repo": "finos/perspective",
+            "spdx": "Apache-2.0",
+            "note": "WASM/Rust Arrow streaming grid with memory64 & DuckDB/Polars virtual server"
+          },
+          {
+            "repo": "tradingview/lightweight-charts",
+            "spdx": "Apache-2.0",
+            "note": "v5 HTML5 canvas charts"
+          },
+          {
+            "repo": "ag-grid/ag-grid",
+            "spdx": "MIT",
+            "note": "ag-grid-community ONLY; Enterprise commercial EULA blocked"
+          }
         ]
       },
       "form_d_observability_and_sql": {
         "name": "Live 24/5 Observability & Read-Only SQL Workbench",
         "repos": [
-          {"repo": "grafana/grafana", "version": "13.3.2", "spdx": "AGPL-3.0-only", "deployment_policy": "Unmodified loopback-only on 127.0.0.1:3001 (never imported into src/, never network-exposed)", "license_evidence": "https://github.com/grafana/grafana/blob/2036e2ec87f4da921aeca540eb0d74df1b37f81e/LICENSE", "endpoint": "http://127.0.0.1:3001"},
-          {"repo": "prometheus/prometheus", "version": "v3.16.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9090"},
-          {"repo": "prometheus/alertmanager", "version": "v0.28.1", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9093"},
-          {"repo": "open-telemetry/opentelemetry-collector-contrib", "version": "0.166.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9464"},
-          {"repo": "duckdb/duckdb-ui", "version": "2.0.1", "spdx": "MIT", "endpoint": "http://127.0.0.1:4213", "proxy_note": "Origin-normalising reverse proxy in docker/Caddyfile (network_mode: host, bind 127.0.0.1 pinned by test_caddyfile_loopback_binding_and_duckdb_csrf_posture) forwarding ^http://(127\\.0\\.0\\.1|localhost):4213$ -> 127.0.0.1:4214 while preserving HTTP 401 CSRF rejection on foreign/missing Origins; native alternative http://localhost:4214"}
+          {
+            "repo": "grafana/grafana",
+            "version": "13.3.2",
+            "spdx": "AGPL-3.0-only",
+            "deployment_policy": "Unmodified loopback-only on 127.0.0.1:3001 (never imported into src/, never network-exposed)",
+            "license_evidence": "https://github.com/grafana/grafana/blob/2036e2ec87f4da921aeca540eb0d74df1b37f81e/LICENSE",
+            "endpoint": "http://127.0.0.1:3001"
+          },
+          {
+            "repo": "prometheus/prometheus",
+            "version": "v3.16.0",
+            "spdx": "Apache-2.0",
+            "endpoint": "http://127.0.0.1:9090"
+          },
+          {
+            "repo": "prometheus/alertmanager",
+            "version": "v0.28.1",
+            "spdx": "Apache-2.0",
+            "endpoint": "http://127.0.0.1:9093"
+          },
+          {
+            "repo": "open-telemetry/opentelemetry-collector-contrib",
+            "version": "0.166.0",
+            "spdx": "Apache-2.0",
+            "endpoint": "http://127.0.0.1:9464"
+          },
+          {
+            "repo": "duckdb/duckdb-ui",
+            "version": "2.0.1",
+            "spdx": "MIT",
+            "endpoint": "http://127.0.0.1:4213",
+            "proxy_note": "Origin-normalising reverse proxy in docker/Caddyfile (network_mode: host, bind 127.0.0.1 pinned by test_caddyfile_loopback_binding_and_duckdb_csrf_posture) forwarding ^http://(127\\.0\\.0\\.1|localhost):4213$ -> 127.0.0.1:4214 while preserving HTTP 401 CSRF rejection on foreign/missing Origins; native alternative http://localhost:4214"
+          }
         ]
       },
       "form_e_frontier_watches": {
@@ -752,56 +1520,247 @@
         "admitted_off_repo_workbench_note": "marimo-team/marimo (0.26.0, Apache-2.0) promoted to admitted_off_repo_interactive_workbench live on http://127.0.0.1:2718/ (PEP 723 pure .py, 7 reactive tabs incl. live Optuna RDB / MLflow 3 / Strategy E2E compounding hub, live read-only DuckDB SQL, 18-engine landscape evidence, zero .ipynb, zero raw HTML/JS/Plotly, zero uv.lock bloat; ADR-0021)",
         "storage_watch_cross_reference": "L11 high-volume storage watch (vortex-data/vortex for lake > 100 GB/run) lives canonically under earned_trigger_frontier_l11_to_l15.L11",
         "repos": [
-          {"repo": "rerun-io/rerun", "spdx": "MIT OR Apache-2.0", "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog; awaits L2/L3 feed)"},
-          {"repo": "uwdata/mosaic", "spdx": "BSD-3-Clause", "license_evidence": "https://github.com/uwdata/mosaic/blob/f0a2cfbba83c1408aafbc14ee068cd4e94abfaf3/LICENSE", "note": "GitHub API metadata reports NOASSERTION; BSD-3-Clause verified in repo LICENSE", "role": "DuckDB/WASM v2 linked multi-view cross-filtering over millions/billions of ticks (v0.35+)"},
-          {"repo": "finos/FDC3", "spdx": "Apache-2.0", "role": "Cross-widget fdc3.instrument context bus inside FINOS Workspace"},
-          {"repo": "evidence-dev/evidence", "spdx": "MIT", "role": "SQL+Markdown static Stage-5 dossiers served via Caddy (Core only)"}
+          {
+            "repo": "rerun-io/rerun",
+            "spdx": "MIT OR Apache-2.0",
+            "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog; awaits L2/L3 feed)"
+          },
+          {
+            "repo": "uwdata/mosaic",
+            "spdx": "BSD-3-Clause",
+            "license_evidence": "https://github.com/uwdata/mosaic/blob/f0a2cfbba83c1408aafbc14ee068cd4e94abfaf3/LICENSE",
+            "note": "GitHub API metadata reports NOASSERTION; BSD-3-Clause verified in repo LICENSE",
+            "role": "DuckDB/WASM v2 linked multi-view cross-filtering over millions/billions of ticks (v0.35+)"
+          },
+          {
+            "repo": "finos/FDC3",
+            "spdx": "Apache-2.0",
+            "role": "Cross-widget fdc3.instrument context bus inside FINOS Workspace"
+          },
+          {
+            "repo": "evidence-dev/evidence",
+            "spdx": "MIT",
+            "role": "SQL+Markdown static Stage-5 dossiers served via Caddy (Core only)"
+          }
         ]
       }
     },
     "evaluated_backtest_engine_peers": [
-      {"repo": "QuantConnect/Lean", "companion_mcp": "QuantConnect/mcp-server (Apache-2.0, 60+ cloud MCP tools)", "spdx": "Apache-2.0", "decision": "rejected_l3_overlap", "reason": "Strong turnkey cloud multi-asset data & QuantConnect/mcp-server workflow, but C#/.NET/pythonnet runtime split & commercial cloud credit model lose to local-first Python 3.13 + Rust NautilusTrader v2 + hftbacktest + Disk-Z prewall-lake + local stdio MCPs (ADR-0016)", "earned_reconsideration_trigger": "Only if noesis expands into non-US-equity multi-asset options/futures/FX/crypto requiring vendor-hosted point-in-time institutional cloud data feeds unobtainable locally"},
-      {"repo": "barter-rs/barter-rs", "spdx": "MIT", "decision": "watch_excluded_l3_overlap", "reason": "Modular pure-Rust trading/backtest crates without Python ML/research parity; overlaps NautilusTrader v2"},
-      {"repo": "ml4t/backtest", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Pure-Python event backtester overlapping Rust-core NautilusTrader v2 (retain ml4t/diagnostic, ml4t/engineer, ml4t/skills)"},
-      {"repo": "ml4t/live", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Python live broker runner overlapping NautilusTrader v2 LiveNode/SANDBOX"},
-      {"repo": "microsoft/qlib", "spdx": "MIT", "decision": "excluded_l2_l3_overlap", "reason": "MIT-licensed daily research framework lacking L1/L2 queue execution or 24/5 Sim==Paper==Live parity; companion MIT microsoft/RD-Agent excluded for Qlib coupling & LLM-in-loop look-ahead risk (arXiv:2309.17322), borrowing outer hypothesis->backtest->feedback loop pattern only"},
-      {"repo": "microsoft/MarS", "spdx": "MIT", "decision": "earned_trigger_l13_watch", "reason": "Generative LMM L2/L3 order-book market simulator (OSI winner replacing unlicensed peernagy/LOBS5); awaits L3 data"},
-      {"repo": "bashtage/arch", "version": "9.0.0", "spdx": "NCSA", "license_evidence": "https://github.com/bashtage/arch/blob/d3e858fc1c99932bb6936cbaf0d1b45b136266e5/LICENSE.md", "decision": "active_l5_winner", "reason": "Hansen SPA reality check (GitHub API reports NOASSERTION; NCSA verified in repo LICENSE.md)"},
-      {"repo": "nkaz001/hftbacktest", "version": "2.4.4", "spdx": "MIT", "decision": "active_l3_l5_winner", "maintenance_freshness_note": "Last PyPI release 2025-12-10 (>11 months idle); monitor upstream maintenance", "reason": "Rust L1/L2/L3 queue & latency simulation"},
-      {"repo": "polakowo/vectorbt", "spdx": "Apache-2.0 + Commons Clause v1.0 (Non-OSI) / Pro commercial", "decision": "banned_l3", "reason": "Root LICENSE.md enforces non-OSI Commons Clause v1.0; vectorized bar engine breaks Sim==Paper==Live parity; commercial Pro fails OSI firewall"},
-      {"repo": "mementum/backtrader", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Unmaintained bar-loop engine banned in upstream-map.toml and ast-grep"},
-      {"repo": "stefan-jansen/zipline-reloaded", "spdx": "Apache-2.0", "decision": "banned_l3", "reason": "Legacy daily-centric engine banned in upstream-map.toml and ast-grep"},
-      {"repo": "freqtrade/freqtrade", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Crypto-centric GPL-3.0 bot banned in upstream-map.toml and ast-grep"},
-      {"repo": "hummingbot/hummingbot", "spdx": "Apache-2.0", "decision": "excluded_l3_domain_mismatch", "reason": "Crypto market-making bot outside US equities 24/5 SIP/BOATS + NautilusTrader v2 SSOT"}
+      {
+        "repo": "QuantConnect/Lean",
+        "companion_mcp": "QuantConnect/mcp-server (Apache-2.0, 60+ cloud MCP tools)",
+        "spdx": "Apache-2.0",
+        "decision": "rejected_l3_overlap",
+        "reason": "Strong turnkey cloud multi-asset data & QuantConnect/mcp-server workflow, but C#/.NET/pythonnet runtime split & commercial cloud credit model lose to local-first Python 3.13 + Rust NautilusTrader v2 + hftbacktest + Disk-Z prewall-lake + local stdio MCPs (ADR-0016)",
+        "earned_reconsideration_trigger": "Only if noesis expands into non-US-equity multi-asset options/futures/FX/crypto requiring vendor-hosted point-in-time institutional cloud data feeds unobtainable locally"
+      },
+      {
+        "repo": "barter-rs/barter-rs",
+        "spdx": "MIT",
+        "decision": "watch_excluded_l3_overlap",
+        "reason": "Modular pure-Rust trading/backtest crates without Python ML/research parity; overlaps NautilusTrader v2"
+      },
+      {
+        "repo": "ml4t/backtest",
+        "spdx": "MIT",
+        "decision": "excluded_l3_overlap",
+        "reason": "Pure-Python event backtester overlapping Rust-core NautilusTrader v2 (retain ml4t/diagnostic, ml4t/engineer, ml4t/skills)"
+      },
+      {
+        "repo": "ml4t/live",
+        "spdx": "MIT",
+        "decision": "excluded_l3_overlap",
+        "reason": "Python live broker runner overlapping NautilusTrader v2 LiveNode/SANDBOX"
+      },
+      {
+        "repo": "microsoft/qlib",
+        "spdx": "MIT",
+        "decision": "excluded_l2_l3_overlap",
+        "reason": "MIT-licensed daily research framework lacking L1/L2 queue execution or 24/5 Sim==Paper==Live parity; companion MIT microsoft/RD-Agent excluded for Qlib coupling & LLM-in-loop look-ahead risk (arXiv:2309.17322), borrowing outer hypothesis->backtest->feedback loop pattern only"
+      },
+      {
+        "repo": "microsoft/MarS",
+        "spdx": "MIT",
+        "decision": "earned_trigger_l13_watch",
+        "reason": "Generative LMM L2/L3 order-book market simulator (OSI winner replacing unlicensed peernagy/LOBS5); awaits L3 data"
+      },
+      {
+        "repo": "bashtage/arch",
+        "version": "9.0.0",
+        "spdx": "NCSA",
+        "license_evidence": "https://github.com/bashtage/arch/blob/d3e858fc1c99932bb6936cbaf0d1b45b136266e5/LICENSE.md",
+        "decision": "active_l5_winner",
+        "reason": "Hansen SPA reality check (GitHub API reports NOASSERTION; NCSA verified in repo LICENSE.md)"
+      },
+      {
+        "repo": "nkaz001/hftbacktest",
+        "version": "2.4.4",
+        "spdx": "MIT",
+        "decision": "active_l3_l5_winner",
+        "maintenance_freshness_note": "Last PyPI release 2025-12-10 (>11 months idle); monitor upstream maintenance",
+        "reason": "Rust L1/L2/L3 queue & latency simulation"
+      },
+      {
+        "repo": "polakowo/vectorbt",
+        "spdx": "Apache-2.0 + Commons Clause v1.0 (Non-OSI) / Pro commercial",
+        "decision": "banned_l3",
+        "reason": "Root LICENSE.md enforces non-OSI Commons Clause v1.0; vectorized bar engine breaks Sim==Paper==Live parity; commercial Pro fails OSI firewall"
+      },
+      {
+        "repo": "mementum/backtrader",
+        "spdx": "GPL-3.0",
+        "decision": "banned_l3",
+        "reason": "Unmaintained bar-loop engine banned in upstream-map.toml and ast-grep"
+      },
+      {
+        "repo": "stefan-jansen/zipline-reloaded",
+        "spdx": "Apache-2.0",
+        "decision": "banned_l3",
+        "reason": "Legacy daily-centric engine banned in upstream-map.toml and ast-grep"
+      },
+      {
+        "repo": "freqtrade/freqtrade",
+        "spdx": "GPL-3.0",
+        "decision": "banned_l3",
+        "reason": "Crypto-centric GPL-3.0 bot banned in upstream-map.toml and ast-grep"
+      },
+      {
+        "repo": "hummingbot/hummingbot",
+        "spdx": "Apache-2.0",
+        "decision": "excluded_l3_domain_mismatch",
+        "reason": "Crypto market-making bot outside US equities 24/5 SIP/BOATS + NautilusTrader v2 SSOT"
+      }
     ],
     "excluded_backtest_dashboard_wrappers": [
-      {"repo": "Black101081/Nautilus-Web-Interface", "decision": "excluded_redundant_custom_ui", "reason": "Community FastAPI+React admin UI coupling web server state to NautilusTrader and duplicating official FINOS/OpenBB/Grafana/MLflow"},
-      {"repo": "openzim/nautilus-webui", "decision": "excluded_redundant_custom_ui", "reason": "SaaS-style community wrapper duplicating official L6/L10 upstream platforms"},
-      {"repo": "mirkovicdev/HFTENGINE", "decision": "excluded_tui_overlap", "reason": "Crypto Binance-focused VGA TUI for hftbacktest; defer L2/L3 visual replay to rerun-io/rerun (MIT/Apache-2.0)"},
-      {"repo": "neosun100/lean-allinone", "decision": "excluded_l3_ui_overlap", "reason": "Third-party Lean Docker/WebUI bundle for rejected L3 engine"},
-      {"repo": "aarjaneiro/QtLean", "decision": "excluded_desktop_ui_overlap", "reason": "Qt desktop GUI for rejected L3 engine"},
-      {"repo": "ml4t/diagnostic[dashboard]", "decision": "excluded_streamlit_extra", "reason": "Optional extra pulls banned streamlit; use ml4t-diagnostic pure Plotly HTML tearsheet API served via Caddy :8793"},
-      {"repo": "ranaroussi/quantstats", "decision": "banned_l5", "reason": "Pulls banned yfinance and omits CPCV/DSR/PBO/SPA/HAC multiple-testing falsification"},
-      {"repo": "ReportPortal", "spdx": "Apache-2.0", "decision": "excluded_resource_bloat", "reason": "~9 Docker services and >= 6 GB RAM violates ADR-0026 resource budget and duplicates Allure Report 3 + Grafana"},
-      {"repo": "pytest-html", "spdx": "MPL-2.0", "decision": "excluded_l6_overlap", "reason": "Overlaps single-file Apache-2.0 Allure Report 3 (just test-report)"},
-      {"repo": "Arize-ai/phoenix", "spdx": "ELv2", "decision": "excluded_spdx_firewall", "reason": "Elastic License 2.0 is non-OSI and rejected in spdx_license_firewall"}
+      {
+        "repo": "Black101081/Nautilus-Web-Interface",
+        "decision": "excluded_redundant_custom_ui",
+        "reason": "Community FastAPI+React admin UI coupling web server state to NautilusTrader and duplicating official FINOS/OpenBB/Grafana/MLflow"
+      },
+      {
+        "repo": "openzim/nautilus-webui",
+        "decision": "excluded_redundant_custom_ui",
+        "reason": "SaaS-style community wrapper duplicating official L6/L10 upstream platforms"
+      },
+      {
+        "repo": "mirkovicdev/HFTENGINE",
+        "decision": "excluded_tui_overlap",
+        "reason": "Crypto Binance-focused VGA TUI for hftbacktest; defer L2/L3 visual replay to rerun-io/rerun (MIT/Apache-2.0)"
+      },
+      {
+        "repo": "neosun100/lean-allinone",
+        "decision": "excluded_l3_ui_overlap",
+        "reason": "Third-party Lean Docker/WebUI bundle for rejected L3 engine"
+      },
+      {
+        "repo": "aarjaneiro/QtLean",
+        "decision": "excluded_desktop_ui_overlap",
+        "reason": "Qt desktop GUI for rejected L3 engine"
+      },
+      {
+        "repo": "ml4t/diagnostic[dashboard]",
+        "decision": "excluded_streamlit_extra",
+        "reason": "Optional extra pulls banned streamlit; use ml4t-diagnostic pure Plotly HTML tearsheet API served via Caddy :8793"
+      },
+      {
+        "repo": "ranaroussi/quantstats",
+        "decision": "banned_l5",
+        "reason": "Pulls banned yfinance and omits CPCV/DSR/PBO/SPA/HAC multiple-testing falsification"
+      },
+      {
+        "repo": "ReportPortal",
+        "spdx": "Apache-2.0",
+        "decision": "excluded_resource_bloat",
+        "reason": "~9 Docker services and >= 6 GB RAM violates ADR-0026 resource budget and duplicates Allure Report 3 + Grafana"
+      },
+      {
+        "repo": "pytest-html",
+        "spdx": "MPL-2.0",
+        "decision": "excluded_l6_overlap",
+        "reason": "Overlaps single-file Apache-2.0 Allure Report 3 (just test-report)"
+      },
+      {
+        "repo": "Arize-ai/phoenix",
+        "spdx": "ELv2",
+        "decision": "excluded_spdx_firewall",
+        "reason": "Elastic License 2.0 is non-OSI and rejected in spdx_license_firewall"
+      }
     ]
   },
   "test_engine_and_dashboard_stratum_audit": {
     "verified_date": "2026-11-27",
-    "authoritative_adrs": ["ADR-0021", "ADR-0024", "ADR-0026"],
-    "serial_baseline": {"passed": 210, "duration_secs": 298.33, "top8_slowest_secs": 160.8, "vcpus": 8},
+    "authoritative_adrs": [
+      "ADR-0021",
+      "ADR-0024",
+      "ADR-0026"
+    ],
+    "serial_baseline": {
+      "passed": 210,
+      "duration_secs": 298.33,
+      "top8_slowest_secs": 160.8,
+      "vcpus": 8
+    },
     "active_strata": {
-      "s1_core_runner": {"tool": "pytest==9.2.0", "spdx": "MIT", "ci_junitxml": "test-results/junit.xml via actions/upload-artifact v7.0.2"},
+      "s1_core_runner": {
+        "tool": "pytest==9.2.0",
+        "spdx": "MIT",
+        "ci_junitxml": "test-results/junit.xml via actions/upload-artifact v7.0.2"
+      },
       "s2_formal_symbolic_mutation": [
-        {"tool": "Hypothesis==6.170.17", "spdx": "MPL-2.0", "note": "File-level weak copyleft, unmodified"},
-        {"tool": "z3-solver==5.4.1.0", "spdx": "MIT", "proof_kind": "exhaustive_smt_unsat_refutation", "recipe": "just z3"},
-        {"tool": "pschanely/CrossHair", "spdx": "MIT", "proof_kind": "bounded_symbolic_path_exploration", "recipe": "just crosshair", "isolated_uvx": true},
-        {"tool": "boxed/mutmut==3.8.1", "spdx": "BSD-3-Clause", "proof_kind": "isolated_wsl_mktemp_report_only", "recipe": "just mutate-risk", "never_mutates_tracked_risk_py": true}
+        {
+          "tool": "Hypothesis==6.170.17",
+          "spdx": "MPL-2.0",
+          "note": "File-level weak copyleft, unmodified"
+        },
+        {
+          "tool": "z3-solver==5.4.1.0",
+          "spdx": "MIT",
+          "proof_kind": "exhaustive_smt_unsat_refutation",
+          "recipe": "just z3"
+        },
+        {
+          "tool": "pschanely/CrossHair",
+          "spdx": "MIT",
+          "proof_kind": "bounded_symbolic_path_exploration",
+          "recipe": "just crosshair",
+          "isolated_uvx": true
+        },
+        {
+          "tool": "boxed/mutmut==3.8.1",
+          "spdx": "BSD-3-Clause",
+          "proof_kind": "isolated_wsl_mktemp_report_only",
+          "recipe": "just mutate-risk",
+          "never_mutates_tracked_risk_py": true
+        }
       ],
-      "s3_llm_and_agent_evals": ["UKGovernmentBEIS/inspect_ai==0.3.292 (:7575)", "mlflow/mlflow==3.18.0 (:5000)", "stanfordnlp/dspy==3.5.0 + gepa==0.1.4", "NVIDIA/SkillEvaluator"],
-      "s4_test_dashboard": {"tool": "allure-framework/allure3==3.33.0 + allure-pytest==2.16.2", "spdx": "Apache-2.0", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "junit_url": "http://127.0.0.1:8793/test-reports/junit.xml", "custom_html_js_mjs": false},
-      "s5_static_supply_chain": ["ruff", "ty", "deptry", "ast-grep (22 rules)", "prek (10/10)", "gitleaks", "zizmor", "trivy (misconfig/secret + just license-audit fs/rootfs SPDX wired into just security over installed venv wheels)", "syft", "shellcheck", "CodeQL (Default Setup)", "Dependabot"]
+      "s3_llm_and_agent_evals": [
+        "UKGovernmentBEIS/inspect_ai==0.3.292 (:7575)",
+        "mlflow/mlflow==3.18.0 (:5000)",
+        "stanfordnlp/dspy==3.5.0 + gepa==0.1.4",
+        "NVIDIA/SkillEvaluator"
+      ],
+      "s4_test_dashboard": {
+        "tool": "allure-framework/allure3==3.33.0 + allure-pytest==2.16.2",
+        "spdx": "Apache-2.0",
+        "recipe": "just test-report",
+        "url": "http://127.0.0.1:8793/test-reports/allure/",
+        "junit_url": "http://127.0.0.1:8793/test-reports/junit.xml",
+        "custom_html_js_mjs": false
+      },
+      "s5_static_supply_chain": [
+        "ruff",
+        "ty",
+        "deptry",
+        "ast-grep (22 rules)",
+        "prek (10/10)",
+        "gitleaks",
+        "zizmor",
+        "trivy (misconfig/secret + just license-audit fs/rootfs SPDX wired into just security over installed venv wheels)",
+        "syft",
+        "shellcheck",
+        "CodeQL (Default Setup)",
+        "Dependabot"
+      ]
     },
     "mechanized_dagster_upstream_watches": {
       "anchor": "src/tier0_sota/definitions.py::frontier_trigger_telemetry (_evaluate_upstream_watch_triggers + _parse_pep440_prerelease)",
@@ -812,22 +1771,61 @@
       ]
     },
     "not_applicable": [
-      {"tool": "cargo-nextest / proptest / kani", "reason": "not_applicable_no_owned_rust — repository owns zero Rust crates (consumes NautilusTrader and hftbacktest as wheels)"}
+      {
+        "tool": "cargo-nextest / proptest / kani",
+        "reason": "not_applicable_no_owned_rust — repository owns zero Rust crates (consumes NautilusTrader and hftbacktest as wheels)"
+      }
     ],
     "watches_with_triggers": [
-      {"tool": "promptfoo/promptfoo", "spdx": "MIT", "note": "Retained MIT post-OpenAI acquisition; mechanized 90d check via frontier_trigger_telemetry.upstream_watch_triggers.promptfoo_quarterly_license_audit"},
-      {"tool": "harbor-framework/harbor", "spdx": "Apache-2.0", "trigger": "Containerized agent harness benchmarking"},
-      {"tool": "schemathesis/schemathesis", "spdx": "MIT", "trigger": "Repo owns an HTTP/OpenAPI service (0 owned servers today)"},
-      {"tool": "microsoft/playwright", "spdx": "Apache-2.0", "trigger": "Repo authors an owned FINOS plugin or UI"},
-      {"tool": "pytest-dev/pytest-xdist", "spdx": "MIT", "trigger": "Passes -n 4 --dist loadfile 3 consecutive runs under ADR-0026 thread caps cleanly"},
-      {"tool": "ctrf-io/ctrf", "spdx": "MIT", "trigger": "Upstream Grafana test-health panel consumes CTRF without custom glue"}
+      {
+        "tool": "promptfoo/promptfoo",
+        "spdx": "MIT",
+        "note": "Retained MIT post-OpenAI acquisition; mechanized 90d check via frontier_trigger_telemetry.upstream_watch_triggers.promptfoo_quarterly_license_audit"
+      },
+      {
+        "tool": "harbor-framework/harbor",
+        "spdx": "Apache-2.0",
+        "trigger": "Containerized agent harness benchmarking"
+      },
+      {
+        "tool": "schemathesis/schemathesis",
+        "spdx": "MIT",
+        "trigger": "Repo owns an HTTP/OpenAPI service (0 owned servers today)"
+      },
+      {
+        "tool": "microsoft/playwright",
+        "spdx": "Apache-2.0",
+        "trigger": "Repo authors an owned FINOS plugin or UI"
+      },
+      {
+        "tool": "pytest-dev/pytest-xdist",
+        "spdx": "MIT",
+        "trigger": "Passes -n 4 --dist loadfile 3 consecutive runs under ADR-0026 thread caps cleanly"
+      },
+      {
+        "tool": "ctrf-io/ctrf",
+        "spdx": "MIT",
+        "trigger": "Upstream Grafana test-health panel consumes CTRF without custom glue"
+      }
     ],
-    "rejected": ["Arize-ai/phoenix (ELv2)", "DeepEval (Inspect overlap)", "ReportPortal (>=6 GB / ~9 containers)", "pytest-html (Allure 3 overlap)", "boxed/cosmic-ray (mutmut overlap)"]
+    "rejected": [
+      "Arize-ai/phoenix (ELv2)",
+      "DeepEval (Inspect overlap)",
+      "ReportPortal (>=6 GB / ~9 containers)",
+      "pytest-html (Allure 3 overlap)",
+      "boxed/cosmic-ray (mutmut overlap)"
+    ]
   },
   "us_equities_options_sota_convergence_audit": {
     "verified_date": "2026-11-28",
     "asset_scope": "US Equities, Stocks, and US Equity Options ONLY (zero crypto)",
-    "authoritative_adrs": ["ADR-0012", "ADR-0016", "ADR-0018", "ADR-0021", "ADR-0025"],
+    "authoritative_adrs": [
+      "ADR-0012",
+      "ADR-0016",
+      "ADR-0018",
+      "ADR-0021",
+      "ADR-0025"
+    ],
     "canonical_manifest_path": "/mnt/z/sota-data/manifests/us_equities_options_sota_convergence_manifest.json",
     "source_audits_fused": [
       "/mnt/z/sota-data/manifests/swarm_us_eq_opt_naut_vs_lean.json",
@@ -858,14 +1856,54 @@
       "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, optionally attach paid off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) and/or ORATS ($199-$899/mo smoothed IV surfaces) strictly as an additive off-repo cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
     },
     "root_license_audit_findings": [
-      {"repo": "polakowo/vectorbt", "stars": 9970, "verified_license": "Apache-2.0 + Commons Clause v1.0 (Non-OSI) / Pro commercial ($25/mo)", "disposition": "banned_l3"},
-      {"repo": "StockSharp/StockSharp", "stars": 11171, "verified_license": "Proprietary Custom Source-Available (Non-OSI, API NOASSERTION)", "disposition": "rejected_non_osi_proprietary"},
-      {"repo": "Lumiwealth/lumibot", "stars": 2258, "verified_license": "GPL-3.0 (Strong Copyleft, coarse Python bar loop)", "disposition": "rejected_gpl3"},
-      {"repo": "mementum/backtrader", "stars": 23825, "verified_license": "GPL-3.0 (Strong Copyleft, unmaintained since 2024-08-19)", "disposition": "banned_l3"},
-      {"repo": "kernc/backtesting.py", "stars": 9308, "verified_license": "AGPL-3.0 (Network Copyleft, single-asset only)", "disposition": "rejected_agpl3"},
-      {"repo": "cvxgrp/cvxportfolio", "stars": 1327, "verified_license": "GPL-3.0 (Strong Copyleft)", "disposition": "reference_only_watch"},
-      {"repo": "lballabio/QuantLib", "stars": 7812, "verified_license": "BSD-3-Clause (OSI-approved; API NOASSERTION)", "disposition": "earned_trigger_us_options_pricing_winner"},
-      {"repo": "openbq-org/OpenBB", "stars": 75807, "verified_license": "Apache-2.0 (V5+ pure OSI; API NOASSERTION)", "disposition": "active_l10_terminal_winner"}
+      {
+        "repo": "polakowo/vectorbt",
+        "stars": 9970,
+        "verified_license": "Apache-2.0 + Commons Clause v1.0 (Non-OSI) / Pro commercial ($25/mo)",
+        "disposition": "banned_l3"
+      },
+      {
+        "repo": "StockSharp/StockSharp",
+        "stars": 11171,
+        "verified_license": "Proprietary Custom Source-Available (Non-OSI, API NOASSERTION)",
+        "disposition": "rejected_non_osi_proprietary"
+      },
+      {
+        "repo": "Lumiwealth/lumibot",
+        "stars": 2258,
+        "verified_license": "GPL-3.0 (Strong Copyleft, coarse Python bar loop)",
+        "disposition": "rejected_gpl3"
+      },
+      {
+        "repo": "mementum/backtrader",
+        "stars": 23825,
+        "verified_license": "GPL-3.0 (Strong Copyleft, unmaintained since 2024-08-19)",
+        "disposition": "banned_l3"
+      },
+      {
+        "repo": "kernc/backtesting.py",
+        "stars": 9308,
+        "verified_license": "AGPL-3.0 (Network Copyleft, single-asset only)",
+        "disposition": "rejected_agpl3"
+      },
+      {
+        "repo": "cvxgrp/cvxportfolio",
+        "stars": 1327,
+        "verified_license": "GPL-3.0 (Strong Copyleft)",
+        "disposition": "reference_only_watch"
+      },
+      {
+        "repo": "lballabio/QuantLib",
+        "stars": 7812,
+        "verified_license": "BSD-3-Clause (OSI-approved; API NOASSERTION)",
+        "disposition": "earned_trigger_us_options_pricing_winner"
+      },
+      {
+        "repo": "openbq-org/OpenBB",
+        "stars": 75807,
+        "verified_license": "Apache-2.0 (V5+ pure OSI; API NOASSERTION)",
+        "disposition": "active_l10_terminal_winner"
+      }
     ],
     "why_oss_engines_omit_web_dashboards": {
       "oss_parity_finding": "Both NautilusTrader OSS (Plotly tearsheets + Parquet/Redis/Postgres; web UI reserved for NautilusTrader Pro/Cloud) and QuantConnect/LEAN OSS (local web GUI deprecated; static QuantConnect.Report lean report HTML only; interactive web IDE/Greeks reserved for Paid QuantConnect Cloud) omit bundled live web dashboards.",
@@ -877,7 +1915,11 @@
     },
     "llm_native_and_mcp_convergence": {
       "scientific_guardrail": "Glasserman & Lin (arXiv:2309.17322): pre-trained LLMs suffer both look-ahead bias and large-cap distraction effect -> zero LLMs on execution hot paths; deterministic compiled code + pre-wall PIT + 6-gate falsification + ticker anonymization on historical text evals.",
-      "active_l8_winners": ["stanfordnlp/dspy (39,268★, 3.5.0)", "gepa-ai/gepa (7,621★, 0.1.4)", "UKGovernmentBEIS/inspect_ai (3,354★, 0.3.292, 7/7 CI evals)"],
+      "active_l8_winners": [
+        "stanfordnlp/dspy (39,268★, 3.5.0)",
+        "gepa-ai/gepa (7,621★, 0.1.4)",
+        "UKGovernmentBEIS/inspect_ai (3,354★, 0.3.292, 7/7 CI evals)"
+      ],
       "audited_llm_quant_peers": {
         "microsoft/RD-Agent": "15,526★ MIT v1.0.0 (arXiv:2505.15155) — off-repo research reference only (Qlib-coupled)",
         "TauricResearch/TradingAgents": "123,953★ Apache-2.0 v1.0.1 — hot-path unsafe sequential LangGraph debate; conceptual cold-path reference only",
@@ -948,6 +1990,38 @@
         "DSPy 3.5.0 + GEPA 0.1.4 + Inspect AI 0.3.292 active core; pydantic/pydantic-ai (21,436★ MIT) watch",
         "AAIF standards: MCP (pinned 1.30.0 vs upstream v2.3.0), AGENTS.md (25,737★), Agent Skills (27,701★) active; A2A (v1.0.1), ACP (schema-v1.35.0), AG-UI watched"
       ]
+    }
+  },
+  "full_ecosystem_sota_saturation_audit": {
+    "verified_date": "2026-11-28",
+    "asset_scope": "US Equities, Stocks, and US Equity Options ONLY (zero crypto)",
+    "paper_only": true,
+    "live_execution_enabled": false,
+    "risk_kernel_sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+    "master_saturation_manifest_path": "/mnt/z/sota-data/manifests/tier0_full_ecosystem_sota_saturation_manifest.json",
+    "round1_source_manifests": [
+      "/mnt/z/sota-data/manifests/convergence_rounds/round1_realtime_1000rpm_feeds_ranking.json",
+      "/mnt/z/sota-data/manifests/convergence_rounds/round1_l0_l15_lanes_compounding.json",
+      "/mnt/z/sota-data/manifests/convergence_rounds/round1_dashboards_tv_ops.json",
+      "/mnt/z/sota-data/manifests/convergence_rounds/round1_multihour_loop_and_adr24_audit.json"
+    ],
+    "coverage_metrics": {
+      "layers_saturated": "16/16 (L0-L15)",
+      "compounding_lanes_saturated": "4/4 (sim-backtest, paper, half-auto-tv, live)",
+      "accepted_adrs_verified_2026_11_28": "24/24 (100%)",
+      "frontier_candidates_spdx_backfilled": "36 backfilled -> 75/75 (0 missing)",
+      "spdx_license_firewall_preserved_exact_7": true,
+      "supported_runtimes_parity": "8/8 (Codex, Claude Code, Gemini CLI, OpenCode, Antigravity, Orca, oh-my-pi, pi)",
+      "codex_paper_gatekeeper_toml_transport_fixed": true,
+      "live_antigravity_mcp_tools": "238 live cached tools across 9 endpoints (6/6 repo 4-stdio-MCP parity intact)",
+      "live_workstation_portals_http_200": "22/22 surfaces (19/19 Docker containers + 7-tab marimo :2718 + OmniRoute :20128 591-603 models)",
+      "live_compounding_totals": "Cycle #19 PASS, Optuna 2 studies / 1,233 complete trials, MLflow 9 experiments / 178 runs, 390 paper_tca_fills rows, 29 XERJ lessons"
+    },
+    "autonomous_multi_runtime_convergence_loop": {
+      "script_path": "/mnt/z/sota-data/hosted-research-frameworks/multi-runtime-convergence/run_multi_runtime_saturation_loop.sh",
+      "status_manifest_path": "/mnt/z/sota-data/manifests/multi_runtime_convergence_loop_status.json",
+      "systemd_user_timer": "~/.config/systemd/user/tier0-multi-runtime-convergence.timer (active/enabled, every 2h, Persistent=true, CPUQuota=400%, MemoryMax=6G)",
+      "live_once_verified": "4/4 parallel workers exit_code=0 (codex normal-speed 34s + claude plan 45s + omp OmniRoute 11s + mechanical 11s; 16/16 portals HTTP 200; XERJ synced)"
     }
   }
 }

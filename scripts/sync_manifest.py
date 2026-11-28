@@ -2043,6 +2043,8 @@ def build_llm_harness_manifest(
             "OpenCode",
             "Antigravity",
             "Orca",
+            "oh-my-pi",
+            "pi",
         ],
         "source_of_truth_hierarchy": phil_doc["source_of_truth_hierarchy"],
         "meta_convergence_practice": upstream_cfg.get("meta_convergence_practice", {}),
