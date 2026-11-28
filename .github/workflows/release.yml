@@ -51,7 +51,19 @@ jobs:
           uv run --no-sync pytest -q
           uv run --no-sync python evals/formal_risk_z3.py
           uv run --no-sync python scripts/sync_manifest.py --check
+          uv run --no-sync zensical build --clean --strict
+          rm -rf site
           uv run --no-sync python scripts/nautilus_mcp_server.py --smoke
+
+      - name: Inspect AI deterministic safety & clean-harness suite (7/7)
+        run: >-
+          uv run --no-sync python -c
+          "import json, sys; from evals.tier0_inspect_eval import verify_inspect_safety_suite; r = verify_inspect_safety_suite(); print(json.dumps(r, sort_keys=True)); sys.exit(0 if r['ok'] else 1)"
+
+      - name: CrossHair PEP-316 symbolic risk proofs (isolated uvx)
+        run: >-
+          PYTHONPATH="$PWD/src" uvx --from crosshair-tool==0.0.114
+          crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py
 
       - name: Build distribution artifacts
         run: uv build --out-dir dist

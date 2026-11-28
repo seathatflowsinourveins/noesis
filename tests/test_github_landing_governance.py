@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
@@ -204,8 +205,12 @@ def test_ci_tool_versions_match_mise_pins() -> None:
                 elif uses.startswith("gitleaks/gitleaks-action@"):
                     used.append(("gitleaks", str(env["GITLEAKS_VERSION"])))
     assert {tool for tool, _ in used} == {"uv", "trivy", "zizmor", "syft", "gitleaks"}
+    by_tool: dict[str, set[str]] = {}
     for tool, version in used:
         assert version.removeprefix("v").startswith(f"{mise_tools[tool]}."), (tool, version)
+        by_tool.setdefault(tool, set()).add(version)
+    for tool, versions in by_tool.items():
+        assert len(versions) == 1, f"divergent {tool} versions across workflows: {sorted(versions)}"
 
 
 def test_pre_commit_hooks_are_sha_pinned_and_match_mise() -> None:
@@ -468,3 +473,142 @@ def test_trivy_scanners_match_between_ci_and_just() -> None:
     assert set(match[1].split(",")) == ci_scanners | {"misconfig"}
     assert match[2] == required["severity"]
     assert match[3] == required["skip-dirs"]
+
+
+def test_pyproject_caps_agree_with_dependabot_holds() -> None:
+    """ADR-0032 §4: upper-bounded caps in pyproject.toml carry dated reasons and holds."""
+    pyproject_text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject = tomllib.loads(pyproject_text)
+    dependabot = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    )
+    (uv_upd,) = [u for u in dependabot["updates"] if u["package-ecosystem"] == "uv"]
+    (docker_upd,) = [u for u in dependabot["updates"] if u["package-ecosystem"] == "docker"]
+    uv_holds = {str(entry["dependency-name"]): entry for entry in uv_upd.get("ignore", [])}
+    docker_holds = {str(entry["dependency-name"]): entry for entry in docker_upd.get("ignore", [])}
+
+    # Upper-bounded requires-python must match the docker python hold.
+    requires_python = str(pyproject["project"]["requires-python"])
+    assert "<" in requires_python
+    assert "python" in docker_holds
+    assert "version-update:semver-minor" in docker_holds["python"].get("update-types", [])
+
+    # Every dependency with an upper bound (`<` or `<=`) across project/extras/groups must carry
+    # a dated rationale comment in pyproject.toml and a matching uv hold in dependabot.yml.
+    all_specs: list[str] = [str(s) for s in pyproject["project"]["dependencies"]]
+    for extra_specs in pyproject["project"].get("optional-dependencies", {}).values():
+        all_specs.extend(str(s) for s in extra_specs)
+    for group_specs in pyproject.get("dependency-groups", {}).values():
+        all_specs.extend(str(s) for s in group_specs if isinstance(s, str))
+
+    capped_deps: dict[str, str] = {}
+    for spec in all_specs:
+        req = Requirement(spec)
+        if any(s.operator in {"<", "<="} for s in req.specifier):
+            capped_deps[req.name.lower()] = spec
+    assert {"mcp", "numpy"} <= set(capped_deps)
+
+    lines = pyproject_text.splitlines()
+    for pkg_name, full_spec in capped_deps.items():
+        assert pkg_name in uv_holds, f"pyproject.toml cap {full_spec!r} missing dependabot uv hold"
+        spec_idx = next(i for i, line in enumerate(lines) if f'"{full_spec}"' in line)
+        assert spec_idx > 0
+        reason_line = lines[spec_idx - 1].strip()
+        reason = re.fullmatch(r"#\s*(\d{4}-\d{2}-\d{2}): (\S.*)", reason_line)
+        assert reason is not None, f"missing dated rationale above {full_spec!r}: {reason_line!r}"
+        date.fromisoformat(reason[1])
+        assert pkg_name in reason[2]
+        assert "https://" in reason[2]
+        assert "re-open when" in reason[2]
+
+
+def test_crosshair_pin_matches_across_justfile_ci_and_release() -> None:
+    """ADR-0032 §4: crosshair-tool exact pin matches across justfile, ci.yml, and release.yml."""
+    pin_re = re.compile(r"crosshair-tool==(\d+(?:\.\d+)+)")
+    just_pins = set(pin_re.findall((REPO_ROOT / "justfile").read_text(encoding="utf-8")))
+    ci_pins = set(pin_re.findall((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8")))
+    release_pins = set(pin_re.findall((WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")))
+    assert len(just_pins) == 1, just_pins
+    assert ci_pins == just_pins, (ci_pins, just_pins)
+    assert release_pins == just_pins, (release_pins, just_pins)
+
+
+def test_compose_images_have_no_unpinned_floating_tags() -> None:
+    """ADR-0032 §4: external images in docker/compose*.yml must never use floating tags."""
+    compose_files = sorted((REPO_ROOT / "docker").glob("compose*.yml"))
+    assert compose_files
+    checked_external = 0
+    for compose_path in compose_files:
+        doc = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        for svc_name, svc in doc.get("services", {}).items():
+            image = str(svc.get("image", ""))
+            assert image, (compose_path.name, svc_name)
+            if image.startswith("tier0-sota-"):
+                continue
+            checked_external += 1
+            if "@sha256:" in image:
+                assert re.search(r"@sha256:[0-9a-f]{64}$", image), (compose_path.name, svc_name)
+                continue
+            assert ":" in image, (compose_path.name, svc_name, image)
+            tag = image.rsplit(":", 1)[1]
+            assert tag.lower() not in {"latest", "stable", "edge", "nightly", "main", "master"}, (
+                compose_path.name,
+                svc_name,
+                image,
+            )
+            assert re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9._-]+)?", tag), (
+                compose_path.name,
+                svc_name,
+                image,
+            )
+    assert checked_external >= 5
+
+
+def test_scheduled_drift_audit_and_release_verification_parity() -> None:
+    """Scheduled CI drift job is read-only & non-required; release.yml mirrors ci.yml gates."""
+    workflows = _load_workflows()
+
+    # 1. ci.yml scheduled/dispatch read-only drift & compose audit job.
+    ci_jobs = workflows["ci.yml"]["jobs"]
+    drift_job = ci_jobs["upstream-drift-and-compose-audit"]
+    assert drift_job["name"] not in REQUIRED_CHECKS
+    assert drift_job["if"] == (
+        "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+    )
+    assert drift_job["permissions"] == {"contents": "read"}
+    drift_runs = "\n".join(str(step.get("run", "")) for step in drift_job["steps"])
+    assert "docker compose -f docker/compose.sota.yml config -q" in drift_runs
+    assert "docker compose -f docker/compose.ibkr-paper.yml config -q" in drift_runs
+    assert "uv tree --frozen --outdated" in drift_runs
+    assert "_evaluate_upstream_watch_triggers" in drift_runs
+    (report_step,) = [
+        step
+        for step in drift_job["steps"]
+        if "uv tree --frozen --outdated" in str(step.get("run", ""))
+    ]
+    assert report_step.get("shell") == "bash"
+    assert "set -euo pipefail" in str(report_step["run"])
+
+    # 2. release.yml verify-and-package mirrors ci.yml (zensical strict, Inspect AI 7/7, CrossHair).
+    rel_job = workflows["release.yml"]["jobs"]["verify-and-package"]
+    rel_runs = "\n".join(str(step.get("run", "")) for step in rel_job["steps"])
+    assert "zensical build --clean --strict" in rel_runs
+    assert "verify_inspect_safety_suite" in rel_runs
+    assert "crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py" in rel_runs
+
+
+def test_systemd_workstation_guard_pytest_hygiene_safety() -> None:
+    """Workstation guard unit escapes $$, guards pytest-current, and checks active pytest."""
+    unit_path = REPO_ROOT / "docker" / "systemd" / "tier0-workstation-sota-guard.service"
+    raw = unit_path.read_bytes()
+    assert b"\r\n" not in raw, "systemd unit must use LF line endings"
+    text = raw.decode("utf-8")
+    assert "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847" in text
+    for live_port in ("4001", "7496", "8798", "8796"):
+        assert live_port in text
+    assert 'd="/tmp/pytest-of-$$(id -un)"' in text
+    assert 'readlink -f "$$d/pytest-current"' in text
+    assert 'pgrep -u "$$(id -u)" -f "bin/[p]ytest|-m [p]ytest"' in text
+    assert 'chmod -R u+w "$$p"' in text
+    assert 'name "garbage-*"' in text
+    assert 'name "pytest-[0-9]*"' in text

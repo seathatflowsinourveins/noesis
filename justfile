@@ -278,6 +278,16 @@ docker-build:
 docker-ps:
     {{ if os_family() == "windows" { "wsl.exe -d Noesis-SOTA -- bash -lc 'TIER0_REPO_ROOT=/mnt/z/noesis TIER0_DATA_ROOT=/mnt/z/sota-data TIER0_STATE_ROOT=\"$HOME/tier0-sota-state\" docker compose -p docker -f /mnt/z/noesis/docker/compose.sota.yml ps'" } else { "docker compose -p docker -f docker/compose.sota.yml ps" } }}
 
+# Validate Docker Compose manifests cleanly (ADR-0032 container proof)
+compose-config:
+    docker compose -f docker/compose.sota.yml config -q
+    docker compose -f docker/compose.ibkr-paper.yml config -q
+
+# Report upstream dependency drift (majors/caps hidden by lockfile-only) and Dagster upstream watch triggers
+upstream-watch:
+    {{uv_prefix}}uv tree --frozen --outdated --depth 1 --all-groups --no-progress
+    {{uv_run}} python -c "import json; from tier0_sota.definitions import _evaluate_upstream_watch_triggers; print(json.dumps(_evaluate_upstream_watch_triggers(), indent=2, sort_keys=True))"
+
 # Run read-only workstation & ecosystem preflight (writes workstation_preflight_resume_manifest.json)
 preflight *args:
     {{ if os_family() == "windows" { "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/preflight_resume.ps1" } else { "bash scripts/preflight_resume.sh" } }} {{args}}
