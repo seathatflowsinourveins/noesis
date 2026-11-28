@@ -1,6 +1,6 @@
 # Isolated network_mode:none AIDE ML sandbox (Python 3.13 aligned with Dockerfile.research).
 # Kept outside root pyproject.toml/uv.lock because aideml==0.2.2 transitively depends on streamlit.
-FROM python:3.13.3-slim-bookworm
+FROM python:3.13.17-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.10 /uv /usr/local/bin/uv
 
