@@ -1055,9 +1055,9 @@
           "status": "admitted_on_demand_companion",
           "zero_cdp": true,
           "pypi": "pinescript-mcp==0.7.7",
-          "invocation": "uvx pinescript-mcp",
+          "invocation": "uvx --from pinescript-mcp==0.7.7 pinescript-mcp",
           "role": "zero_cdp_local_pine_v6_companion_mcp",
-          "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"
+          "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx --from pinescript-mcp==0.7.7 pinescript-mcp (outside pyproject.toml and all 6/6 repo 4-stdio-MCP parity configs)"
         },
         {
           "slug": "TradersPost/pine-mcp",
@@ -1552,8 +1552,8 @@
         "companion_mcp": "QuantConnect/mcp-server (Apache-2.0, 60+ cloud MCP tools)",
         "spdx": "Apache-2.0",
         "decision": "rejected_l3_overlap",
-        "reason": "Strong turnkey cloud multi-asset data & QuantConnect/mcp-server workflow, but C#/.NET/pythonnet runtime split & commercial cloud credit model lose to local-first Python 3.13 + Rust NautilusTrader v2 + hftbacktest + Disk-Z prewall-lake + local stdio MCPs (ADR-0016)",
-        "earned_reconsideration_trigger": "Only if noesis expands into non-US-equity multi-asset options/futures/FX/crypto requiring vendor-hosted point-in-time institutional cloud data feeds unobtainable locally"
+        "reason": "Strong turnkey cloud US equities/options data & QuantConnect/mcp-server workflow, but C#/.NET/pythonnet runtime split & commercial cloud credit model lose to local-first Python 3.13 + Rust NautilusTrader v2 + hftbacktest + Disk-Z prewall-lake + local stdio MCPs (ADR-0016)",
+        "earned_reconsideration_trigger": "Never replace sovereign local NautilusTrader v2 at L3; only attach paid off-repo QuantConnect Cloud Remote MCP strictly as an additive US Equities & US Equity Options corporate-actions/exercise research sidecar (Hybrid Dual-Stratum Option C, ADR-0016) when multi-year US Equity Options research activates, independently re-falsifying every candidate locally before alpaca-py MLEG or IBKR execution."
       },
       {
         "repo": "barter-rs/barter-rs",
@@ -1635,36 +1635,43 @@
     "excluded_backtest_dashboard_wrappers": [
       {
         "repo": "Black101081/Nautilus-Web-Interface",
+        "spdx": "MIT",
         "decision": "excluded_redundant_custom_ui",
         "reason": "Community FastAPI+React admin UI coupling web server state to NautilusTrader and duplicating official FINOS/OpenBB/Grafana/MLflow"
       },
       {
         "repo": "openzim/nautilus-webui",
+        "spdx": "GPL-3.0",
         "decision": "excluded_redundant_custom_ui",
         "reason": "SaaS-style community wrapper duplicating official L6/L10 upstream platforms"
       },
       {
         "repo": "mirkovicdev/HFTENGINE",
+        "spdx": "NOASSERTION (Custom/Other)",
         "decision": "excluded_tui_overlap",
         "reason": "Crypto Binance-focused VGA TUI for hftbacktest; defer L2/L3 visual replay to rerun-io/rerun (MIT/Apache-2.0)"
       },
       {
         "repo": "neosun100/lean-allinone",
+        "spdx": "NONE (Unlicensed)",
         "decision": "excluded_l3_ui_overlap",
         "reason": "Third-party Lean Docker/WebUI bundle for rejected L3 engine"
       },
       {
         "repo": "aarjaneiro/QtLean",
+        "spdx": "GPL-3.0",
         "decision": "excluded_desktop_ui_overlap",
         "reason": "Qt desktop GUI for rejected L3 engine"
       },
       {
         "repo": "ml4t/diagnostic[dashboard]",
+        "spdx": "MIT",
         "decision": "excluded_streamlit_extra",
         "reason": "Optional extra pulls banned streamlit; use ml4t-diagnostic pure Plotly HTML tearsheet API served via Caddy :8793"
       },
       {
         "repo": "ranaroussi/quantstats",
+        "spdx": "Apache-2.0",
         "decision": "banned_l5",
         "reason": "Pulls banned yfinance and omits CPCV/DSR/PBO/SPA/HAC multiple-testing falsification"
       },
@@ -1856,6 +1863,53 @@
       ],
       "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, optionally attach paid off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) and/or ORATS ($199-$899/mo smoothed IV surfaces) strictly as an additive off-repo cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
     },
+    "paid_additive_us_options_sidecar": {
+      "asset_scope": "US Equities, Stocks, and US Equity Options ONLY",
+      "architecture": "Hybrid Dual-Stratum Option C (ADR-0016)",
+      "local_sovereign_core": [
+        "nautechsystems/nautilus_trader==2.0.0rc9",
+        "nkaz001/hftbacktest==2.4.4",
+        "alpacahq/alpaca-py==0.45.0",
+        "src/tier0_sota/risk.py",
+        "lballabio/QuantLib (earned_trigger BSD-3-Clause)"
+      ],
+      "local_refalsification_required_before_execution": true,
+      "paid_additive_stratum1_data_rails": [
+        {
+          "provider": "Databento OPRA / US Equities MBO-MBP10",
+          "client_repo": "databento/databento-python",
+          "spdx": "Apache-2.0",
+          "version": "0.91.0",
+          "official_mcp_repos": 0,
+          "role": "Stratum-1 paid additive market-data rail (NY4 colo MBO/MBP-10 & historical OPRA ticks, ~$0.04/GB); native NautilusTrader & hftbacktest adapters",
+          "disposition": "optional_paid_additive_stratum1_data_rail"
+        }
+      ],
+      "paid_additive_stratum2_off_repo_sidecars": [
+        {
+          "provider": "QuantConnect Cloud Remote MCP",
+          "endpoint": "https://www.quantconnect.com/api/v2/mcp",
+          "companion_stub_repo": "QuantConnect/mcp-server",
+          "spdx": "Apache-2.0 (2-file stub; hosted commercial cloud)",
+          "pricing_floor": "~$34/mo (Researcher $10/mo + Agent Node A1-1 $24/mo)",
+          "role": "Optional off-repo US Equity Options corporate-actions/exercise/assignment research lab (never replaces local NautilusTrader v2 L3 core)",
+          "disposition": "optional_paid_additive_off_repo_sidecar"
+        },
+        {
+          "provider": "ORATS",
+          "spdx": "Proprietary commercial REST/FTP options vol-surface feed",
+          "pricing_floor": "$199-$899/mo",
+          "role": "Optional off-repo paid smoothed IV surface, historical Greeks, and US Equity Options data sidecar (excluded as a core L3 execution engine; permitted strictly as a paid L4 data sidecar)",
+          "disposition": "optional_paid_additive_data_sidecar"
+        }
+      ],
+      "execution_guardrails": {
+        "paper_only": true,
+        "live_execution_enabled": false,
+        "replaces_nautilus_v2_l3_ssot": false,
+        "requires_local_6gate_falsification": true
+      }
+    },
     "root_license_audit_findings": [
       {
         "repo": "polakowo/vectorbt",
@@ -1953,7 +2007,7 @@
         "Option Omega (official backtest-only MCP + 1s IMSL SPX/SPY 0DTE; closed web-form backtester)",
         "NexusTrade (official OAuth MCP 100+ tools 60 rpm; retail rule engine lacking Rust queue/CPCV/Z3)",
         "Composer (REST API only; daily ETF/stock rebalancing)",
-        "Option Alpha, ORATS (best paid L4 vol-surface REST feed), OptionStrat/ONE, TradeStation/Wealth-Lab/Portfolio123/QuantRocket, TrendSpider/Trade Ideas/Surmount/QuantMage, FinChat/Koyfin/Perplexity Finance/Kavout/Danelfin/Magnifi"
+        "Option Alpha, OptionStrat/ONE, TradeStation/Wealth-Lab/Portfolio123/QuantRocket, TrendSpider/Trade Ideas/Surmount/QuantMage, FinChat/Koyfin/Perplexity Finance/Kavout/Danelfin/Magnifi (ORATS is classified under paid_additive_us_options_sidecar as an optional paid L4 smoothed-IV/Greeks REST data sidecar, excluded only as a core L3 execution engine)"
       ],
       "tier_3_official_broker_data_mcps": [
         "IBKR Official Public MCP (https://api.ibkr.com/v1/api/mcp-public)",
