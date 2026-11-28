@@ -1057,18 +1057,62 @@ def validate_clean_sota_harness(
     if banned_in_lock:
         raise ValueError(f"Banned/non-OSI packages present in uv.lock: {banned_in_lock}")
 
-    # Verify zero winner overlap with rejected_overlaps or forbidden_tokens
+    # Verify required L0..L10 layers exist with non-empty winners, then check ALL [layers.*] tables
+    layers_table = upstream_doc.get("layers")
+    if not isinstance(layers_table, dict):
+        raise ValueError("upstream-map.toml missing [layers] table")
+    for idx in range(11):
+        req_layer = f"L{idx}"
+        layer_val = layers_table.get(req_layer)
+        if not isinstance(layer_val, dict):
+            raise ValueError(f"upstream-map.toml missing required layer table [layers.{req_layer}]")
+        req_winners = layer_val.get("winners")
+        if not isinstance(req_winners, list) or not req_winners:
+            raise ValueError(
+                f"upstream-map.toml [layers.{req_layer}] must declare a non-empty winners list"
+            )
+
+    winner_to_layers: dict[str, list[str]] = {}
+    intra_layer_duplicate_winners: list[str] = []
     all_winners: set[str] = set()
     all_rejected: set[str] = set()
-    for idx in range(11):
-        layer = upstream_doc["layers"][f"L{idx}"]
-        for w in layer["winners"]:
+    for layer_name, layer in sorted(layers_table.items()):
+        if not isinstance(layer, dict):
+            raise ValueError(f"upstream-map.toml [layers.{layer_name}] must be a table")
+        seen_in_layer: set[str] = set()
+        layer_winners = layer.get("winners", [])
+        if not isinstance(layer_winners, list):
+            raise ValueError(f"upstream-map.toml [layers.{layer_name}].winners must be a list")
+        for w in layer_winners:
             norm_w = _normalize_pkg_token(str(w))
             if norm_w in forbidden_tokens or str(w).strip().lower() in forbidden_tokens:
-                raise ValueError(f"Layer L{idx} winner {w!r} violates banned/SPDX firewall")
+                raise ValueError(f"Layer {layer_name} winner {w!r} violates banned/SPDX firewall")
+            if norm_w in seen_in_layer:
+                intra_layer_duplicate_winners.append(f"{norm_w}:{layer_name}")
+            else:
+                seen_in_layer.add(norm_w)
             all_winners.add(norm_w)
-        for r in layer["rejected_overlaps"]:
+            layers_for_w = winner_to_layers.setdefault(norm_w, [])
+            if layer_name not in layers_for_w:
+                layers_for_w.append(layer_name)
+        for r in layer.get("rejected_overlaps", []):
             all_rejected.add(_normalize_pkg_token(str(r)))
+
+    intra_layer_duplicate_winners = sorted(set(intra_layer_duplicate_winners))
+    if intra_layer_duplicate_winners:
+        raise ValueError(
+            f"Intra-layer duplicate winners in upstream-map.toml: {intra_layer_duplicate_winners}"
+        )
+
+    cross_layer_duplicate_winners = sorted(
+        f"{token}:{','.join(layers)}"
+        for token, layers in winner_to_layers.items()
+        if len(layers) > 1
+    )
+    if cross_layer_duplicate_winners:
+        raise ValueError(
+            f"Cross-layer duplicate winners in upstream-map.toml: {cross_layer_duplicate_winners}"
+        )
 
     winner_rejected_overlap = sorted(all_winners & all_rejected)
     if winner_rejected_overlap:
@@ -1119,6 +1163,8 @@ def validate_clean_sota_harness(
         "ok": True,
         "zero_banned_in_uv_lock": True,
         "zero_winner_overlap_with_rejected": True,
+        "intra_layer_duplicate_winners": intra_layer_duplicate_winners,
+        "cross_layer_duplicate_winners": cross_layer_duplicate_winners,
         "zero_pre_commit_overlap": True,
         "spdx_firewall_count": len(up_fw),
         "src_files_mapped_ratio": f"{len(src_py_files) - len(unmapped_src)}/{len(src_py_files)}",
@@ -1189,6 +1235,9 @@ def _collect_repository_files(repo_root: Path) -> list[str]:
 def _check_zero_hooks(repo_root: Path) -> bool:
     if (repo_root / ".codex" / "hooks.json").exists():
         return False
+    omp_dir = repo_root / ".omp"
+    if omp_dir.is_dir() and any(omp_dir.glob("hooks*")):
+        return False
     for rel in (".claude/settings.json", ".gemini/settings.json"):
         p = repo_root / rel
         if p.is_file() and "hooks" in json.loads(p.read_text(encoding="utf-8")):
@@ -1196,12 +1245,15 @@ def _check_zero_hooks(repo_root: Path) -> bool:
     codex_cfg = repo_root / ".codex" / "config.toml"
     if codex_cfg.is_file():
         parsed = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
-        if bool(parsed.get("hooks")) or bool(parsed.get("features", {}).get("hooks")):
+        features = parsed.get("features")
+        if bool(parsed.get("hooks")) or (
+            isinstance(features, dict) and bool(features.get("hooks"))
+        ):
             return False
     opencode_cfg = repo_root / "opencode.json"
     if opencode_cfg.is_file():
         parsed_oc = json.loads(opencode_cfg.read_text(encoding="utf-8"))
-        if "hooks" in parsed_oc or parsed_oc.get("plugin"):
+        if isinstance(parsed_oc, dict) and ("hooks" in parsed_oc or parsed_oc.get("plugin")):
             return False
     return True
 
@@ -1405,6 +1457,7 @@ def build_manifest(
                 ".codex/config.toml",
                 ".gemini/settings.json",
                 "opencode.json",
+                ".omp/mcp.json",
             ],
             "mcp_lanes": mcp_lanes,
         },
@@ -1480,6 +1533,13 @@ def _normalize_mcp_server_entry(
     if not isinstance(spec, dict):
         raise ValueError(f"MCP server entry must be a mapping: type={type(spec).__name__}")
     spec_keys = f"keys={sorted(spec.keys())}"
+    if spec.get("enabled") is False:
+        raise ValueError(f"MCP server entry must not be disabled (enabled=false): {spec_keys}")
+    transport = spec.get("type")
+    if transport not in (None, "stdio", "local"):
+        raise ValueError(
+            f"MCP server entry must use stdio/local transport: {spec_keys} type={transport!r}"
+        )
     if is_opencode:
         cmd_list = spec.get("command")
         if not isinstance(cmd_list, list) or not cmd_list:
@@ -1501,14 +1561,51 @@ def _normalize_mcp_server_entry(
     return (cmd, args, env_items)
 
 
+_CLAUDE_GATEKEEPER_REQUIRED_DISALLOWED = frozenset(
+    {
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "Bash",
+        "Agent",
+        "mcp__nautilus-engine__stage_semi_auto_order_preset",
+        "mcp__xerj__xerj_memory_store",
+    }
+)
+_OMP_GATEKEEPER_PURE_INSPECTION_TOOLS = frozenset({"read", "find", "grep", "glob", "ast_grep"})
+
+
+def _parse_markdown_frontmatter(path: Path) -> dict[str, Any]:
+    """Parse YAML frontmatter strictly between leading `---` delimiters."""
+    text = path.read_text(encoding="utf-8")
+    match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", text, re.DOTALL)
+    if match is None:
+        raise ValueError(f"Missing YAML frontmatter delimiters in {path}")
+    parsed = yaml.safe_load(match.group(1))
+    if not isinstance(parsed, dict):
+        raise ValueError(f"YAML frontmatter must be a mapping in {path}")
+    return parsed
+
+
+def _parse_tool_list(raw: Any) -> list[str]:
+    """Normalize YAML list or comma-separated tool declaration to a list of tool names."""
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return []
+
+
 def _verify_mcp_config_parity(
     root_mcp: dict[str, Any],
     claude_cfg: dict[str, Any],
     codex_cfg: dict[str, Any],
     gemini_cfg: dict[str, Any],
     opencode_cfg: dict[str, Any],
+    omp_mcp: dict[str, Any],
 ) -> dict[str, list[str]]:
-    """Verify exact (command, args, env) parity across all 5 runtime MCP configs."""
+    """Verify exact (command, args, env) parity across all 6 runtime MCP configs."""
     canonical_raw = root_mcp.get("mcpServers") or {}
     canonical = {name: _normalize_mcp_server_entry(spec) for name, spec in canonical_raw.items()}
     raw_by_config: list[tuple[str, dict[str, Any], bool]] = [
@@ -1517,6 +1614,7 @@ def _verify_mcp_config_parity(
         (".codex/config.toml", codex_cfg.get("mcp_servers") or {}, False),
         (".gemini/settings.json", gemini_cfg.get("mcpServers") or {}, False),
         ("opencode.json", opencode_cfg.get("mcp") or {}, True),
+        (".omp/mcp.json", omp_mcp.get("mcpServers") or {}, False),
     ]
     parity_names: dict[str, list[str]] = {}
     for cfg_name, servers_map, is_opencode in raw_by_config:
@@ -1553,6 +1651,173 @@ def _verify_mcp_config_parity(
     return parity_names
 
 
+def _verify_runtime_worker_parity(
+    repo_root: Path,
+    canonical_roles: list[str],
+    opencode_cfg: dict[str, Any],
+    *,
+    forbidden_live_hosts: list[str] | None = None,
+) -> dict[str, Any]:
+    """Verify 7/7 worker role parity and paper-gatekeeper read-only across 4 runtimes."""
+    expected_set = set(canonical_roles)
+    if len(canonical_roles) != 7 or "paper-gatekeeper" not in expected_set:
+        raise ValueError(
+            f"Expected 7 canonical agent roles incl. paper-gatekeeper: {canonical_roles}"
+        )
+
+    if forbidden_live_hosts is None:
+        upstream_doc = tomllib.loads((repo_root / "upstream-map.toml").read_text(encoding="utf-8"))
+        live_hosts = [str(h) for h in upstream_doc.get("rules", {}).get("forbidden_live_hosts", [])]
+    else:
+        live_hosts = [str(h) for h in forbidden_live_hosts]
+
+    # 1. Claude Code (.claude/agents/*.md) — strict YAML frontmatter enforcement
+    claude_dir = repo_root / ".claude" / "agents"
+    claude_files = sorted(claude_dir.glob("*.md"))
+    claude_roles = sorted(p.stem for p in claude_files)
+    if claude_roles != canonical_roles:
+        raise ValueError(f"Claude agent role drift: {claude_roles} != {canonical_roles}")
+    claude_gk_fm = _parse_markdown_frontmatter(claude_dir / "paper-gatekeeper.md")
+    claude_disallowed = set(_parse_tool_list(claude_gk_fm.get("disallowedTools")))
+    claude_allowed = set(_parse_tool_list(claude_gk_fm.get("tools")))
+    missing_disallowed = sorted(_CLAUDE_GATEKEEPER_REQUIRED_DISALLOWED - claude_disallowed)
+    leaked_allowed = sorted(_CLAUDE_GATEKEEPER_REQUIRED_DISALLOWED & claude_allowed)
+    if claude_gk_fm.get("permissionMode") != "plan" or missing_disallowed or leaked_allowed:
+        raise ValueError(
+            "Claude paper-gatekeeper.md frontmatter read-only violation: "
+            f"permissionMode={claude_gk_fm.get('permissionMode')!r} "
+            f"missing_disallowed={missing_disallowed} leaked_allowed={leaked_allowed}"
+        )
+
+    # 2. Codex (.codex/agents/*.toml)
+    codex_dir = repo_root / ".codex" / "agents"
+    if not codex_dir.is_dir():
+        raise ValueError("Missing .codex/agents directory for Codex worker parity")
+    codex_files = sorted(codex_dir.glob("*.toml"))
+    codex_roles = sorted(p.stem for p in codex_files)
+    if codex_roles != canonical_roles:
+        raise ValueError(f"Codex agent role drift: {codex_roles} != {canonical_roles}")
+    codex_gk_ro = False
+    for path in codex_files:
+        raw_text = path.read_text(encoding="utf-8")
+        doc = tomllib.loads(raw_text)
+        if doc.get("name") != path.stem:
+            raise ValueError(f"Codex agent name mismatch in {path.name}: {doc.get('name')!r}")
+        features = doc.get("features")
+        if bool(doc.get("hooks")) or (isinstance(features, dict) and bool(features.get("hooks"))):
+            raise ValueError(f"Forbidden hooks section in Codex agent {path.name}")
+        for host in live_hosts:
+            if host and host in raw_text:
+                raise ValueError(f"Forbidden live endpoint reference in Codex agent {path.name}")
+        if path.stem == "paper-gatekeeper":
+            mcp_srv = doc.get("mcp_servers")
+            nautilus_dis = (
+                mcp_srv.get("nautilus-engine", {}).get("disabled_tools", [])
+                if isinstance(mcp_srv, dict) and isinstance(mcp_srv.get("nautilus-engine"), dict)
+                else []
+            )
+            xerj_dis = (
+                mcp_srv.get("xerj", {}).get("disabled_tools", [])
+                if isinstance(mcp_srv, dict) and isinstance(mcp_srv.get("xerj"), dict)
+                else []
+            )
+            codex_gk_ro = (
+                doc.get("sandbox_mode") == "read-only"
+                and "stage_semi_auto_order_preset" in nautilus_dis
+                and "xerj_memory_store" in xerj_dis
+            )
+    if not codex_gk_ro:
+        raise ValueError(
+            "Codex paper-gatekeeper.toml must set sandbox_mode='read-only' and disable "
+            "nautilus-engine/xerj mutator tools"
+        )
+
+    # 3. OpenCode (opencode.json -> "agent")
+    oc_agents = opencode_cfg.get("agent")
+    if not isinstance(oc_agents, dict):
+        raise ValueError("opencode.json missing canonical 'agent' object")
+    oc_roles = sorted(str(k) for k in oc_agents)
+    if oc_roles != canonical_roles:
+        raise ValueError(f"OpenCode agent role drift: {oc_roles} != {canonical_roles}")
+    oc_gk = oc_agents.get("paper-gatekeeper")
+    oc_gk_perm = oc_gk.get("permission") if isinstance(oc_gk, dict) else None
+    oc_gk_ro = (
+        isinstance(oc_gk_perm, dict)
+        and oc_gk_perm.get("edit") == "deny"
+        and oc_gk_perm.get("write") != "allow"
+        and (oc_gk_perm.get("shell") == "deny" or oc_gk_perm.get("bash") == "deny")
+        and oc_gk_perm.get("shell") != "allow"
+        and oc_gk_perm.get("bash") != "allow"
+        and oc_gk_perm.get("subagent") == "deny"
+        and oc_gk_perm.get("nautilus-engine_stage_semi_auto_order_preset") == "deny"
+        and oc_gk_perm.get("xerj_xerj_memory_store") == "deny"
+    )
+    if not oc_gk_ro:
+        raise ValueError(
+            "OpenCode paper-gatekeeper must explicitly deny edit, shell/bash, subagent, "
+            "and nautilus-engine/xerj MCP mutator tools (and never allow bash/shell/write)"
+        )
+
+    # 4. OMP / oh-my-pi (.omp/agents/*.md) — pure inspection read-only allowlist enforcement
+    omp_dir = repo_root / ".omp" / "agents"
+    if not omp_dir.is_dir():
+        raise ValueError("Missing .omp/agents directory for OMP worker parity")
+    omp_files = sorted(omp_dir.glob("*.md"))
+    omp_roles = sorted(p.stem for p in omp_files)
+    if omp_roles != canonical_roles:
+        raise ValueError(f"OMP agent role drift: {omp_roles} != {canonical_roles}")
+    omp_gk_tools: list[str] = []
+    for path in omp_files:
+        raw_text = path.read_text(encoding="utf-8")
+        fm = _parse_markdown_frontmatter(path)
+        if fm.get("name") != path.stem:
+            raise ValueError(f"OMP agent name mismatch in {path.name}: {fm.get('name')!r}")
+        if not str(fm.get("description") or "").strip():
+            raise ValueError(f"OMP agent missing description in {path.name}")
+        if bool(fm.get("hooks")):
+            raise ValueError(f"Forbidden hooks key in OMP agent {path.name}")
+        for host in live_hosts:
+            if host and host in raw_text:
+                raise ValueError(f"Forbidden live endpoint reference in OMP agent {path.name}")
+        spawns = fm.get("spawns")
+        if path.stem != "tier0-grand-central" and spawns:
+            raise ValueError(f"Non-orchestrator OMP agent {path.name} must not declare spawns")
+        if path.stem == "paper-gatekeeper":
+            omp_gk_tools = _parse_tool_list(fm.get("tools"))
+            non_ro_tools = sorted(set(omp_gk_tools) - _OMP_GATEKEEPER_PURE_INSPECTION_TOOLS)
+            if not omp_gk_tools or non_ro_tools:
+                raise ValueError(
+                    "OMP paper-gatekeeper.md tools must be a non-empty pure inspection subset of "
+                    f"READ_ONLY_TOOL_NAMES: tools={omp_gk_tools} non_ro={non_ro_tools}"
+                )
+
+    total = len(canonical_roles)
+    return {
+        "canonical_roles": canonical_roles,
+        "claude_agents": f"{len(claude_roles)}/{total}",
+        "codex_agents": f"{len(codex_roles)}/{total}",
+        "opencode_agents": f"{len(oc_roles)}/{total}",
+        "omp_agents": f"{len(omp_roles)}/{total}",
+        "paper_gatekeeper_read_only_enforced": True,
+        "paper_gatekeeper_enforcement": {
+            "claude": (
+                "permissionMode=plan + frontmatter disallowedTools(Write,Edit,MultiEdit,"
+                "NotebookEdit,Bash,Agent,mcp__nautilus-engine__stage_semi_auto_order_preset,"
+                "mcp__xerj__xerj_memory_store)"
+            ),
+            "codex": ("sandbox_mode=read-only + mcp_servers.{nautilus-engine,xerj}.disabled_tools"),
+            "opencode": (
+                "permission.{edit,shell,subagent,"
+                "nautilus-engine_stage_semi_auto_order_preset,xerj_xerj_memory_store}=deny"
+            ),
+            "omp": (
+                f"isReadOnlyAgent=true (tools={','.join(omp_gk_tools)} subset of "
+                "READ_ONLY_TOOL_NAMES; zero spawns/edit/write/bash/lsp/task)"
+            ),
+        },
+    }
+
+
 def build_llm_harness_manifest(
     repo_root: Path = REPO_ROOT,
     *,
@@ -1570,6 +1835,7 @@ def build_llm_harness_manifest(
     claude_cfg = json.loads((repo_root / ".claude" / "settings.json").read_text(encoding="utf-8"))
     gemini_cfg = json.loads((repo_root / ".gemini" / "settings.json").read_text(encoding="utf-8"))
     opencode_cfg = json.loads((repo_root / "opencode.json").read_text(encoding="utf-8"))
+    omp_mcp = json.loads((repo_root / ".omp" / "mcp.json").read_text(encoding="utf-8"))
     codex_cfg = tomllib.loads((repo_root / ".codex" / "config.toml").read_text(encoding="utf-8"))
     phil_doc = shared.setdefault(
         "phil_doc", json.loads(PHILOSOPHY_MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -1746,7 +2012,13 @@ def build_llm_harness_manifest(
 
     all_portals = [*HOSTED_PORTALS, *COMPANION_PORTALS]
     mcp_configs = _verify_mcp_config_parity(
-        root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg
+        root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg, omp_mcp
+    )
+    runtime_worker_parity = _verify_runtime_worker_parity(
+        repo_root,
+        agent_roles,
+        opencode_cfg,
+        forbidden_live_hosts=list(upstream_cfg.get("rules", {}).get("forbidden_live_hosts", [])),
     )
 
     return {
@@ -1798,6 +2070,7 @@ def build_llm_harness_manifest(
         },
         "agent_roles": agent_roles,
         "agent_skills": agent_skills,
+        "runtime_worker_parity": runtime_worker_parity,
         "compounding_lanes": lane_specs,
         "mcp_servers": {
             "transport": "native-uv-stdio",

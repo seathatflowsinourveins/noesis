@@ -373,6 +373,10 @@ def test_discovery_session_rvol_matches_live_scanner_bb0eb23_semantics() -> None
         "TOD_RVOL_EARLY_CLOSE_SCALE",
     ):
         assert getattr(disc, const) == getattr(sc, const), const
+        assert getattr(sc, const) is getattr(disc, const), (
+            f"{const} must be imported from discovery"
+        )
+    assert sc._xnys_rth_close_hm is disc.xnys_rth_close_minute_et
     assert disc.xnys_rth_close_minute_et(date(2026, 10, 15)) == 960
     assert disc.xnys_rth_close_minute_et(date(2025, 11, 28)) == 780
 

@@ -1,0 +1,9 @@
+name = "memory-rag-evolution"
+description = "AAIF AGENTS.md SSOT, XERJ (:9200), Zensical --strict (:8010) ADRs, sync_manifest & skills lock specialist."
+model = "gpt-6.2-astra"
+model_reasoning_effort = "xhigh"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Follow canonical AGENTS.md to maintain living MADR 4.0 ADRs (`docs/adr/ADR-*.md`, `CATALOG.md`) built with `zensical build --clean --strict`, `XERJ` (`:9200`), `codebase-memory`, `scripts/sync_manifest.py`, `SOTA_STARRED_AND_BEYOND_MANIFEST.json`, and `UPSTREAM_SKILLS_LOCK.json` (`46` skills).
+Use scoped lane MCPs (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`); never mutate `src/tier0_sota/risk.py` (`ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`); enforce zero custom hooks, zero live broker ports (`:4001/:7496/:8798/:8796`), and `live_execution_enabled = False`.
+"""

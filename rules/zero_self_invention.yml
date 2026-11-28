@@ -177,3 +177,16 @@ severity: error
 message: Polling while-True/while-1 sleep loops are prohibited inside src/tier0_sota/; use event-driven upstreams.
 rule: { all: [{ kind: while_statement }, { has: { field: condition, regex: '^\(?\s*(?:True|1|1\s*==\s*1|True\s+is\s+True)\s*\)?$' } }, { has: { kind: call, regex: '(?:^|\.)sleep\s*\(', stopBy: end } }] }
 files: [src/tier0_sota/**/*.py]
+---
+id: no-handbuilt-plotly-chart
+language: python
+severity: error
+message: Hand-built Plotly charts or flat figure stitching prohibited; use unmodified native upstream interactive dashboards (Nautilus create_tearsheet, ml4t-diagnostic generate_backtest_tearsheet / FeatureImportanceDashboard, FINOS/OpenBB/Grafana).
+rule:
+  any:
+    - { kind: import_statement, regex: '\bplotly\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:plotly\b|ml4t\.diagnostic\.visualization\.core\s+import\s+.*\bgo\b|ml4t\.diagnostic\.visualization\.report_generation\s+import\s+.*\bcombine_figures_to_html\b)' }
+    - { pattern: go.Figure($$$) }
+    - { pattern: make_subplots($$$) }
+    - { pattern: combine_figures_to_html($$$) }
+files: [src/**/*.py, scripts/**/*.py]
