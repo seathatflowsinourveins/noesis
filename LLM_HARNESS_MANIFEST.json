@@ -207,7 +207,9 @@
       "mcp_servers": [
         "codebase-memory",
         "edgartools",
+        "mlflow",
         "nautilus-engine",
+        "optuna",
         "xerj"
       ],
       "agent_roles": [

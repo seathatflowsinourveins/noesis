@@ -7,8 +7,12 @@ checks here in the pull request that makes them pass.
 from __future__ import annotations
 
 import ast
+import json
 import pathlib
+import shutil
+import subprocess
 
+import pytest
 import yaml
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -184,3 +188,54 @@ def test_reviewer_roles_are_read_only_by_tool_allowlist() -> None:
         assert not outside, f"{role}: tools outside the read-only allowlist {outside}"
         missing = sorted(required_disallowed - set(_tool_list(meta.get("disallowedTools"))))
         assert not missing, f"{role}: disallowedTools omits {missing}"
+
+
+@pytest.mark.skipif(shutil.which("opencode") is None, reason="opencode CLI not installed")
+def test_opencode_debug_config_compiles_paper_gatekeeper_deny_rules() -> None:
+    """Verify live OpenCode translates agent.paper-gatekeeper.permission into 5 V2 deny rules."""
+    opencode_bin = shutil.which("opencode")
+    assert opencode_bin is not None
+    proc = subprocess.run(  # noqa: S603
+        [opencode_bin, "debug", "config"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    raw = json.loads(proc.stdout)
+    repo_cfg_path = (REPO_ROOT / "opencode.json").resolve()
+    info: dict[str, object] = {}
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict) or entry.get("type") != "document":
+                continue
+            entry_path = entry.get("path")
+            if isinstance(entry_path, str) and pathlib.Path(entry_path).resolve() == repo_cfg_path:
+                candidate = entry.get("info")
+                if isinstance(candidate, dict):
+                    info = candidate
+                    break
+    elif isinstance(raw, dict):
+        info = raw
+    agents = info.get("agents")
+    assert isinstance(agents, dict), f"Missing compiled agents map in opencode debug config: {raw}"
+    gk = agents.get("paper-gatekeeper")
+    assert isinstance(gk, dict), "Missing compiled paper-gatekeeper agent in opencode debug config"
+    perms = gk.get("permissions")
+    assert isinstance(perms, list), "Missing compiled V2 permissions list for paper-gatekeeper"
+    denied_actions = {
+        str(rule.get("action"))
+        for rule in perms
+        if isinstance(rule, dict) and rule.get("effect") == "deny"
+    }
+    expected_denies = {
+        "edit",
+        "shell",
+        "subagent",
+        "nautilus-engine_stage_semi_auto_order_preset",
+        "xerj_xerj_memory_store",
+    }
+    assert expected_denies.issubset(denied_actions), (
+        f"OpenCode paper-gatekeeper missing deny rules: {sorted(expected_denies - denied_actions)}"
+    )

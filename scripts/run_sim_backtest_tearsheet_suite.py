@@ -585,6 +585,7 @@ def run_empirical_backtest_from_catalog(
             win_rate = round(wins / len(closed_positions), 6)
 
         # Emit unmodified official NautilusTrader v2 dark tearsheet with SPY benchmark overlay.
+        bars_with_fills_by_symbol: dict[str, dict[str, Any]] = {}
         if tearsheet_paths:
             primary_ts = tearsheet_paths[0]
             primary_ts.parent.mkdir(parents=True, exist_ok=True)
@@ -623,6 +624,29 @@ def run_empirical_backtest_from_catalog(
                         "theme": "nautilus_dark",
                     }
                 )
+            for sym in sorted(parsed_bar_types):
+                sym_bwf_path = primary_ts.parent / f"nautilus_prewall_bars_with_fills_{sym}.html"
+                create_bars_with_fills(
+                    engine,
+                    bar_type=parsed_bar_types[sym],
+                    title=(
+                        f"NautilusTrader v2 Native Bars & Execution Fills — {sym} "
+                        f"({catalog_meta['first_bar_utc'][:10]} to "
+                        f"{catalog_meta['last_bar_utc'][:10]})"
+                    ),
+                    theme="nautilus_dark",
+                    output_path=str(sym_bwf_path),
+                )
+                sym_receipt = {
+                    "path": str(sym_bwf_path),
+                    "symbol": sym,
+                    "size_bytes": sym_bwf_path.stat().st_size,
+                    "sha256": _sha256_file(sym_bwf_path),
+                    "generator": ("nautilus_trader.analysis.tearsheet.create_bars_with_fills"),
+                    "theme": "nautilus_dark",
+                }
+                tearsheet_receipts.append(sym_receipt)
+                bars_with_fills_by_symbol[sym] = sym_receipt
             if strategies:
                 top_sym = max(
                     strategies,
@@ -631,19 +655,10 @@ def run_empirical_backtest_from_catalog(
                         strategies[s].signals_received,
                     ),
                 )
-                if top_sym in parsed_bar_types:
+                if top_sym in bars_with_fills_by_symbol:
                     bwf_path = primary_ts.parent / "nautilus_prewall_bars_with_fills.html"
-                    create_bars_with_fills(
-                        engine,
-                        bar_type=parsed_bar_types[top_sym],
-                        title=(
-                            f"NautilusTrader v2 Native Bars & Execution Fills — {top_sym} "
-                            f"({catalog_meta['first_bar_utc'][:10]} to "
-                            f"{catalog_meta['last_bar_utc'][:10]})"
-                        ),
-                        theme="nautilus_dark",
-                        output_path=str(bwf_path),
-                    )
+                    top_sym_path = Path(str(bars_with_fills_by_symbol[top_sym]["path"]))
+                    _copy_atomic(top_sym_path, bwf_path)
                     tearsheet_receipts.append(
                         {
                             "path": str(bwf_path),
@@ -705,6 +720,7 @@ def run_empirical_backtest_from_catalog(
             "stats_pnls_usd": _sanitize_json_numbers(usd_pnls),
             "per_strategy": per_strategy,
             "tearsheets": tearsheet_receipts,
+            "bars_with_fills_by_symbol": bars_with_fills_by_symbol,
             "elapsed_secs": round(time.monotonic() - t0, 2),
         }
     finally:
