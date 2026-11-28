@@ -4,7 +4,7 @@
 
 # Official upstream Caddy file server (:8793) for the manifests tree: the engine's create_tearsheet
 # pages, the interactive ml4t-diagnostic/skfolio report pages, Allure, and data files.
-http://127.0.0.1:8793, http://localhost:8793 {
+http://127.0.0.1:8793, http://localhost:8793, http://{$TIER0_TAILSCALE_HOST:localhost}:8793 {
 	bind 127.0.0.1
 	root * /mnt/z/sota-data/manifests
 	file_server browse

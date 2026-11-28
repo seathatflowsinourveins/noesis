@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 219,
+    "repository_files_count": 224,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -172,9 +172,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 30,
+    "total_adrs": 31,
     "counts_by_status": {
-      "accepted": 26,
+      "accepted": 27,
       "superseded": 4
     },
     "supersession_edges": [
@@ -213,7 +213,8 @@
         "ADR-0025",
         "ADR-0026",
         "ADR-0032",
-        "ADR-0033"
+        "ADR-0033",
+        "ADR-0034"
       ],
       "L1": [
         "ADR-0001",
@@ -233,7 +234,8 @@
         "ADR-0017",
         "ADR-0021",
         "ADR-0027",
-        "ADR-0028"
+        "ADR-0028",
+        "ADR-0034"
       ],
       "L11": [
         "ADR-0001",
@@ -329,7 +331,8 @@
         "ADR-0025",
         "ADR-0026",
         "ADR-0027",
-        "ADR-0028"
+        "ADR-0028",
+        "ADR-0034"
       ],
       "L7": [
         "ADR-0001",
@@ -365,12 +368,13 @@
         "ADR-0026",
         "ADR-0027",
         "ADR-0032",
-        "ADR-0033"
+        "ADR-0033",
+        "ADR-0034"
       ]
     },
-    "fitness_bound_accepted_ratio": "26/26",
+    "fitness_bound_accepted_ratio": "27/27",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "c7d495e9d2fd71871e2863f6627984a0a5380fa2273226f6433bcf1befbeb6da"
+    "corpus_sha256": "446384387221b6b5012f269f999a5acacc2182a66d3d497be3c97d28f3c6c563"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -639,7 +643,8 @@
         "docs/adr/ADR-0027.md",
         "docs/adr/ADR-0028.md",
         "docs/adr/ADR-0032.md",
-        "docs/adr/ADR-0033.md"
+        "docs/adr/ADR-0033.md",
+        "docs/adr/ADR-0034.md"
       ]
     },
     "L7": {
@@ -982,6 +987,7 @@
     "docs/adr/ADR-0028.md",
     "docs/adr/ADR-0032.md",
     "docs/adr/ADR-0033.md",
+    "docs/adr/ADR-0034.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
@@ -1019,6 +1025,9 @@
     "scripts/paper_farm_loop_hidden.pyw",
     "scripts/preflight_resume.ps1",
     "scripts/preflight_resume.sh",
+    "scripts/remote/noesis_remote_doctor.sh",
+    "scripts/remote/setup_noesis_windows_tailscale_serve.ps1",
+    "scripts/remote/setup_noesis_wsl_remote_host.sh",
     "scripts/run_compounding_reflection.py",
     "scripts/run_early_mover_compounding.py",
     "scripts/run_h109_prewall_study.py",
@@ -1056,6 +1065,7 @@
     "tests/test_ast_grep_no_handbuilt_plotly_chart.py",
     "tests/test_core_engine.py",
     "tests/test_definitions.py",
+    "tests/test_dual_machine_remote.py",
     "tests/test_early_mover_compounding.py",
     "tests/test_extreme_mover_calibration.py",
     "tests/test_formal_and_evals.py",

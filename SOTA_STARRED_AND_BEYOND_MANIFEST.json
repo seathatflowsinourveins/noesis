@@ -2127,7 +2127,7 @@
     "coverage_metrics": {
       "layers_saturated": "16/16 (L0-L15)",
       "compounding_lanes_saturated": "4/4 (sim-backtest, paper, half-auto-tv, live)",
-      "accepted_adrs_verified_2026_11_28": "26/26 (100%)",
+      "accepted_adrs_verified_2026_11_28": "27/27 (100%)",
       "frontier_candidates_spdx_backfilled": "36 backfilled -> 75/75 (0 missing)",
       "spdx_license_firewall_preserved_exact_7": true,
       "supported_runtimes_parity": "8/8 (Codex, Claude Code, Gemini CLI, OpenCode, Antigravity, Orca, oh-my-pi, pi)",
