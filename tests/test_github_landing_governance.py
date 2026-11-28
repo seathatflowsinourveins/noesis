@@ -439,3 +439,32 @@ def test_zizmor_audits_the_repository_root() -> None:
     assert online["version"] == required["version"]
     justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
     assert re.search(r"(?m)^\s+zizmor --offline --persona=pedantic \.\s*$", justfile)
+
+
+def test_trivy_scanners_match_between_ci_and_just() -> None:
+    jobs = _load_workflows()["security.yml"]["jobs"]
+
+    def trivy_inputs(job_id: str) -> list[dict[str, Any]]:
+        return [
+            dict(s["with"])
+            for s in jobs[job_id]["steps"]
+            if str(s.get("uses", "")).startswith("aquasecurity/trivy-action@")
+        ]
+
+    # The required scan names its scanners: an empty input would silently follow Trivy's defaults.
+    (required,) = trivy_inputs("trivy")
+    assert required["scanners"] == "vuln,secret"
+    ci_scanners = set(str(required["scanners"]).split(","))
+    for license_scan in trivy_inputs("trivy-license-audit"):
+        assert license_scan["scanners"] == "license"
+    justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?m)^trivy:\n\s+trivy fs --scanners (\S+) --severity (\S+)"
+        r" --exit-code 1 --skip-dirs (\S+) \.$",
+        justfile,
+    )
+    assert match is not None
+    # `just trivy` runs what the required check runs, plus misconfig, which only runs locally.
+    assert set(match[1].split(",")) == ci_scanners | {"misconfig"}
+    assert match[2] == required["severity"]
+    assert match[3] == required["skip-dirs"]
