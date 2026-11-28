@@ -283,6 +283,179 @@ compose-config:
     docker compose -f docker/compose.sota.yml config -q
     docker compose -f docker/compose.ibkr-paper.yml config -q
 
+# Fail closed if uv.lock downgrades any package relative to base ref (ADR-0032 Python proof)
+[unix]
+lock-proof base="origin/main":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{uv_run}} python - "{{base}}" <<'PYEOF'
+    import json
+    import pathlib
+    import shutil
+    import subprocess
+    import sys
+    import tomllib
+    from packaging.version import Version
+
+    base = sys.argv[1]
+    git = shutil.which("git")
+    if not git:
+        sys.exit("lock-proof FAIL: git not found on PATH")
+    cwd = pathlib.Path.cwd().as_posix()
+    proc = subprocess.run(
+        [git, "-c", f"safe.directory={cwd}", "show", f"{base}:uv.lock"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        sys.exit(f"lock-proof FAIL: cannot read {base}:uv.lock ({proc.stderr.strip()})")
+    head_path = pathlib.Path("uv.lock")
+    if not head_path.is_file():
+        sys.exit("lock-proof FAIL: missing uv.lock in working tree")
+
+
+    def _load_versions(raw: str, label: str) -> dict[str, list[Version]]:
+        doc = tomllib.loads(raw)
+        pkgs = doc.get("package")
+        if not isinstance(pkgs, list) or not pkgs:
+            sys.exit(f"lock-proof FAIL: {label} uv.lock has no [[package]] entries")
+        versions: dict[str, list[Version]] = {}
+        for pkg in pkgs:
+            name = str(pkg["name"]).lower()
+            versions.setdefault(name, []).append(Version(str(pkg["version"])))
+        return {name: sorted(vers) for name, vers in versions.items()}
+
+
+    old = _load_versions(proc.stdout, base)
+    new = _load_versions(head_path.read_text(encoding="utf-8"), "head")
+    downgraded = {
+        name: {"base": [str(v) for v in old[name]], "head": [str(v) for v in new[name]]}
+        for name in sorted(old.keys() & new.keys())
+        if new[name][0] < old[name][0] or new[name][-1] < old[name][-1]
+    }
+    upgraded = sorted(
+        name
+        for name in (old.keys() & new.keys())
+        if name not in downgraded and new[name] != old[name]
+    )
+    added = sorted(new.keys() - old.keys())
+    removed = sorted(old.keys() - new.keys())
+    summary = {
+        "base": base,
+        "packages": len(new),
+        "upgraded": len(upgraded),
+        "downgraded": downgraded,
+        "added": added,
+        "removed": removed,
+    }
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    if downgraded:
+        sys.exit(f"LOCK_PROOF_FAIL downgraded={len(downgraded)}")
+    print(
+        f"LOCK_PROOF_OK=1 base={base} packages={len(new)} upgraded={len(upgraded)} "
+        f"downgraded=0 added={len(added)} removed={len(removed)}"
+    )
+    PYEOF
+
+# Fail closed if uv.lock downgrades any package relative to base ref (ADR-0032 Python proof)
+[windows]
+lock-proof base="origin/main":
+    $ErrorActionPreference = 'Stop'; uv run --no-sync python -c 'import itertools, json, pathlib, shutil, subprocess, sys, tomllib; from packaging.version import Version; base = sys.argv[1]; git = shutil.which("git") or sys.exit("lock-proof FAIL: git not found on PATH"); cwd = pathlib.Path.cwd().as_posix(); proc = subprocess.run([git, "-c", f"safe.directory={cwd}", "show", f"{base}:uv.lock"], capture_output=True, text=True, check=False); proc.returncode == 0 or sys.exit(f"lock-proof FAIL: cannot read {base}:uv.lock ({proc.stderr.strip()})"); head = pathlib.Path("uv.lock"); head.is_file() or sys.exit("lock-proof FAIL: missing uv.lock in working tree"); grp = lambda pkgs: {k: sorted(Version(str(p["version"])) for p in g) for k, g in itertools.groupby(sorted(pkgs, key=lambda p: str(p["name"]).lower()), key=lambda p: str(p["name"]).lower())}; load = lambda raw, lbl: grp((lambda p: p if isinstance(p, list) and p else sys.exit(f"lock-proof FAIL: {lbl} uv.lock has no [[package]] entries"))(tomllib.loads(raw).get("package"))); old = load(proc.stdout, base); new = load(head.read_text(encoding="utf-8"), "head"); down = {k: {"base": [str(v) for v in old[k]], "head": [str(v) for v in new[k]]} for k in sorted(old.keys() & new.keys()) if new[k][0] < old[k][0] or new[k][-1] < old[k][-1]}; up = sorted(k for k in (old.keys() & new.keys()) if k not in down and new[k] != old[k]); added = sorted(new.keys() - old.keys()); rem = sorted(old.keys() - new.keys()); print(json.dumps({"base": base, "packages": len(new), "upgraded": len(up), "downgraded": down, "added": added, "removed": rem}, indent=2, sort_keys=True)); (sys.exit(f"LOCK_PROOF_FAIL downgraded={len(down)}") if down else print(f"LOCK_PROOF_OK=1 base={base} packages={len(new)} upgraded={len(up)} downgraded=0 added={len(added)} removed={len(rem)}"))' '{{base}}'; exit $LASTEXITCODE
+
+# Build custom Dockerfiles under disposable test tag (never :latest) + validate Compose configs (ADR-0032 container proof)
+[unix]
+docker-proof tag="pr-proof": compose-config
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{tag}}"
+    if [[ -z "$tag" || "$tag" == "latest" || ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+      echo "docker-proof FAIL: tag must be a non-latest valid Docker tag (got: '${tag}')" >&2
+      exit 2
+    fi
+    docker build -f docker/Dockerfile.research -t "tier0-sota-research:${tag}" .
+    docker build -f docker/Dockerfile.sandbox -t "tier0-sota-aideml-sandbox:${tag}" .
+    docker build -f docker/Dockerfile.xerj -t "tier0-sota-xerj:${tag}" .
+    echo "DOCKER_PROOF_OK=1 tag=${tag} images=tier0-sota-research,tier0-sota-aideml-sandbox,tier0-sota-xerj"
+
+# Build custom Dockerfiles under disposable test tag (never :latest) + validate Compose configs (ADR-0032 container proof)
+[windows]
+docker-proof tag="pr-proof": compose-config
+    $ErrorActionPreference = 'Stop'; $tag = '{{tag}}'; if ([string]::IsNullOrWhiteSpace($tag) -or $tag -eq 'latest' -or $tag -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "docker-proof FAIL: tag must be a non-latest valid Docker tag (got: '$tag')" }; docker build -f docker/Dockerfile.research -t "tier0-sota-research:$tag" .; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; docker build -f docker/Dockerfile.sandbox -t "tier0-sota-aideml-sandbox:$tag" .; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; docker build -f docker/Dockerfile.xerj -t "tier0-sota-xerj:$tag" .; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Write-Host "DOCKER_PROOF_OK=1 tag=$tag images=tier0-sota-research,tier0-sota-aideml-sandbox,tier0-sota-xerj"
+
+# Safely fast-forward production checkout on main, verify risk.py SHA-256, refresh changed Compose services & run preflight
+[unix]
+prod-sync repo="/mnt/z/noesis" mode="apply":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="{{repo}}"
+    mode="{{mode}}"
+    expected_risk_sha="ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
+    if [[ "$mode" != "apply" && "$mode" != "dry-run" ]]; then
+      echo "prod-sync FAIL: mode must be 'apply' or 'dry-run' (got: '${mode}')" >&2
+      exit 2
+    fi
+    ss_out="$(ss -lntH)"
+    if printf '%s\n' "$ss_out" | grep -Eq ':(4001|7496|8798|8796|9223)\b'; then
+      echo "prod-sync FAIL: forbidden live broker or CDP port is listening (4001/7496/8798/8796/9223)" >&2
+      exit 1
+    fi
+    if [[ ! -d "$repo/.git" ]]; then
+      echo "prod-sync FAIL: not a git repository: ${repo}" >&2
+      exit 1
+    fi
+    branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD)"
+    if [[ "$branch" != "main" ]]; then
+      echo "prod-sync FAIL: ${repo} must be on 'main' (currently '${branch}')" >&2
+      exit 1
+    fi
+    if [[ -n "$(git -C "$repo" status --porcelain)" ]]; then
+      echo "prod-sync FAIL: ${repo} has uncommitted changes; refusing sync" >&2
+      exit 1
+    fi
+    git -C "$repo" fetch --quiet origin main
+    before="$(git -C "$repo" rev-parse HEAD)"
+    after="$(git -C "$repo" rev-parse origin/main)"
+    if ! git -C "$repo" merge-base --is-ancestor "$before" "$after"; then
+      echo "prod-sync FAIL: ${repo} HEAD (${before}) is not an ancestor of origin/main (${after})" >&2
+      exit 1
+    fi
+    incoming_risk_sha="$(git -C "$repo" show "$after:src/tier0_sota/risk.py" | sha256sum | cut -d' ' -f1)"
+    if [[ "$incoming_risk_sha" != "$expected_risk_sha" ]]; then
+      echo "prod-sync FAIL: incoming origin/main risk.py SHA-256 mismatch (${incoming_risk_sha})" >&2
+      exit 1
+    fi
+    changed="$(git -C "$repo" diff --name-only "$before..$after")"
+    echo "prod-sync repo=${repo} mode=${mode} before=${before:0:7} after=${after:0:7}"
+    if [[ -n "$changed" ]]; then
+      printf '%s\n' "$changed"
+    fi
+    if [[ "$mode" == "dry-run" ]]; then
+      echo "PROD_SYNC_DRY_RUN_OK=1 repo=${repo} before=${before:0:7} after=${after:0:7}"
+      exit 0
+    fi
+    if [[ "$before" != "$after" ]]; then
+      git -C "$repo" merge --ff-only origin/main
+    fi
+    actual_risk_sha="$(sha256sum "$repo/src/tier0_sota/risk.py" | cut -d' ' -f1)"
+    if [[ "$actual_risk_sha" != "$expected_risk_sha" ]]; then
+      echo "prod-sync FAIL: risk.py SHA-256 mismatch (${actual_risk_sha})" >&2
+      exit 1
+    fi
+    if printf '%s\n' "$changed" | grep -Eq '^docker/compose\.sota\.yml$'; then
+      TIER0_REPO_ROOT="$repo" TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" TIER0_STATE_ROOT="${TIER0_STATE_ROOT:-$HOME/tier0-sota-state}" TIER0_TAILSCALE_HOST="${TIER0_TAILSCALE_HOST:-localhost}" \
+        docker compose -p docker -f "$repo/docker/compose.sota.yml" up -d
+    fi
+    if printf '%s\n' "$changed" | grep -Eq '^docker/Caddyfile$'; then
+      TIER0_REPO_ROOT="$repo" TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" TIER0_STATE_ROOT="${TIER0_STATE_ROOT:-$HOME/tier0-sota-state}" TIER0_TAILSCALE_HOST="${TIER0_TAILSCALE_HOST:-localhost}" \
+        docker compose -p docker -f "$repo/docker/compose.sota.yml" up -d --force-recreate tearsheets
+    fi
+    if printf '%s\n' "$changed" | grep -Eq '^docker/(Dockerfile\.|systemd/)'; then
+      echo "[NOTICE] Dockerfiles or systemd units changed; review rebuild/unit-install steps manually."
+    fi
+    bash "$repo/scripts/preflight_resume.sh"
+    echo "PROD_SYNC_OK=1 repo=${repo} head=${after:0:7}"
+
 # Report upstream dependency drift (majors/caps hidden by lockfile-only) and Dagster upstream watch triggers
 upstream-watch:
     {{uv_prefix}}uv tree --frozen --outdated --depth 1 --all-groups --no-progress

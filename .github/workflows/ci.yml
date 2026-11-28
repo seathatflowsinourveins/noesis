@@ -87,6 +87,121 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  pr-lock-and-compose-proof:
+    name: Lockfile No-Downgrade & Compose Config Proof
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate Docker Compose manifests (ADR-0032 container proof)
+        run: |
+          docker compose -f docker/compose.sota.yml config -q
+          docker compose -f docker/compose.ibkr-paper.yml config -q
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.10"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Sync locked dev environment
+        run: uv sync --frozen --only-group dev --no-install-project --no-progress
+
+      - name: Verify uv.lock has zero package downgrades vs PR base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          rc=0
+          out="$(uv run --no-sync python - "$BASE_SHA" 2>&1 <<'PYEOF'
+          import json
+          import pathlib
+          import shutil
+          import subprocess
+          import sys
+          import tomllib
+          from packaging.version import Version
+
+          base = sys.argv[1]
+          git = shutil.which("git")
+          if not git:
+              sys.exit("lock-proof FAIL: git not found on PATH")
+          cwd = pathlib.Path.cwd().as_posix()
+          proc = subprocess.run(
+              [git, "-c", f"safe.directory={cwd}", "show", f"{base}:uv.lock"],
+              capture_output=True,
+              text=True,
+              check=False,
+          )
+          if proc.returncode != 0:
+              sys.exit(f"lock-proof FAIL: cannot read {base}:uv.lock ({proc.stderr.strip()})")
+          head_path = pathlib.Path("uv.lock")
+          if not head_path.is_file():
+              sys.exit("lock-proof FAIL: missing uv.lock in working tree")
+
+
+          def _load_versions(raw: str, label: str) -> dict[str, list[Version]]:
+              doc = tomllib.loads(raw)
+              pkgs = doc.get("package")
+              if not isinstance(pkgs, list) or not pkgs:
+                  sys.exit(f"lock-proof FAIL: {label} uv.lock has no [[package]] entries")
+              versions: dict[str, list[Version]] = {}
+              for pkg in pkgs:
+                  name = str(pkg["name"]).lower()
+                  versions.setdefault(name, []).append(Version(str(pkg["version"])))
+              return {name: sorted(vers) for name, vers in versions.items()}
+
+
+          old = _load_versions(proc.stdout, base)
+          new = _load_versions(head_path.read_text(encoding="utf-8"), "head")
+          downgraded = {
+              name: {"base": [str(v) for v in old[name]], "head": [str(v) for v in new[name]]}
+              for name in sorted(old.keys() & new.keys())
+              if new[name][0] < old[name][0] or new[name][-1] < old[name][-1]
+          }
+          upgraded = sorted(
+              name
+              for name in (old.keys() & new.keys())
+              if name not in downgraded and new[name] != old[name]
+          )
+          added = sorted(new.keys() - old.keys())
+          removed = sorted(old.keys() - new.keys())
+          summary = {
+              "base": base,
+              "packages": len(new),
+              "upgraded": len(upgraded),
+              "downgraded": downgraded,
+              "added": added,
+              "removed": removed,
+          }
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          if downgraded:
+              sys.exit(f"LOCK_PROOF_FAIL downgraded={len(downgraded)}")
+          print(
+              f"LOCK_PROOF_OK=1 base={base} packages={len(new)} upgraded={len(upgraded)} "
+              f"downgraded=0 added={len(added)} removed={len(removed)}"
+          )
+          PYEOF
+          )" || rc=$?
+          {
+            echo "### \`uv.lock\` No-Downgrade Proof (\`base=${BASE_SHA}\`)"
+            echo '```text'
+            printf '%s\n' "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$out"
+          exit "$rc"
+
   upstream-drift-and-compose-audit:
     name: Upstream Drift, Watch Triggers & Compose Config Audit
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

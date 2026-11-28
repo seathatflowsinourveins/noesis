@@ -432,7 +432,7 @@ def _build_forbidden_upstream_tokens(upstream_cfg: dict[str, Any]) -> set[str]:
 def _parse_just_recipes(repo_root: Path) -> set[str]:
     just_text = (repo_root / "justfile").read_text(encoding="utf-8").replace("\r\n", "\n")
     recipes: set[str] = set()
-    for match in re.finditer(r"(?m)^([a-zA-Z0-9_-]+)(?:\s+[^:=#\n]+)?:\s*(?!=)", just_text):
+    for match in re.finditer(r"(?m)^([a-zA-Z0-9_-]+)(?:\s+[^:#\n]+)?:\s*(?!=)", just_text):
         name = match.group(1)
         if name not in {"set", "export", "alias", "import", "mod"}:
             recipes.add(name)

@@ -194,10 +194,24 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     assert all(":6900" not in str(p) for p in finos_svc.get("ports", [])), (
         "finos-workspace must not collide with WSL2 tier0-openbb-backend :6900"
     )
-    assert services["tearsheets"]["image"] == "caddy:2.11.9-alpine"
-    assert services["telemetry-exporter"]["image"] == "otel/opentelemetry-collector-contrib:0.166.0"
-    assert services["prometheus"]["image"] == "prom/prometheus:v3.16.0"
-    assert services["grafana"]["image"] == "grafana/grafana:13.3.2"
+    # Exact release tags (optionally digest-pinned), never floating tags, so Dependabot
+    # docker-compose minor/patch bumps stay green without hand-editing test pins (ADR-0032).
+    assert re.fullmatch(
+        r"caddy:\d+\.\d+\.\d+-alpine(?:@sha256:[0-9a-f]{64})?",
+        services["tearsheets"]["image"],
+    ), services["tearsheets"]["image"]
+    assert re.fullmatch(
+        r"otel/opentelemetry-collector-contrib:\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
+        services["telemetry-exporter"]["image"],
+    ), services["telemetry-exporter"]["image"]
+    assert re.fullmatch(
+        r"prom/prometheus:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
+        services["prometheus"]["image"],
+    ), services["prometheus"]["image"]
+    assert re.fullmatch(
+        r"grafana/grafana:\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
+        services["grafana"]["image"],
+    ), services["grafana"]["image"]
     assert (
         "./prometheus_rules.yml:/etc/prometheus/prometheus_rules.yml:ro"
         in services["prometheus"]["volumes"]
@@ -752,7 +766,10 @@ def test_caddyfile_loopback_binding_and_duckdb_csrf_posture() -> None:
     compose_raw = (REPO_ROOT / "docker" / "compose.sota.yml").read_text(encoding="utf-8")
     compose = yaml.safe_load(compose_raw)
     ts = compose["services"]["tearsheets"]
-    assert ts["image"] == "caddy:2.11.9-alpine"
+    assert re.fullmatch(
+        r"caddy:\d+\.\d+\.\d+-alpine(?:@sha256:[0-9a-f]{64})?",
+        ts["image"],
+    ), ts["image"]
     assert ts.get("network_mode") == "host"
     assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in ts.get("volumes", [])
     assert ts.get("command") == [
