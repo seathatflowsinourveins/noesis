@@ -140,7 +140,8 @@ def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
 
     assert "hooks" not in claude_cfg
     assert "hooks" not in gemini_cfg
-    assert "hooks" not in codex_cfg.get("features", {})
+    assert "hooks" not in codex_cfg
+    assert codex_cfg.get("features", {}).get("hooks", False) is False
 
     for name, section in (
         (".mcp.json", root_cfg["mcpServers"]),

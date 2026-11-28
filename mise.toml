@@ -6,6 +6,7 @@
 
 [tools]
 python = "3.13"
+node = "24"
 uv = "0.13"
 just = "1.59"
 ruff = "0.17"

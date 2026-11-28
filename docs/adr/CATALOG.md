@@ -7,7 +7,7 @@ Living, executable MADR 4.0 (`tier0.adr.v1`) Architecture Decision Record catalo
 <!-- BEGIN:ADR_CATALOG -->
 | ADR | Title | Status | Date | Primary Modules / Anchors |
 |---|---|---|---|---|
-| [ADR-0001](ADR-0001.md) | Clean Architecture Layers (L0..L10), Upstream-Only Native-First & Zero Self-Hallucination | Accepted | 2026-11-26 | `upstream-map.toml`, `pyproject.toml`, `mise.toml`, `rules/zero_self_invention.yml`, `scripts/sync_manifest.py` |
+| [ADR-0001](ADR-0001.md) | Clean Architecture Layers (L0..L15: Active L0..L10 + Status-Labeled L11..L15), Upstream-Only Native-First & Zero Self-Hallucination | Accepted | 2026-11-26 | `upstream-map.toml`, `pyproject.toml`, `mise.toml`, `rules/zero_self_invention.yml`, `scripts/sync_manifest.py` |
 | [ADR-0002](ADR-0002.md) | Four Dedicated Compounding Harness Lanes & Dual-Flywheel Learning (sim-backtest, paper, half-auto-tv, live) | Accepted | 2026-11-26 | `AGENTS.md`, `PHILOSOPHY_COMPOUNDING_MANIFEST.json`, `scripts/run_compounding_reflection.py`, `evals/`, `definitions.py` |
 | [ADR-0003](ADR-0003.md) | Causal Point-in-Time Data Plane (<= 2026-10-15, t_ns + 60s, XNYS) | Accepted | 2026-11-26 | `src/tier0_sota/discovery.py`, `src/tier0_sota/engine.py`, `Polars`, `DuckDB`, `Pandera`, `Pydantic` v2, `XNYS` |
 | [ADR-0004](ADR-0004.md) | Single-Engine Trading Parity (NautilusTrader v2 + Rust hftbacktest) | Superseded by [ADR-0016](ADR-0016.md) | 2026-11-26 | `src/tier0_sota/engine.py`, `src/tier0_sota/research.py` |

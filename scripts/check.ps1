@@ -102,7 +102,8 @@ try {
         $gateSpecs.Add(@{ Name = "ruff-check"; File = (Join-Path $VenvScripts "ruff.exe"); Args = @("check", ".") })
         $gateSpecs.Add(@{ Name = "ty-check"; File = (Join-Path $VenvScripts "ty.exe"); Args = @("check") })
         $gateSpecs.Add(@{ Name = "deptry"; File = (Join-Path $VenvScripts "deptry.exe"); Args = @(".") })
-        $gateSpecs.Add(@{ Name = "ast-grep"; File = (Join-Path $VenvScripts "ast-grep.exe"); Args = @("scan") })
+        $gateSpecs.Add(@{ Name = "ast-grep"; File = (Join-Path $VenvScripts "ast-grep.exe"); Args = @("scan", "--config", "sgconfig.yml") })
+        $gateSpecs.Add(@{ Name = "manifest-check"; File = $VenvPy; Args = @((Join-Path $RepoRoot "scripts\sync_manifest.py"), "--check") })
         $gateSpecs.Add(@{ Name = "z3"; File = $VenvPy; Args = @((Join-Path $RepoRoot "evals\formal_risk_z3.py")) })
         $gateSpecs.Add(@{ Name = "mcp-smoke"; File = $VenvPy; Args = @((Join-Path $RepoRoot "scripts\nautilus_mcp_server.py"), "--smoke") })
         $gitleaksCmd = Get-Command gitleaks -ErrorAction SilentlyContinue
@@ -160,7 +161,12 @@ try {
         }
     }
 
-    # 12. Pytest suite
+    # 12. Strict docs build
+    & (Join-Path $VenvScripts "zensical.exe") build --clean --strict
+    if ($LASTEXITCODE -ne 0) { throw "zensical build --clean --strict failed" }
+    Write-Host "[OK] zensical build --clean --strict" -ForegroundColor Green
+
+    # 13. Pytest suite
     if (-not $SkipPytest) {
         & (Join-Path $VenvScripts "pytest.exe") -q
         if ($LASTEXITCODE -ne 0) { throw "pytest -q failed" }

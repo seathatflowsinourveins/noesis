@@ -76,7 +76,7 @@
       "PowerShell(*--no-verify*)"
     ],
     "ask": [
-      "Edit(/src/tier0_sota/risk.py)",
+      "Edit(src/tier0_sota/risk.py)",
       "mcp__alpaca-live__place_*",
       "mcp__alpaca-live__replace_*",
       "mcp__alpaca-live__cancel_*",

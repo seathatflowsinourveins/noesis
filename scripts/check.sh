@@ -103,7 +103,8 @@ run_gate_bg "ruff-format" ruff format --check src tests scripts evals
 run_gate_bg "ruff-check" ruff check .
 run_gate_bg "ty-check" ty check --python "$PY"
 run_gate_bg "deptry" deptry .
-run_gate_bg "ast-grep" ast-grep scan
+run_gate_bg "ast-grep" ast-grep scan --config sgconfig.yml
+run_gate_bg "manifest-check" "$PY" scripts/sync_manifest.py --check
 run_gate_bg "z3" "$PY" evals/formal_risk_z3.py
 run_gate_bg "mcp-smoke" "$PY" scripts/nautilus_mcp_server.py --smoke
 if command -v gitleaks >/dev/null 2>&1; then
@@ -123,6 +124,9 @@ if [[ "$GATE_FAILED" -ne 0 ]]; then
   exit 1
 fi
 echo "[OK] parallel static/security/smoke gates (${#GATE_NAMES[@]}/${#GATE_NAMES[@]})"
+
+zensical build --clean --strict
+echo "[OK] zensical build --clean --strict"
 
 pytest -q -o "cache_dir=$PYTEST_CACHE_DIR"
 

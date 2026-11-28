@@ -91,13 +91,16 @@
     },
     "causal_pit_and_features": {
       "primary": ["polars", "duckdb", "pandera", "exchange_calendars", "sqlglot", "ml4t-engineer", "river", "ruptures", "skchange", "stumpy"],
-      "fundamentals_and_macro": ["edgartools", "fredapi", "dvc"],
+      "fundamentals_and_macro": ["edgartools", "fredapi"],
+      "optional_data_versioning_group": "dvc>=3.67.1 (optional [dependency-groups] data-versioning; excluded from default-groups)",
       "ml_and_explainability": ["lightgbm", "catboost", "shap", "shapiq", "optuna"],
       "modules": ["src/tier0_sota/discovery.py", "src/tier0_sota/definitions.py", "src/tier0_sota/live/scanner.py"]
     },
     "statistical_falsification": {
       "primary": ["skfolio", "clarabel", "ml4t-diagnostic", "arch", "statsmodels", "mlflow", "mapie"],
-      "min_cpcv_samples": 16,
+      "min_cpcv_oos_paths": 16,
+      "cpcv_folds": "8/3 (56 splits / 21 OOS paths >= 16)",
+      "cpcv_min_samples": 48,
       "conformal_excursion_hard_cap_pct": "0.0200",
       "gates": [
         "1_hftbacktest_l1_markout",
@@ -165,7 +168,8 @@
       "path": "src/tier0_sota/risk.py",
       "sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
       "smt_verifier": "z3-solver",
-      "symbolic_contract_verifier": "pschanely/CrossHair (isolated uvx: just crosshair)",
+      "symbolic_contract_verifier": "pschanely/CrossHair (crosshair-tool==0.0.114 isolated uvx: just crosshair)",
+      "mutation_verifier": "boxed/mutmut==3.8.1 (WSL isolated mktemp -d report-only: just mutate-risk)",
       "symbolic_contract_harness": "evals/symbolic_risk_crosshair.py"
     }
   },
@@ -363,13 +367,21 @@
     "experiment_ledger": {"tool": "mlflow", "url": "http://127.0.0.1:5000/"},
     "execution_ledgers": {"tool": "duckdb", "root": "Z:\\sota-data\\manifests", "sql_ui": "http://127.0.0.1:4213/"},
     "memory_and_lessons": {"tool": "xerj", "url": "http://127.0.0.1:9200/"},
-    "safety_and_prompt_evals": {"tools": ["inspect-ai", "dspy"], "suite": "evals/tier0_inspect_eval.py", "view_url": "http://127.0.0.1:7575/"},
+    "safety_and_prompt_evals": {"tools": ["inspect-ai", "dspy", "gepa"], "suite": "evals/tier0_inspect_eval.py", "view_url": "http://127.0.0.1:7575/"},
     "ssot_manifest_sync": {"tool": "scripts/sync_manifest.py", "outputs": ["ARCHITECTURE_MANIFEST.json", "LLM_HARNESS_MANIFEST.json"]},
     "observability_and_docs": {
       "otel_collector": "http://127.0.0.1:9464/metrics",
       "alertmanager_profile_gated": "http://127.0.0.1:9093/-/healthy",
+      "alertmanager_summary": "prom/alertmanager v0.28.1 (15 Prometheus rules, just alerting-up)",
       "caddy_tearsheets": "http://127.0.0.1:8793/",
-      "zensical_adrs": "http://127.0.0.1:8010/"
+      "allure_test_reports": "http://127.0.0.1:8793/test-reports/allure/",
+      "duckdb_sql_ui": "http://127.0.0.1:4213/",
+      "zensical_adrs": "http://127.0.0.1:8010/",
+      "formal_and_mutation_verifiers": {
+        "z3_solver": "z3-solver (5/5 UNSAT, just z3)",
+        "crosshair": "crosshair-tool==0.0.114 (isolated uvx, just crosshair)",
+        "mutmut": "mutmut==3.8.1 (WSL isolated mktemp -d, just mutate-risk)"
+      }
     }
   },
   "self_invention_lessons_prevented": [

@@ -132,7 +132,7 @@ else
   record_gate "wsl_default_distro" "false" "distro=${ACTUAL_DISTRO:-unset} expected=${EXPECTED_WSL_DISTRO}"
 fi
 
-# 3. Optional --reconcile: WSL2 systemd units + Docker Compose stack
+# Optional --reconcile: WSL2 systemd units + Docker Compose stack
 if [[ "$RECONCILE" == "true" ]]; then
   log_line "RECONCILE" "Ensuring WSL2 systemd services are active..."
   SYS_OK=true
@@ -156,7 +156,7 @@ if [[ "$RECONCILE" == "true" ]]; then
   fi
 fi
 
-# 4. Verify WSL2 systemd services
+# 3. Verify WSL2 systemd services
 SYS_ACTIVE=0
 SYS_INACTIVE=()
 for unit in "${SYSTEMD_UNITS[@]}"; do
@@ -173,7 +173,7 @@ else
   record_gate "wsl_systemd_services" "false" "active=${SYS_ACTIVE}/${#SYSTEMD_UNITS[@]} inactive=${SYS_INACTIVE[*]}"
 fi
 
-# 5. Verify Docker Compose stack
+# 4. Verify Docker Compose stack
 DOCKER_RUNNING=0
 DOCKER_TOTAL=0
 if command -v docker >/dev/null 2>&1; then
@@ -191,7 +191,7 @@ else
   record_gate "docker_compose_stack" "false" "running=${DOCKER_RUNNING}/${DOCKER_TOTAL}"
 fi
 
-# 6. Probe all 15/15 local portals
+# 5. Probe all 15/15 local portals
 PORTAL_SPECS=(
   "xerj|http://127.0.0.1:9200/"
   "zensical|http://127.0.0.1:8010/"
@@ -315,7 +315,7 @@ else
   record_gate "local_portals_15" "false" "healthy=${PORTALS_HEALTHY}/15 ${OTEL_NOTE} ${CADDY_NOTE} down=${PORTALS_DOWN[*]}"
 fi
 
-# 7. Disk Z environment variables (WSL2 mount paths)
+# 6. Disk Z environment variables (WSL2 mount paths)
 ENV_OK=true
 ENV_NOTES=()
 if [[ "${TIER0_REPO_ROOT:-}" != "/mnt/z/noesis" || ! -d "/mnt/z/noesis" ]]; then
@@ -336,7 +336,7 @@ else
   record_gate "disk_z_env" "false" "mismatches=${ENV_NOTES[*]}"
 fi
 
-# 8. AGY native MCP config (WSL2 Linux ~/.gemini/config/mcp_config.json first; fallback to repo 5/5 native uv parity)
+# 7. AGY native MCP config (WSL2 Linux ~/.gemini/config/mcp_config.json first; fallback to repo 5/5 native uv parity)
 MNT_C_MOUNTED=false
 WIN_USER_HOME=""
 if command -v mountpoint >/dev/null 2>&1 && mountpoint -q /mnt/c 2>/dev/null; then
@@ -415,7 +415,7 @@ fi
 AGY_MCP_DETAIL="${AGY_MCP_DETAIL} skills_json=${WSL_SKILLS_STATUS} fnox=${FNOX_STATUS}"
 record_gate "agy_native_mcp_config" "$AGY_MCP_OK" "$AGY_MCP_DETAIL"
 
-# 9. Global Charter SHA-256 (8/8 when /mnt/c mounted; 4/4 WSL2 when /mnt/c unmounted per /etc/wsl.conf)
+# 8. Global Charter SHA-256 (8/8 when /mnt/c mounted; 4/4 WSL2 when /mnt/c unmounted per /etc/wsl.conf)
 WSL_CHARTER_FILES=(
   "${HOME}/.claude/CLAUDE.md"
   "${HOME}/.codex/AGENTS.md"
@@ -450,7 +450,7 @@ else
   record_gate "global_charter_sha256_8x8" "false" "scope=${CHARTER_SCOPE} matched=${CHARTER_MATCHES}/${CHARTER_EXPECTED_TOTAL} expected=${EXPECTED_CHARTER_SHA}"
 fi
 
-# 10. Immutable risk.py SHA-256
+# 9. Immutable risk.py SHA-256
 RISK_PATH="${REPO_ROOT}/src/tier0_sota/risk.py"
 RISK_SHA="missing"
 RISK_OK=false
@@ -460,7 +460,7 @@ if [[ -f "$RISK_PATH" ]]; then
 fi
 record_gate "risk_kernel_sha256" "$RISK_OK" "$RISK_SHA"
 
-# 11. Git status & origin (seathatflowsinourveins/noesis)
+# 10. Git status & origin (seathatflowsinourveins/noesis)
 GIT_ORIGIN="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || echo "")"
 GIT_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 GIT_HEAD="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
@@ -479,7 +479,7 @@ if [[ "$GIT_STATUS_OUT" != "__ERR__" ]]; then
 fi
 record_gate "git_status_and_origin" "$GIT_OK" "branch=${GIT_BRANCH} head=${GIT_HEAD} origin=${GIT_ORIGIN} dirty=${GIT_DIRTY} unmerged=${GIT_UNMERGED}"
 
-# 12. Paper Farm preflight readiness
+# 11. Paper Farm preflight readiness
 PY_BIN=""
 if [[ -x "${HOME}/noesis/.venv/bin/python" ]]; then
   PY_BIN="${HOME}/noesis/.venv/bin/python"

@@ -217,6 +217,7 @@
         "ADR-0003",
         "ADR-0010",
         "ADR-0013",
+        "ADR-0025",
         "ADR-0026",
         "ADR-0027",
         "ADR-0028"
@@ -232,23 +233,27 @@
         "ADR-0028"
       ],
       "L11": [
+        "ADR-0001",
         "ADR-0013",
         "ADR-0018",
         "ADR-0028"
       ],
       "L12": [
+        "ADR-0001",
         "ADR-0014",
         "ADR-0015",
         "ADR-0018",
         "ADR-0028"
       ],
       "L13": [
+        "ADR-0001",
         "ADR-0015",
         "ADR-0016",
         "ADR-0018",
         "ADR-0028"
       ],
       "L14": [
+        "ADR-0001",
         "ADR-0017",
         "ADR-0018",
         "ADR-0020",
@@ -256,6 +261,8 @@
         "ADR-0028"
       ],
       "L15": [
+        "ADR-0001",
+        "ADR-0005",
         "ADR-0016",
         "ADR-0018",
         "ADR-0020",
@@ -267,6 +274,7 @@
         "ADR-0008",
         "ADR-0014",
         "ADR-0015",
+        "ADR-0025",
         "ADR-0026",
         "ADR-0028"
       ],
@@ -314,6 +322,7 @@
         "ADR-0020",
         "ADR-0021",
         "ADR-0024",
+        "ADR-0025",
         "ADR-0026",
         "ADR-0027",
         "ADR-0028"
@@ -353,7 +362,7 @@
     },
     "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "c95e56d6fc7be359fb39c549e5e0090adb7594e18f52ae793868c6225adfdece"
+    "corpus_sha256": "c932513d92e693df810ea9bb7c6d9f4d4e8f8f7aa9047fdc7ec0895960264249"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -549,6 +558,7 @@
         "zensical",
         "prometheus",
         "prometheus-client",
+        "alertmanager",
         "opentelemetry-sdk",
         "opentelemetry-exporter-otlp",
         "otel-collector-contrib",
@@ -638,7 +648,8 @@
         "shellcheck",
         "zizmor",
         "codeql",
-        "dependabot"
+        "dependabot",
+        "snyk/agent-scan"
       ],
       "rejected_overlaps": [
         "black",
@@ -713,8 +724,7 @@
         "omniroute",
         "codebase-memory-mcp",
         "xerj",
-        "mcp",
-        "edgartools"
+        "mcp"
       ],
       "rejected_overlaps": [
         "third-party-agent-wrappers",

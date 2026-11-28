@@ -457,6 +457,11 @@
         "xerj"
       ]
     },
+    "parity_fields_verified": [
+      "command",
+      "args",
+      "env"
+    ],
     "parity_count": "5/5"
   },
   "skills_summary": {
@@ -584,9 +589,35 @@
     }
   ],
   "live_hosted_portals_count": 15,
+  "extended_portals": [
+    {
+      "name": "alertmanager",
+      "url": "http://127.0.0.1:9093/-/healthy",
+      "profile": "alerting"
+    },
+    {
+      "name": "allure-test-reports",
+      "url": "http://127.0.0.1:8793/test-reports/allure/",
+      "served_by": "tearsheets"
+    },
+    {
+      "name": "omniroute",
+      "url": "http://127.0.0.1:20128/api/health",
+      "role": "local-automation-router"
+    }
+  ],
+  "extended_portals_count": 3,
+  "total_live_portals_count": 18,
   "upstream_verification_commands": {
     "full_local_check": "just check",
+    "adr_check": "just adr-check",
     "strict_docs_build": "just docs-build",
+    "security_suite": "just security",
+    "fnox_check": "just fnox-check",
+    "symbolic_crosshair": "just crosshair",
+    "allure_test_report": "just test-report",
+    "mutation_audit_risk": "just mutate-risk",
+    "compounding_reflection": "just reflect",
     "pre_commit_hooks": "prek run --all-files",
     "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
     "workflow_audit": "zizmor --offline .github/workflows",

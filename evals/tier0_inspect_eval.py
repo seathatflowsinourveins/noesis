@@ -27,7 +27,7 @@ BANNED_LIBS = ("yfinance", "backtrader", "vectorbt", "quantstats", "talib", "mlf
 FORBIDDEN_PORTS = (4001, 7496, 8798, 8796)
 
 _BANNED_CAPS_RE = re.compile(
-    r"(?:advisory\s*<=\s*\d+\s*LOC|<=\s*450\s*LOC|18-pin|bounded\s*1\.\.12)",
+    r"(?:advisory\s*<=\s*\d+\s*LOC|<=\s*450\s*LOC|\(\s*`?\d+`?\s*LOC\s*\)|18-pin|bounded\s*1\.\.12)",
     re.IGNORECASE,
 )
 _BANNED_TEARSHEETS_RE = re.compile(
@@ -75,12 +75,22 @@ def _check_zero_banned_libs() -> str:
 def _check_zero_custom_hooks() -> str:
     if (REPO_ROOT / ".codex" / "hooks.json").exists():
         return "FAIL:codex_hooks_json"
+    codex_cfg_path = REPO_ROOT / ".codex" / "config.toml"
+    if codex_cfg_path.is_file():
+        codex_doc = tomllib.loads(codex_cfg_path.read_text(encoding="utf-8"))
+        if "hooks" in codex_doc or codex_doc.get("features", {}).get("hooks") is True:
+            return "FAIL:hooks_in_.codex/config.toml"
     for rel in (".claude/settings.json", ".gemini/settings.json"):
         p = REPO_ROOT / rel
         if p.is_file():
             doc = json.loads(p.read_text(encoding="utf-8"))
             if "hooks" in doc:
                 return f"FAIL:hooks_in_{rel}"
+    opencode_path = REPO_ROOT / "opencode.json"
+    if opencode_path.is_file():
+        oc_doc = json.loads(opencode_path.read_text(encoding="utf-8"))
+        if "hooks" in oc_doc or bool(oc_doc.get("plugin")):
+            return "FAIL:hooks_or_plugins_in_opencode.json"
     return "PASS"
 
 
@@ -95,6 +105,9 @@ def _check_zero_arbitrary_loc_caps_and_living_adrs() -> str:
         REPO_ROOT / "upstream-map.toml",
         REPO_ROOT / "AGENTS.md",
         *(REPO_ROOT / ".claude" / "skills").glob("tier0-*/SKILL.md"),
+        *(REPO_ROOT / ".claude" / "agents").glob("*.md"),
+        *(REPO_ROOT / ".claude" / "commands").glob("*.md"),
+        *(REPO_ROOT / ".opencode" / "commands").glob("*.md"),
     ]
     for path in cap_files:
         if not path.is_file():

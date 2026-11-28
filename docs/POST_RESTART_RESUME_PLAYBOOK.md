@@ -14,7 +14,7 @@ Single-command recovery and fresh-session grounding guide for the standalone `Z:
 
 On Windows startup / logon:
 - **OmniRoute native autostart** (`OmniRoute.vbs` in Startup, registered via `omniroute autostart enable --no-tray`) launches the local `:20128` router silently (`--no-open --no-tray`) backed by your connected OAuth accounts.
-- **Scheduled Task `\Noesis Orca Mesh Keep-Up`** (logon & every 5m, zero-window `pythonw.exe` running `ensure-noesis-orca-6770.pyw`) warms `Noesis-SOTA`, brings up all 4 systemd units + Docker Compose (`11/11` + FINOS `5/5`), ensures OmniRoute (`:20128`), Orca Desktop, `:6770`, and `:8792`, refreshes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` on fresh boot via `preflight_resume.ps1 -Reconcile`, and runs rate-limit-only Orca account failover (`scripts/orca_account_failover.py --apply`).
+- **Scheduled Task `\Noesis Orca Mesh Keep-Up`** (logon & every 5m, zero-window `pythonw.exe` running `ensure-noesis-orca-6770.pyw`) warms `Noesis-SOTA`, brings up all 4 systemd units + Docker Compose (`11/11` + FINOS `5/5`, plus optional `--profile alerting` `Alertmanager :9093`), ensures OmniRoute (`:20128`), Orca Desktop, `:6770`, and `:8792`, refreshes `Z:\sota-data\manifests\workstation_preflight_resume_manifest.json` on fresh boot via `preflight_resume.ps1 -Reconcile`, and runs rate-limit-only WSL2-safe Orca account failover (`scripts/orca_account_failover.py --apply`, resolving `ORCA_CLI_COMMAND` / `orca-ide` on POSIX / `orca` on Windows and refusing GNOME `/usr/bin/orca`).
 
 ### Step 1: Open `Z:\noesis` in Antigravity (AGY) or Orca
 
@@ -87,7 +87,7 @@ Once `workstation_preflight_resume_manifest.json` reports `verdict: "PASS"` and 
 
 ## 2. Fresh LLM Session Grounding Protocol
 
-Every newly opened session (Antigravity, Claude Code, Codex, Gemini CLI, OpenCode, or Orca worker) grounds immediately in four deterministic steps before editing any file:
+Every newly opened session across all **6 supported runtimes** (`Orca`, `Codex` [`multi_agent_v2 = true`], `Claude Code`, `Antigravity`, `OpenCode`, `Gemini CLI`) grounds immediately in four deterministic steps before editing any file:
 
 1. **Read Canonical SSOT Charter:** `AGENTS.md` (`CLAUDE.md` -> `@AGENTS.md`, `0` custom runtime hooks).
 2. **Load Machine-Readable Manifests:**
@@ -114,12 +114,20 @@ Every newly opened session (Antigravity, Claude Code, Codex, Gemini CLI, OpenCod
 | 7 | Prometheus | `http://127.0.0.1:9090/` | HTTP 200 |
 | 8 | Grafana | `http://127.0.0.1:3001/` | HTTP 200 |
 | 9 | OTel Collector Metrics | `http://127.0.0.1:9464/metrics` | HTTP 200 + real `otelcol_*` series |
-| 10 | Caddy Tearsheets | `http://127.0.0.1:8793/` | HTTP 200 + `Server: Caddy` header |
+| 10 | Caddy Tearsheets | `http://127.0.0.1:8793/` | HTTP 200 + `Server: Caddy` header (also serves static **Allure Report 3** at `/test-reports/allure/` via `just test-report`) |
 | 11 | FINOS Workspace | `http://127.0.0.1:1420/` | HTTP 200 |
 | 12 | FINOS API Health | `http://127.0.0.1:8000/health` | HTTP 200 + `{"success":true}` |
 | 13 | OpenBB Backend | `http://127.0.0.1:6900/` | HTTP 200 |
-| 14 | DuckDB SQL UI | `http://127.0.0.1:4213/` | HTTP 200 |
+| 14 | DuckDB SQL UI | `http://127.0.0.1:4213/` | HTTP 200 (`caddy:2.11.9-alpine` Origin-normalising loopback proxy -> `127.0.0.1:4214`, preserving HTTP `401` CSRF guard) |
 | 15 | OTel Health Check | `http://127.0.0.1:13133/` | HTTP 200 |
+
+### Extended Companion & Profile-Gated Endpoints (`3` extended = `18` total in `LLM_HARNESS_MANIFEST.json`)
+
+| # | Portal | Loopback URL | Activation / Verification Check |
+|---|---|---|---|
+| 16 | Alertmanager (`v0.28.1`) | `http://127.0.0.1:9093/-/healthy` | HTTP 200 (`just alerting-up` / Docker Compose `--profile alerting`; 15 Prometheus rules) |
+| 17 | Allure Report 3 (`v3.33.0`) | `http://127.0.0.1:8793/test-reports/allure/` | HTTP 200 static single-file HTML + `/test-reports/junit.xml` served by Caddy (`just test-report`) |
+| 18 | OmniRoute Local Router | `http://127.0.0.1:20128/api/health` | HTTP 200 (also gated separately by preflight #12 `omniroute_local_router`) |
 
 ## Related Documentation
 
@@ -128,4 +136,4 @@ Every newly opened session (Antigravity, Claude Code, Codex, Gemini CLI, OpenCod
 - [Clean Ecosystem Manifest](CLEAN_ECOSYSTEM_MANIFEST.md)
 - [Architecture Layer Manifest (`L0..L10`)](ARCHITECTURE_LAYER_MANIFEST.md)
 - [TradingView Automation Playbook](TV_AUTOMATION_PLAYBOOK.md)
-- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0022+`)](adr/CATALOG.md)
+- [Living MADR 4.0 ADR Catalog (`ADR-0001..ADR-0028+`)](adr/CATALOG.md)

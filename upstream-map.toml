@@ -147,12 +147,12 @@ rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "m
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy", "allure-report"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "alertmanager", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy", "allure-report"]
 rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html", "reportportal", "pytest-html"]
 
 [layers.L7]
 name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "crosshair", "mutmut", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "crosshair", "mutmut", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot", "snyk/agent-scan"]
 rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner", "pre-commit", "semgrep", "cosmic-ray"]
 
 [layers.L8]
@@ -162,7 +162,8 @@ rejected_overlaps = ["deepeval"]
 
 [layers.L9]
 name = "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs"
-winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
+winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp"]
+cross_layer_references = ["edgartools-mcp (canonical library edgartools owned in L1)"]
 rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses", "cdp-tradingview-mcp", "revanthpobala/pinescript-vscode-extension"]
 
 [layers.L10]

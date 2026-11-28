@@ -59,8 +59,10 @@ jobs:
           uv run --no-sync ast-grep scan --config sgconfig.yml
 
       - name: Unit tests, Z3 formal risk proofs, ADR/manifest parity, strict docs & MCP smoke
+        env:
+          JUNIT_XML_PATH: ${{ runner.temp }}/test-results/junit.xml
         run: |
-          uv run --no-sync pytest -q --junitxml=test-results/junit.xml
+          uv run --no-sync pytest -q --junitxml="$JUNIT_XML_PATH"
           uv run --no-sync python evals/formal_risk_z3.py
           uv run --no-sync python scripts/sync_manifest.py --check
           uv run --no-sync zensical build --clean --strict
@@ -71,6 +73,6 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pytest-junit-report
-          path: test-results/junit.xml
+          path: ${{ runner.temp }}/test-results/junit.xml
           retention-days: 14
           if-no-files-found: warn

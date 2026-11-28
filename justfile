@@ -76,12 +76,12 @@ stage4-drills *args:
 # Run isolated L15 pschanely/CrossHair symbolic PEP-316 contract proofs on risk.py & engine.py (zero mypy in uv.lock)
 [unix]
 crosshair:
-    PYTHONPATH="$PWD/src" uvx --from crosshair-tool crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py
+    PYTHONPATH="$PWD/src" uvx --from crosshair-tool==0.0.114 crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py
 
 # Run isolated L15 pschanely/CrossHair symbolic PEP-316 contract proofs on risk.py & engine.py (zero mypy in uv.lock)
 [windows]
 crosshair:
-    $env:PYTHONPATH = Join-Path $PWD 'src'; uvx --from crosshair-tool crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py; exit $LASTEXITCODE
+    $env:PYTHONPATH = Join-Path $PWD 'src'; uvx --from crosshair-tool==0.0.114 crosshair check --per_condition_timeout=10 evals/symbolic_risk_crosshair.py; exit $LASTEXITCODE
 
 # Smoke-test all 10 FastMCP stdio tools offline
 mcp-smoke:

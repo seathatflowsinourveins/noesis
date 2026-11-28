@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -9,7 +10,9 @@ import shutil
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,7 +41,8 @@ def test_zero_self_invented_hooks_and_native_uv_mcps() -> None:
     assert "hooks" not in claude_cfg and "hooks" not in gemini_cfg
 
     codex_cfg = tomllib.loads((REPO_ROOT / ".codex" / "config.toml").read_text("utf-8"))
-    assert "hooks" not in codex_cfg.get("features", {})
+    assert "hooks" not in codex_cfg
+    assert codex_cfg.get("features", {}).get("hooks", False) is False
     for srv in ("nautilus-engine", "edgartools"):
         assert codex_cfg["mcp_servers"][srv]["command"] == "uv"
 
@@ -733,3 +737,215 @@ def test_caddyfile_loopback_binding_and_duckdb_csrf_posture() -> None:
         "",
     ):
         assert not compiled.match(blocked), f"Expected origin rejected: {blocked}"
+
+
+def _load_script_module(module_name: str, rel_path: str) -> Any:
+    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / rel_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_orca_account_failover_wsl2_safety_and_error_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failover = _load_script_module("orca_account_failover_test", "scripts/orca_account_failover.py")
+
+    # Never invoke subprocess when executable is refused or missing.
+    spawned: list[list[str]] = []
+
+    def _forbid_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        spawned.append(cmd)
+        raise AssertionError(f"subprocess.run must not be called for refused executable: {cmd}")
+
+    monkeypatch.setattr(failover.subprocess, "run", _forbid_run)
+
+    if os.name != "nt":
+        assert failover._is_forbidden_gnome_orca("/usr/bin/orca") is True
+        symlink_path = tmp_path / "orca-ide"
+        symlink_path.symlink_to("/usr/bin/orca")
+        assert failover._is_forbidden_gnome_orca(str(symlink_path)) is True
+
+        monkeypatch.setenv("ORCA_CLI_COMMAND", str(symlink_path))
+        with pytest.raises(FileNotFoundError, match="GNOME screen reader"):
+            failover._run_orca_json(["account", "list"])
+        assert spawned == []
+
+        # Default POSIX lookup must look for `orca-ide` (never bare `orca`).
+        monkeypatch.delenv("ORCA_CLI_COMMAND", raising=False)
+        looked_up: list[str] = []
+
+        def _fake_which(name: str) -> str | None:
+            looked_up.append(name)
+            return None
+
+        with monkeypatch.context() as mp:
+            mp.setattr(failover.shutil, "which", _fake_which)
+            with pytest.raises(FileNotFoundError, match="orca-ide"):
+                failover._resolve_orca_executable()
+            assert looked_up == ["orca-ide"]
+
+            # Even if `shutil.which("orca-ide")` resolves to `/usr/bin/orca`, refuse before spawn.
+            mp.setattr(failover.shutil, "which", lambda _name: "/usr/bin/orca")
+            with pytest.raises(FileNotFoundError, match="GNOME screen reader"):
+                failover._run_orca_json(["account", "list"])
+            assert spawned == []
+
+    # ORCA_CLI_COMMAND pointing to a safe executable resolves cleanly.
+    fake_cli = tmp_path / "fake-orca-ide"
+    fake_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    monkeypatch.setenv("ORCA_CLI_COMMAND", str(fake_cli))
+    assert failover._resolve_orca_executable() == str(fake_cli)
+
+    # Error redaction strips Bearer, sk- keys, JWTs, quoted JSON creds, token=..., and emails.
+    # Assemble synthetic tokens dynamically so static scanners (gitleaks) never flag fixtures.
+    fake_api_key = "-".join(["sk", "synthetic", "ABCDEF1234567890"])
+    fake_jwt = ".".join(["eyJ" + "A" * 12, "eyJ" + "B" * 12, "sig_" + "C" * 12])
+    quoted_tok = "_".join(["tok", "quoted", "xyz12345"])
+    quoted_api = "_".join(["quoted", "api", "val", "999"])
+    raw_err = (
+        f"auth failed for alice.smith@example.com with Bearer secret_tok_123 "
+        f"{fake_api_key} {fake_jwt} access_token=topsecret_value "
+        f'{{"access_token": "{quoted_tok}", "api_key": "{quoted_api}"}}'
+    )
+    redacted = failover._redact_sensitive_text(raw_err)
+    assert "alice.smith@example.com" not in redacted
+    assert "al***@example.com" in redacted
+    assert "secret_tok_123" not in redacted
+    assert fake_api_key not in redacted
+    assert fake_jwt not in redacted
+    assert "topsecret_value" not in redacted
+    assert quoted_tok not in redacted
+    assert quoted_api not in redacted
+    assert "[REDACTED]" in redacted
+
+    def _failing_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=1,
+            stdout="",
+            stderr="token=my_secret_xyz for bob.jones@example.com",
+        )
+
+    monkeypatch.setattr(failover.subprocess, "run", _failing_run)
+    with pytest.raises(RuntimeError) as exc_info:
+        failover._run_orca_json(["account", "list"])
+    err_msg = str(exc_info.value)
+    assert "my_secret_xyz" not in err_msg
+    assert "bob.jones@example.com" not in err_msg
+    assert "bo***@example.com" in err_msg
+    assert "[REDACTED]" in err_msg
+
+    # Structured JSON error responses must emit only allowlisted metadata + exit code.
+    json_not_ok = json.dumps(
+        {
+            "ok": False,
+            "error": "rate_limited",
+            "code": 429,
+            "message": f'failed for carol.test@example.com {{"refresh_token": "{quoted_tok}"}}',
+            "access_token": quoted_tok,
+            "raw_payload_dump": "SENSITIVE_EXTRA_BLOB_42",
+        }
+    )
+
+    def _json_not_ok_run(
+        cmd: list[str], *args: Any, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=json_not_ok, stderr="")
+
+    monkeypatch.setattr(failover.subprocess, "run", _json_not_ok_run)
+    with pytest.raises(RuntimeError) as json_exc:
+        failover._run_orca_json(["account", "list"])
+    json_err_msg = str(json_exc.value)
+    assert "exit=0" in json_err_msg
+    assert "error=rate_limited" in json_err_msg
+    assert "code=429" in json_err_msg
+    assert "ca***@example.com" in json_err_msg
+    assert "carol.test@example.com" not in json_err_msg
+    assert quoted_tok not in json_err_msg
+    assert "SENSITIVE_EXTRA_BLOB_42" not in json_err_msg
+    assert '"access_token"' not in json_err_msg
+
+
+def test_multi_runtime_configs_and_5x5_mcp_parity(tmp_path: Path) -> None:
+    codex_cfg = tomllib.loads((REPO_ROOT / ".codex" / "config.toml").read_text("utf-8"))
+    assert "hooks" not in codex_cfg
+    features = codex_cfg.get("features", {})
+    assert features.get("fast_mode") is True
+    assert features.get("multi_agent_v2") is True
+    assert features.get("memories") is True
+    assert features.get("goals") is True
+    assert "multi_agent" not in features
+    assert features.get("hooks", False) is False
+
+    claude_cfg = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text("utf-8"))
+    ask_rules = claude_cfg.get("permissions", {}).get("ask", [])
+    assert "Edit(src/tier0_sota/risk.py)" in ask_rules
+    assert "Edit(/src/tier0_sota/risk.py)" not in ask_rules
+
+    mise_cfg = tomllib.loads((REPO_ROOT / "mise.toml").read_text("utf-8"))
+    assert mise_cfg["tools"]["node"] == "24"
+
+    # Verify scripts/preflight_resume.sh has unique # 1..# 13 gate headers (no duplicate # 12.).
+    preflight_text = (REPO_ROOT / "scripts" / "preflight_resume.sh").read_text("utf-8")
+    gate_nums = [int(m) for m in re.findall(r"(?m)^# (\d+)\.\s+", preflight_text)]
+    assert gate_nums == list(range(1, 14)), f"Unexpected preflight gate numbering: {gate_nums}"
+
+    sync_mod = _load_script_module("sync_manifest_test", "scripts/sync_manifest.py")
+    root_mcp = json.loads((REPO_ROOT / ".mcp.json").read_text("utf-8"))
+    gemini_cfg = json.loads((REPO_ROOT / ".gemini" / "settings.json").read_text("utf-8"))
+    opencode_cfg = json.loads((REPO_ROOT / "opencode.json").read_text("utf-8"))
+
+    parity = sync_mod._verify_mcp_config_parity(
+        root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg
+    )
+    assert len(parity) == 5
+
+    # Mutating args or env in any runtime config must fail parity verification.
+    drifted_codex = tomllib.loads((REPO_ROOT / ".codex" / "config.toml").read_text("utf-8"))
+    drifted_codex["mcp_servers"]["xerj"]["args"] = ["--drifted"]
+    with pytest.raises(ValueError, match=r"\.codex/config\.toml"):
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, drifted_codex, gemini_cfg, opencode_cfg
+        )
+
+    drifted_opencode = json.loads((REPO_ROOT / "opencode.json").read_text("utf-8"))
+    env_sentinel = "_".join(["SUPER", "SECRET", "ENV", "VAL", "98765"])
+    drifted_opencode["mcp"]["edgartools"]["environment"] = {"DRIFT_KEY": env_sentinel}
+    with pytest.raises(ValueError, match=r"opencode\.json") as env_exc:
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, codex_cfg, gemini_cfg, drifted_opencode
+        )
+    env_err = str(env_exc.value)
+    assert "edgartools" in env_err
+    assert "DRIFT_KEY" in env_err
+    assert env_sentinel not in env_err
+
+    # _check_zero_hooks allows explicit `[features] hooks = false` in .codex/config.toml
+    # and fails only on truthy hooks or non-empty [hooks] table.
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    (codex_dir / "config.toml").write_text("[features]\nhooks = false\n", encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is True
+    (codex_dir / "config.toml").write_text("[features]\nhooks = true\n", encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is False
+    (codex_dir / "config.toml").write_text('[hooks]\nrun = "x"\n', encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is False
+
+    llm_doc = sync_mod.build_llm_harness_manifest(REPO_ROOT)
+    assert llm_doc["live_hosted_portals_count"] == 15
+    assert llm_doc["extended_portals_count"] == 3
+    assert llm_doc["total_live_portals_count"] == 18
+    assert llm_doc["mcp_servers"]["parity_fields_verified"] == ["command", "args", "env"]
+    cmds = set(llm_doc["upstream_verification_commands"].values())
+    for expected_cmd in (
+        "just adr-check",
+        "just security",
+        "just fnox-check",
+        "just crosshair",
+        "just test-report",
+        "just mutate-risk",
+        "just reflect",
+    ):
+        assert expected_cmd in cmds, f"Missing recipe in LLM_HARNESS_MANIFEST: {expected_cmd}"

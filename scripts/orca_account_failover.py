@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,23 @@ _DEFAULT_DATA_ROOT = Path(
 )
 DEFAULT_MANIFEST_PATH = _DEFAULT_DATA_ROOT / "manifests" / "orca_account_failover_status.json"
 SUPPORTED_AGENTS = ("claude", "codex")
+_LINUX_GNOME_ORCA_PATH = Path("/usr/bin/orca")
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_CRED_KEY_PATTERN = r"(?:token|secret|key|password|authorization|cookie|bearer)"
+_DOUBLE_QUOTED_CREDENTIAL_RE = re.compile(
+    rf'(?i)("[^"]*{_CRED_KEY_PATTERN}[^"]*"\s*:\s*")((?:[^"\\]|\\.)*)(")'
+)
+_SINGLE_QUOTED_CREDENTIAL_RE = re.compile(
+    rf"(?i)('[^']*{_CRED_KEY_PATTERN}[^']*'\s*:\s*')((?:[^'\\]|\\.)*)(')"
+)
+_SECRET_TOKEN_RE = re.compile(
+    r"(?:Bearer\s+[A-Za-z0-9._~+/=-]+|"
+    r"\b(?:sk|pk|ak|PK|AK)[-_A-Za-z0-9]{12,}\b|"
+    r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|"
+    r"(?i:(?:access_token|refresh_token|api_key|secret_key|authorization|token))\s*[:=]\s*[^\s,;\"']+)"
+)
+_SAFE_ERROR_FIELDS = ("ok", "error", "code", "message")
+_SAFE_NESTED_ERROR_SUBKEYS = ("code", "type", "message")
 
 
 def _mask_email(raw: str | None) -> str:
@@ -230,10 +248,76 @@ def evaluate_agent_failover(
     }
 
 
-def _run_orca_json(args: list[str]) -> dict[str, Any]:
-    orca_exe = shutil.which("orca")
+def _redact_sensitive_text(raw: str) -> str:
+    """Mask emails, quoted JSON credentials, bearer/JWT tokens, and API key patterns."""
+    redacted = _DOUBLE_QUOTED_CREDENTIAL_RE.sub(r"\1[REDACTED]\3", str(raw))
+    redacted = _SINGLE_QUOTED_CREDENTIAL_RE.sub(r"\1[REDACTED]\3", redacted)
+    redacted = _SECRET_TOKEN_RE.sub("[REDACTED]", redacted)
+    return _EMAIL_RE.sub(lambda m: _mask_email(m.group(0)), redacted)
+
+
+def _format_safe_json_error(data: Any, *, exit_code: int) -> str:
+    """Format allowlisted JSON error metadata + exit code without dumping raw child stdout."""
+    if not isinstance(data, dict):
+        return f"exit={exit_code} non_object_json={type(data).__name__}"
+    parts: list[str] = [f"exit={exit_code}"]
+    for field in _SAFE_ERROR_FIELDS:
+        if field in data and data[field] is not None:
+            val = data[field]
+            if isinstance(val, dict):
+                subparts = [
+                    f"{sub}={_redact_sensitive_text(str(val[sub]))}"
+                    for sub in _SAFE_NESTED_ERROR_SUBKEYS
+                    if sub in val and isinstance(val[sub], (str, int, float, bool))
+                ]
+                safe_val = "{" + ", ".join(subparts) + "}" if subparts else "<dict>"
+            elif isinstance(val, (str, int, float, bool)):
+                safe_val = _redact_sensitive_text(str(val))
+            else:
+                safe_val = f"<{type(val).__name__}>"
+            parts.append(f"{field}={safe_val}")
+    return " ".join(parts)
+
+
+def _is_forbidden_gnome_orca(candidate: str) -> bool:
+    """Reject Linux GNOME screen reader (/usr/bin/orca or symlink target) on POSIX."""
+    if os.name == "nt":
+        return False
+    cand_path = Path(candidate)
+    if cand_path == _LINUX_GNOME_ORCA_PATH:
+        return True
+    try:
+        if cand_path.resolve() == _LINUX_GNOME_ORCA_PATH:
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _resolve_orca_executable() -> str:
+    """Resolve Orca CLI safely: ORCA_CLI_COMMAND -> orca-ide (POSIX) / orca (Windows)."""
+    override = os.environ.get("ORCA_CLI_COMMAND", "").strip()
+    if override:
+        if _is_forbidden_gnome_orca(override):
+            raise FileNotFoundError("Refused Linux GNOME screen reader /usr/bin/orca")
+        resolved = shutil.which(override) or (override if Path(override).is_file() else None)
+        if resolved is None:
+            raise FileNotFoundError(f"ORCA_CLI_COMMAND executable not found: {override}")
+        if _is_forbidden_gnome_orca(resolved):
+            raise FileNotFoundError("Refused Linux GNOME screen reader /usr/bin/orca")
+        return resolved
+
+    lookup_name = "orca" if os.name == "nt" else "orca-ide"
+    orca_exe = shutil.which(lookup_name)
     if orca_exe is None:
-        raise FileNotFoundError("orca CLI executable not found on PATH")
+        raise FileNotFoundError(f"Orca CLI executable ({lookup_name}) not found on PATH")
+    if _is_forbidden_gnome_orca(orca_exe):
+        raise FileNotFoundError("Refused Linux GNOME screen reader /usr/bin/orca")
+    return orca_exe
+
+
+def _run_orca_json(args: list[str]) -> dict[str, Any]:
+    orca_exe = _resolve_orca_executable()
     proc = subprocess.run(  # noqa: S603
         [orca_exe, *args, "--json"],
         capture_output=True,
@@ -242,11 +326,21 @@ def _run_orca_json(args: list[str]) -> dict[str, Any]:
         timeout=15,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or f"exit={proc.returncode}").strip()
+        raw_err = (proc.stderr or proc.stdout or "").strip()
+        if raw_err:
+            try:
+                parsed_err = json.loads(raw_err)
+            except json.JSONDecodeError:
+                detail = f"exit={proc.returncode} {_redact_sensitive_text(raw_err)}"
+            else:
+                detail = _format_safe_json_error(parsed_err, exit_code=proc.returncode)
+        else:
+            detail = f"exit={proc.returncode}"
         raise RuntimeError(f"orca {' '.join(args)} failed: {detail}")
     data = json.loads(proc.stdout)
     if not isinstance(data, dict) or not data.get("ok"):
-        raise RuntimeError(f"orca {' '.join(args)} returned not ok: {proc.stdout.strip()}")
+        detail = _format_safe_json_error(data, exit_code=proc.returncode)
+        raise RuntimeError(f"orca {' '.join(args)} returned not ok: {detail}")
     return data
 
 
@@ -408,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest_path=manifest_path,
         )
     except Exception as exc:
-        print(f"ORCA_ACCOUNT_FAILOVER_ERR: {exc}", file=sys.stderr)
+        print(f"ORCA_ACCOUNT_FAILOVER_ERR: {_redact_sensitive_text(str(exc))}", file=sys.stderr)
         return 1
 
     if args.json:

@@ -52,6 +52,20 @@ COMPANION_PORTALS: list[dict[str, str]] = [
     {"name": "otel-health", "url": "http://127.0.0.1:13133/"},
 ]
 
+EXTENDED_PORTALS: list[dict[str, str]] = [
+    {"name": "alertmanager", "url": "http://127.0.0.1:9093/-/healthy", "profile": "alerting"},
+    {
+        "name": "allure-test-reports",
+        "url": "http://127.0.0.1:8793/test-reports/allure/",
+        "served_by": "tearsheets",
+    },
+    {
+        "name": "omniroute",
+        "url": "http://127.0.0.1:20128/api/health",
+        "role": "local-automation-router",
+    },
+]
+
 LAYER_ARTIFACT_CANDIDATES: dict[str, list[str]] = {
     "L0": [
         "pyproject.toml",
@@ -258,6 +272,7 @@ _PRUNED_DIRS = frozenset(
         ".hypothesis",
         ".cache",
         "site",
+        "test-results",
     }
 )
 
@@ -1179,7 +1194,12 @@ def _check_zero_hooks(repo_root: Path) -> bool:
     codex_cfg = repo_root / ".codex" / "config.toml"
     if codex_cfg.is_file():
         parsed = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
-        if "hooks" in parsed.get("features", {}):
+        if bool(parsed.get("hooks")) or bool(parsed.get("features", {}).get("hooks")):
+            return False
+    opencode_cfg = repo_root / "opencode.json"
+    if opencode_cfg.is_file():
+        parsed_oc = json.loads(opencode_cfg.read_text(encoding="utf-8"))
+        if "hooks" in parsed_oc or parsed_oc.get("plugin"):
             return False
     return True
 
@@ -1451,6 +1471,86 @@ def _load_lane_mcp_servers(repo_root: Path, lane_rel_path: str) -> list[str]:
     return sorted(lane_doc["mcpServers"].keys())
 
 
+def _normalize_mcp_server_entry(
+    spec: dict[str, Any], *, is_opencode: bool = False
+) -> tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Normalize a single stdio MCP server entry to (command, args, sorted_env)."""
+    if not isinstance(spec, dict):
+        raise ValueError(f"MCP server entry must be a mapping: type={type(spec).__name__}")
+    spec_keys = f"keys={sorted(spec.keys())}"
+    if is_opencode:
+        cmd_list = spec.get("command")
+        if not isinstance(cmd_list, list) or not cmd_list:
+            raise ValueError(f"OpenCode MCP entry must have non-empty command list: {spec_keys}")
+        cmd = str(cmd_list[0])
+        args = tuple(str(x) for x in cmd_list[1:])
+        raw_env = spec.get("environment") or {}
+    else:
+        cmd = str(spec.get("command") or "")
+        args = tuple(str(x) for x in (spec.get("args") or ()))
+        raw_env = spec.get("env") or {}
+    if not cmd:
+        raise ValueError(f"MCP server entry missing command: {spec_keys}")
+    if not isinstance(raw_env, dict):
+        raise ValueError(
+            f"MCP server entry env must be a mapping: {spec_keys} env_type={type(raw_env).__name__}"
+        )
+    env_items = tuple(sorted((str(k), str(v)) for k, v in raw_env.items()))
+    return (cmd, args, env_items)
+
+
+def _verify_mcp_config_parity(
+    root_mcp: dict[str, Any],
+    claude_cfg: dict[str, Any],
+    codex_cfg: dict[str, Any],
+    gemini_cfg: dict[str, Any],
+    opencode_cfg: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Verify exact (command, args, env) parity across all 5 runtime MCP configs."""
+    canonical_raw = root_mcp.get("mcpServers") or {}
+    canonical = {name: _normalize_mcp_server_entry(spec) for name, spec in canonical_raw.items()}
+    raw_by_config: list[tuple[str, dict[str, Any], bool]] = [
+        (".mcp.json", canonical_raw, False),
+        (".claude/settings.json", claude_cfg.get("mcpServers") or {}, False),
+        (".codex/config.toml", codex_cfg.get("mcp_servers") or {}, False),
+        (".gemini/settings.json", gemini_cfg.get("mcpServers") or {}, False),
+        ("opencode.json", opencode_cfg.get("mcp") or {}, True),
+    ]
+    parity_names: dict[str, list[str]] = {}
+    for cfg_name, servers_map, is_opencode in raw_by_config:
+        normalized = {
+            name: _normalize_mcp_server_entry(spec, is_opencode=is_opencode)
+            for name, spec in servers_map.items()
+        }
+        if normalized != canonical:
+            diffs: list[str] = []
+            for srv_name in sorted(set(canonical) | set(normalized)):
+                actual_entry = normalized.get(srv_name)
+                expected_entry = canonical.get(srv_name)
+                if actual_entry == expected_entry:
+                    continue
+                if actual_entry is None:
+                    diffs.append(f"{srv_name}: missing_server")
+                elif expected_entry is None:
+                    diffs.append(f"{srv_name}: unexpected_server")
+                else:
+                    changed_fields: list[str] = []
+                    if actual_entry[0] != expected_entry[0]:
+                        changed_fields.append("command")
+                    if actual_entry[1] != expected_entry[1]:
+                        changed_fields.append("args")
+                    if actual_entry[2] != expected_entry[2]:
+                        actual_keys = sorted(k for k, _ in actual_entry[2])
+                        expected_keys = sorted(k for k, _ in expected_entry[2])
+                        changed_fields.append(f"env(keys={actual_keys} vs {expected_keys})")
+                    diffs.append(f"{srv_name}: fields=[{', '.join(changed_fields)}]")
+            raise ValueError(
+                f"MCP config parity mismatch in {cfg_name} vs .mcp.json: {'; '.join(diffs)}"
+            )
+        parity_names[cfg_name] = sorted(servers_map.keys())
+    return parity_names
+
+
 def build_llm_harness_manifest(
     repo_root: Path = REPO_ROOT,
     *,
@@ -1643,13 +1743,9 @@ def build_llm_harness_manifest(
         )
 
     all_portals = [*HOSTED_PORTALS, *COMPANION_PORTALS]
-    mcp_configs = {
-        ".mcp.json": sorted(root_mcp["mcpServers"].keys()),
-        ".claude/settings.json": sorted(claude_cfg["mcpServers"].keys()),
-        ".codex/config.toml": sorted(codex_cfg["mcp_servers"].keys()),
-        ".gemini/settings.json": sorted(gemini_cfg["mcpServers"].keys()),
-        "opencode.json": sorted(opencode_cfg["mcp"].keys()),
-    }
+    mcp_configs = _verify_mcp_config_parity(
+        root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg
+    )
 
     return {
         "schema_version": "tier0.llm-harness-manifest.v1",
@@ -1705,6 +1801,7 @@ def build_llm_harness_manifest(
             "transport": "native-uv-stdio",
             "canonical_servers": root_mcp["mcpServers"],
             "parity_configs": mcp_configs,
+            "parity_fields_verified": ["command", "args", "env"],
             "parity_count": f"{len(mcp_configs)}/{len(mcp_configs)}",
         },
         "skills_summary": {
@@ -1749,9 +1846,19 @@ def build_llm_harness_manifest(
         },
         "live_hosted_portals": all_portals,
         "live_hosted_portals_count": len(all_portals),
+        "extended_portals": EXTENDED_PORTALS,
+        "extended_portals_count": len(EXTENDED_PORTALS),
+        "total_live_portals_count": len(all_portals) + len(EXTENDED_PORTALS),
         "upstream_verification_commands": {
             "full_local_check": "just check",
+            "adr_check": "just adr-check",
             "strict_docs_build": "just docs-build",
+            "security_suite": "just security",
+            "fnox_check": "just fnox-check",
+            "symbolic_crosshair": "just crosshair",
+            "allure_test_report": "just test-report",
+            "mutation_audit_risk": "just mutate-risk",
+            "compounding_reflection": "just reflect",
             "pre_commit_hooks": "prek run --all-files",
             "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
             "workflow_audit": "zizmor --offline .github/workflows",

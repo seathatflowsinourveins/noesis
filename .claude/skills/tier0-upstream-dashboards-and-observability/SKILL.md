@@ -11,9 +11,10 @@ description: Enact all dashboards, Prometheus (:9090), Grafana (:3001), OpenTele
    - **OpenBB Custom Backend:** official `openbq-org` OpenBB backend (`MIT`) on `:6900` serving declarative widgets and apps manifests (`tradingview/lightweight-charts` for chart widgets).
 3. **Official 24/5 Observability (Docker Compose SOTA Stack):**
    - **OpenTelemetry Collector (`otel/opentelemetry-collector-contrib`):** Prometheus metrics `:9464/metrics` (`otelcol_*`) and health `:13133` via declarative `docker/otel-collector-config.yaml`.
-   - **Prometheus (`:9090`) & Grafana (`:3001`):** provisioned declaratively via `docker/prometheus.yml` and `docker/grafana/`.
-4. **Unmodified Official OSI Tearsheets (Caddy `:8793`) & SHAP:**
+   - **Prometheus (`:9090`), Alertmanager (`:9093`, profile `alerting`) & Grafana (`:3001`):** provisioned declaratively via `docker/prometheus.yml`, `docker/prometheus_rules.yml`, `docker/alertmanager.yml`, and `docker/grafana/`.
+4. **Unmodified Official OSI Tearsheets & Allure 3 (Caddy `:8793`) & SHAP:**
    - **NautilusTrader:** official `create_tearsheet` with `TearsheetConfig(theme="nautilus_dark")`.
    - **`ml4t-diagnostic` + `shap`:** official statistical/PBO tearsheets and `TreeExplainer` SHAP attribution.
-   - Served strictly via upstream `caddy:2.9.1-alpine` file-server on `:8793` (zero Python HTTP server shims).
+   - **Allure Report 3 (`:8793/test-reports/allure/`):** static upstream test dashboard generated via `just test-report`.
+   - Served strictly via upstream `caddy:2.11.9-alpine` (`docker/Caddyfile`, `network_mode: host`, loopback `bind 127.0.0.1`) on `:8793` and `:4213 -> 127.0.0.1:4214` Origin-normalising DuckDB UI CSRF reverse proxy (zero Python HTTP server shims).
 5. **Research, Eval & Router Control Planes:** `MLflow 3` (`:5000`), `Dagster` (`:3000`), `Optuna Dashboard` (`:8080`), `Inspect View` (`:7575`), `Zensical` (`:8010`), `XERJ` (`:9200`), `DuckDB SQL UI` (`:4213`), and `OmniRoute` (`:20128`).
