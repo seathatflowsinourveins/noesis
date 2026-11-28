@@ -1097,3 +1097,392 @@ def test_7role_multi_runtime_worker_parity_and_read_only_gatekeeper(tmp_path: Pa
         )
         with pytest.raises(ValueError, match="READ_ONLY_TOOL_NAMES"):
             sync_mod._verify_runtime_worker_parity(tmp_path, expected_roles, opencode_cfg)
+
+
+def test_live_recipes_and_systemd_unit_guardrails(tmp_path: Path) -> None:
+    """Live operations surface: recipes for both OS families, the frozen-release unit, live-key."""
+    import configparser
+    import hashlib
+    import shlex
+    import sys
+
+    risk_pin = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
+    live_exec = (
+        "fnox exec --profile live --no-defaults -- env -u APCA_API_KEY_ID -u APCA_API_SECRET_KEY "
+    )
+    live_identity = 'FNOX_AGE_KEY_FILE="$HOME/.config/fnox/live-age.txt"'
+    unit_name = "tier0-live-supervisor.service"
+    manifest_name = "RELEASE_MANIFEST.sha256"
+
+    # Recipes: a [unix] body and a [windows] proxy into the WSL distro for each of the six.
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    recipes = {
+        (name, os_name): body
+        for os_name, name, body in re.findall(
+            r"(?m)^\[(unix|windows)\]\n(live-[a-z0-9-]+)[^\n:]*:\n((?:    [^\n]*\n?)+)", just_txt
+        )
+    }
+    for name in (
+        "live-key",
+        "live-release",
+        "live-self-check",
+        "live-up",
+        "live-down",
+        "live-telemetry",
+    ):
+        assert (name, "unix") in recipes, f"justfile needs a [unix] {name} recipe"
+        assert (name, "windows") in recipes, f"justfile needs a [windows] {name} recipe"
+        unix_body, windows_body = recipes[(name, "unix")], recipes[(name, "windows")]
+        proxy = (
+            f"wsl.exe -d Noesis-SOTA --cd '{{{{justfile_directory()}}}}' -- bash -lc 'just {name}"
+        )
+        assert windows_body.strip().startswith(proxy), f"[windows] {name} must proxy into WSL"
+        assert len(windows_body.strip().splitlines()) == 1 and "fnox" not in windows_body
+        for forbidden in ("--profile paper", "/mnt/z/noesis", "api.alpaca.markets", "9223"):
+            assert forbidden not in unix_body + windows_body, f"Forbidden {forbidden!r} in {name}"
+
+    # live-key: identity and recipient checks first, then two fnox prompts. The only fnox commands
+    # are the two below, so no value can reach an argument, a pipe or a file.
+    key_body = recipes[("live-key", "unix")]
+    for token in (
+        'identity="$HOME/.config/fnox/live-age.txt"',
+        'test -f "$identity"',
+        'age-keygen -y "$identity"',
+        "age_live_recipients fnox.toml",
+        "test -t 0",
+    ):
+        assert token in key_body, f"live-key missing {token!r}"
+        assert key_body.index(token) < key_body.index("fnox set"), f"{token!r} must come first"
+    assert [ln.strip() for ln in key_body.splitlines() if ln.strip().startswith("fnox ")] == [
+        "fnox set --global --profile live --provider age_live ALPACA_LIVE_API_KEY",
+        "fnox set --global --profile live --provider age_live ALPACA_LIVE_SECRET_KEY",
+    ]
+    assert ">" not in key_body.replace(">&2", ""), "live-key must not write any file itself"
+    for forbidden in ("fnox exec", "fnox get", "--from-file", "set -x", "tee ", "read "):
+        assert forbidden not in key_body, f"Forbidden {forbidden!r} in live-key"
+
+    live_venue = "TIER0_VENUE_PROFILE=ALPACA_LIVE_PRO_LINE_1000"
+    self_check = recipes[("live-self-check", "unix")]
+    assert live_exec in self_check and live_identity in self_check
+    assert f" {live_venue} " in self_check, "the runner's live check reads the venue from here"
+    assert "-m tier0_sota.live.runner --live-self-check" in self_check
+    assert "scripts/live_release.sh --verify" in self_check
+    assert all(port in self_check for port in LIVE_PORTS)
+    assert "scripts/live_release.sh {{pytest_selection}}" in recipes[("live-release", "unix")]
+    live_up = recipes[("live-up", "unix")]
+    assert "scripts/live_release.sh --verify" in live_up
+    assert f"systemctl start {unit_name}" in live_up and "systemctl enable" not in live_up
+    assert f"docker/systemd/{unit_name} /etc/systemd/system/{unit_name}" in live_up
+    assert f"systemctl stop {unit_name}" in recipes[("live-down", "unix")]
+    telemetry = recipes[("live-telemetry", "unix")]
+    assert "fnox" not in telemetry and "live/manifests" in telemetry
+    assert "paper_farm_execution_status.json" in telemetry
+    assert "lossless_coverage_manifest.json" in telemetry
+
+    # The unit: frozen release, hash pre-check, bounded on-failure restart, live profile only.
+    unit_bytes = (REPO_ROOT / "docker" / "systemd" / unit_name).read_bytes()
+    assert b"\r" not in unit_bytes, f"{unit_name} must use LF line endings"
+    unit_text = unit_bytes.decode("utf-8")
+    unit = configparser.ConfigParser(strict=False, interpolation=None)
+    unit.optionxform = lambda optionstr: optionstr
+    unit.read_string(unit_text)
+    assert unit["Unit"]["StartLimitIntervalSec"] == "300"
+    assert unit["Unit"]["StartLimitBurst"] == "5"
+    assert unit["Service"]["Restart"] == "on-failure"
+    assert unit["Service"]["Type"] == "simple" and unit["Service"]["User"] == "sota"
+    # No home path is written in the unit (repository privacy rule): it starts in the service
+    # user's home and every command that touches the code enters the current release first.
+    assert unit["Service"]["WorkingDirectory"] == "~"
+    assert f"\nEnvironment={live_venue}\n" in unit_text
+    assert "Environment=PYTHONPATH" not in unit_text, "PYTHONPATH is set from the resolved path"
+    for forbidden in (
+        "/mnt/z/noesis",
+        "/home/",
+        "--profile paper",
+        '/age.txt"',
+        "%h",
+        "bash -lc",
+        "uv run",
+        "LIVE_EXECUTION_ENABLED",
+        "api.alpaca.markets",
+    ):
+        assert forbidden not in unit_text, f"Forbidden {forbidden!r} in {unit_name}"
+    enter_release = 'cd "$HOME/tier0-live-releases/current" && '
+    pre_checks = re.findall(r"(?m)^ExecStartPre=(.*)$", unit_text)
+    (exec_start,) = re.findall(r"(?m)^ExecStart=(.*)$", unit_text)
+    pre_text = "\n".join(pre_checks)
+    assert f"sha256sum --quiet --strict -c {manifest_name}" in pre_text
+    assert "src/tier0_sota/risk.py" in pre_text and risk_pin in pre_text
+    assert ":(" + "|".join(LIVE_PORTS) + ")" in pre_text
+    for line in (*(ln for ln in pre_checks if "ss -lntH" not in ln), exec_start):
+        assert line.startswith(f"/usr/bin/env bash -c '{enter_release}"), line
+    assert live_exec in exec_start and live_identity in exec_start
+    assert exec_start.index("env -u APCA_API_KEY_ID") < exec_start.index("tier0_sota.live.runner")
+    assert exec_start.rstrip("'").endswith("-m tier0_sota.live.runner --supervise-live")
+    assert 'PYTHONPATH="$(pwd -P)/src"' in exec_start, "the release path must be resolved once"
+
+    # Live alert group: tier0_live_* metrics only, with the windows the risk review asked for.
+    rules_doc = yaml.safe_load((REPO_ROOT / "docker" / "prometheus_rules.yml").read_text("utf-8"))
+    (live_group,) = [g for g in rules_doc["groups"] if g["name"] == "tier0_sota_live_lane_alerts"]
+    live_rules = {rule["alert"]: rule for rule in live_group["rules"]}
+    for rule in live_rules.values():
+        metrics = re.findall(r"\btier0_[a-z0-9_]+", rule["expr"])
+        assert metrics and all(m.startswith("tier0_live_") for m in metrics), rule["alert"]
+        assert rule["labels"]["lane"] == "live"
+    unprotected = live_rules["Tier0LiveUnprotectedShares"]
+    assert unprotected["expr"] == "max(tier0_live_unprotected_shares_count) > 0"
+    assert unprotected["for"] == "10s"
+    guard_price = live_rules["Tier0LiveGuardPriceStale"]
+    assert guard_price["expr"] == "max by (symbol) (tier0_live_guard_price_age_seconds) > 10"
+    assert guard_price["for"] == "20s"
+    heartbeat_exprs = {
+        live_rules["Tier0LiveCoverageAuditorHeartbeatStale"]["expr"],
+        live_rules["Tier0LiveSupervisorHeartbeatStale"]["expr"],
+    }
+    assert heartbeat_exprs == {
+        "max(tier0_live_auditor_heartbeat_age_seconds) > 30",
+        "max(tier0_live_supervisor_heartbeat_age_seconds) > 90",
+    }
+    assert live_rules["Tier0LiveProtectionFaultRepeated"]["expr"] == (
+        "max by (symbol) (tier0_live_protection_fault_consecutive_count) >= 3"
+    )
+
+    # The release script: LF, no way to skip a gate, no secret handling.
+    script_path = REPO_ROOT / "scripts" / "live_release.sh"
+    script_bytes = script_path.read_bytes()
+    assert b"\r" not in script_bytes, "scripts/live_release.sh must use LF line endings"
+    script_text = script_bytes.decode("utf-8")
+    assert script_text.startswith("#!/usr/bin/env bash\n")
+    for token in (
+        risk_pin,
+        'RELEASES_ROOT="$HOME/tier0-live-releases"',
+        f'MANIFEST_NAME="{manifest_name}"',
+        "ruff format --check src tests scripts evals",
+        "ruff check .",
+        "ty check",
+        "ast-grep scan --config sgconfig.yml",
+        'pytest -q -p no:cacheprovider "$@"',
+    ):
+        assert token in script_text, f"scripts/live_release.sh missing {token!r}"
+    for forbidden in ("--skip", "--force", "--no-verify", "fnox", "ALPACA_", "APCA_"):
+        assert forbidden not in script_text, f"Forbidden {forbidden!r} in scripts/live_release.sh"
+
+    found_bash = shutil.which("bash")
+    if found_bash is None or found_bash.lower().endswith("\\system32\\bash.exe"):
+        return
+    bash_exe: str = found_bash
+    syntax = subprocess.run(
+        [bash_exe, "-n", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert syntax.returncode == 0, f"bash -n failed: {syntax.stderr or syntax.stdout}"
+    shellcheck_exe = shutil.which("shellcheck")
+    if shellcheck_exe is not None:
+        lint = subprocess.run(
+            [shellcheck_exe, str(script_path)], capture_output=True, text=True, check=False
+        )
+        assert lint.returncode == 0, f"shellcheck failed: {lint.stderr or lint.stdout}"
+    if os.name != "posix" or shutil.which("sha256sum") is None:
+        return
+
+    # Functional: a sandbox checkout and HOME, with a stub `uv` first on PATH standing in for the
+    # gates. Nothing here reads the real HOME, the real releases or a real gate.
+    repo, home, stub_bin = tmp_path / "repo", tmp_path / "home", tmp_path / "bin"
+    package = repo / "src" / "tier0_sota"
+    for folder in (repo / "scripts", package / "__pycache__", repo / "tests", home, stub_bin):
+        folder.mkdir(parents=True)
+    shutil.copyfile(script_path, repo / "scripts" / "live_release.sh")
+    shutil.copyfile(REPO_ROOT / "src" / "tier0_sota" / "risk.py", package / "risk.py")
+    (package / "__init__.py").write_text('"""Sandbox package."""\n', encoding="utf-8")
+    (package / "__pycache__" / "risk.cpython-313.pyc").write_bytes(b"bytecode cache")
+    (repo / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    uv_log = tmp_path / "uv.log"
+    uv_stub = stub_bin / "uv"
+    uv_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >>"$UV_STUB_LOG"\n'
+        'if [[ -n "${UV_STUB_EDIT:-}" && " $* " == *" pytest "* ]]; then\n'
+        '  echo "# edited while the gates ran" >>"$UV_STUB_EDIT"\n'
+        "fi\n"
+        'if [[ " $* " == *" $UV_STUB_FAIL "* ]]; then exit 1; fi\n',
+        encoding="utf-8",
+    )
+    uv_stub.chmod(0o700)
+    env = {
+        "HOME": str(home),
+        "PATH": os.pathsep.join((str(stub_bin), "/usr/bin", "/bin")),
+        "UV_STUB_LOG": str(uv_log),
+        "UV_STUB_FAIL": "<no gate>",
+    }
+    releases = home / "tier0-live-releases"
+    current = releases / "current"
+
+    def cut(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [bash_exe, str(repo / "scripts" / "live_release.sh"), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+            env=env | extra,
+        )
+
+    def unit_pre_check(marker: str, service_home: Path = home) -> int:
+        (line,) = [ln for ln in pre_checks if marker in ln]
+        argv = shlex.split(line)
+        # No backslash: shlex and systemd read the line the same way.
+        assert argv[:3] == ["/usr/bin/env", "bash", "-c"] and len(argv) == 4 and "\\" not in line
+        done = subprocess.run(
+            [bash_exe, "-c", argv[3]],
+            capture_output=True,
+            check=False,
+            cwd=tmp_path,
+            env=env | {"HOME": str(service_home)},
+        )
+        return done.returncode
+
+    # A selection that is not a test path is refused before any gate runs.
+    for bad_selection in (("-k", "test_ok"), ("--collect-only",), ("tests/missing.py",)):
+        refused = cut(*bad_selection)
+        assert refused.returncode != 0 and "REFUSED" in refused.stderr
+    assert not uv_log.exists() and not releases.exists()
+
+    # A checkout whose risk kernel is not the pinned one is refused before any gate runs.
+    pinned_kernel = (package / "risk.py").read_bytes()
+    (package / "risk.py").write_bytes(pinned_kernel + b"# edited\n")
+    unpinned = cut("tests/test_ok.py")
+    assert unpinned.returncode != 0 and "not the pinned risk kernel" in unpinned.stderr
+    (package / "risk.py").write_bytes(pinned_kernel)
+    assert not uv_log.exists() and not releases.exists()
+
+    # A failing gate cuts nothing.
+    failed = cut("tests/test_ok.py", UV_STUB_FAIL="ty check")
+    assert failed.returncode != 0 and "gate typecheck failed" in failed.stderr
+    assert not releases.exists()
+
+    cut_ok = cut("tests/test_ok.py")
+    assert cut_ok.returncode == 0, f"release failed: {cut_ok.stderr}"
+    assert "LIVE_RELEASE_OK" in cut_ok.stdout
+    assert uv_log.read_text(encoding="utf-8").splitlines()[-5:] == [
+        "run --no-sync ruff format --check src tests scripts evals",
+        "run --no-sync ruff check .",
+        "run --no-sync ty check",
+        "run --no-sync ast-grep scan --config sgconfig.yml",
+        "run --no-sync pytest -q -p no:cacheprovider tests/test_ok.py",
+    ]
+    assert current.is_symlink() and current.resolve().parent == releases.resolve()
+    first_release = os.readlink(current)
+    assert sorted(p.name for p in current.iterdir()) == [manifest_name, "src"]
+    released = {
+        p.relative_to(current).as_posix(): p for p in (current / "src").rglob("*") if p.is_file()
+    }
+    assert sorted(released) == ["src/tier0_sota/__init__.py", "src/tier0_sota/risk.py"]
+    manifest_lines = (current / manifest_name).read_text(encoding="utf-8").splitlines()
+    assert f"# risk_py_sha256={risk_pin}" in manifest_lines
+    assert "# pytest_selection=tests/test_ok.py" in manifest_lines
+    assert sorted(ln for ln in manifest_lines if not ln.startswith("#")) == sorted(
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {rel}" for rel, path in released.items()
+    )
+    assert all(not (p.stat().st_mode & 0o222) for p in released.values()), "release is read-only"
+
+    def verify() -> subprocess.CompletedProcess[str]:
+        return cut("--verify")
+
+    verified = verify()
+    assert verified.returncode == 0 and "LIVE_RELEASE_VERIFIED" in verified.stdout
+    assert unit_pre_check(manifest_name) == 0
+    assert unit_pre_check("risk.py") == 0
+    venv_bin = home / "noesis" / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(sys.executable)
+    assert unit_pre_check("find_spec") == 0, "tier0_sota must resolve inside the release"
+    # A release that does not hold the package: wherever else it resolves, the start is refused.
+    other_home = tmp_path / "other_home"
+    (other_home / "tier0-live-releases" / "current" / "src").mkdir(parents=True)
+    (other_home / "noesis" / ".venv" / "bin").mkdir(parents=True)
+    (other_home / "noesis" / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    assert unit_pre_check("find_spec", other_home) != 0
+
+    # ExecStart with stand-ins for fnox and the interpreter: what reaches fnox, and that the
+    # supervisor process loses the paper data keys even when fnox's environment carries them.
+    exec_log = tmp_path / "exec_start.log"
+    fnox_stub = home / ".local" / "bin" / "fnox"
+    fnox_stub.parent.mkdir(parents=True)
+    fnox_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "fnox %s\\n%s\\n%s\\n" "$*" "$PYTHONPATH" "$FNOX_AGE_KEY_FILE" >"$EXEC_START_LOG"\n'
+        'while [[ "$1" != "--" ]]; do shift; done\n'
+        "shift\n"
+        'APCA_API_KEY_ID=paper-id APCA_API_SECRET_KEY=paper-secret exec "$@"\n',
+        encoding="utf-8",
+    )
+    fnox_stub.chmod(0o700)
+    python_stub = venv_bin / "python"
+    python_stub.unlink()
+    python_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "python %s\\npaper data keys: %s%s\\n" "$*" '
+        '"${APCA_API_KEY_ID:-}" "${APCA_API_SECRET_KEY:-}" >>"$EXEC_START_LOG"\n',
+        encoding="utf-8",
+    )
+    python_stub.chmod(0o700)
+    start_argv = shlex.split(exec_start)
+    assert start_argv[:3] == ["/usr/bin/env", "bash", "-c"] and len(start_argv) == 4
+    assert "\\" not in exec_start
+    started = subprocess.run(
+        [bash_exe, "-c", start_argv[3]],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env | {"EXEC_START_LOG": str(exec_log), "APCA_API_KEY_ID": "inherited-id"},
+    )
+    assert started.returncode == 0, f"ExecStart failed: {started.stderr}"
+    runner_args = "-P -B -m tier0_sota.live.runner --supervise-live"
+    assert exec_log.read_text(encoding="utf-8").splitlines() == [
+        f"{live_exec}{python_stub} {runner_args}",
+        f"{current.resolve()}/src",
+        f"{home}/.config/fnox/live-age.txt",
+        f"python {runner_args}",
+        "paper data keys: ",
+    ]
+
+    # src/ edited while the gates run: nothing is released and `current` stays where it was.
+    raced = cut("tests/test_ok.py", UV_STUB_EDIT=str(package / "__init__.py"))
+    assert raced.returncode != 0 and "src/ changed while the gates ran" in raced.stderr
+    assert os.readlink(current) == first_release
+    assert sorted(p.name for p in releases.iterdir()) == sorted(("current", first_release))
+
+    # A file added to the release, then a changed file: the script's check and the unit's
+    # pre-check refuse each one, and pass again once it is undone.
+    release_dir = current.resolve()
+    release_package = release_dir / "src" / "tier0_sota"
+    release_package.chmod(0o700)
+    added = release_package / "added.py"
+    added.write_text("ADDED = True\n", encoding="utf-8")
+    assert verify().returncode != 0 and unit_pre_check(manifest_name) != 0
+    added.unlink()
+    assert verify().returncode == 0 and unit_pre_check(manifest_name) == 0
+    release_init = release_package / "__init__.py"
+    frozen_init = release_init.read_bytes()
+    release_init.chmod(0o600)
+    release_init.write_bytes(frozen_init + b"# changed after release\n")
+    assert verify().returncode != 0 and unit_pre_check(manifest_name) != 0
+    release_init.write_bytes(frozen_init)
+    assert verify().returncode == 0 and unit_pre_check(manifest_name) == 0
+
+    # A changed risk kernel under a manifest rewritten to match it: the manifest alone cannot
+    # tell, the pinned kernel hash does.
+    release_risk = release_package / "risk.py"
+    release_risk.chmod(0o600)
+    release_risk.write_bytes(release_risk.read_bytes() + b"# changed after release\n")
+    (release_dir / manifest_name).chmod(0o600)
+    (release_dir / manifest_name).write_text(
+        "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {rel}\n"
+            for rel, path in sorted(released.items())
+        ),
+        encoding="utf-8",
+    )
+    assert unit_pre_check(manifest_name) == 0
+    assert unit_pre_check("risk.py") != 0
+    assert verify().returncode != 0

@@ -10,9 +10,9 @@
 - [ ] `uv run ast-grep scan --config sgconfig.yml` and `uv run deptry .` report `0` issues.
 - [ ] All GitHub Actions in `.github/workflows/` are full-commit-SHA pinned, least-privilege (`persist-credentials: false`), and pass `zizmor --offline .github/workflows` with `0` findings.
 
-### Immutable Risk Kernel & Fail-Closed Paper-Only Boundary
+### Risk Kernel, Lossless Coverage & Live Tier Gate
 - [ ] `src/tier0_sota/risk.py` is **untouched** (SHA-256 `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`) and `uv run python evals/formal_risk_z3.py` emits `Z3_FORMAL_RISK_PROOFS_UNSAT_OK=1`.
-- [ ] Fail-closed safety invariants preserved: `paper_only=True`, `live_execution_enabled=False`, and zero live broker endpoints or live ports (`4001`, `7496`, `8798`, `8796`).
+- [ ] Safety invariants preserved: `src/tier0_sota/risk.py` invariants, lossless trailing coverage (no share held without a protective trailing order), and the live tier gate (`ADR-0029`; `live_execution_enabled=False` means tier 3 is off); IBKR live ports (`4001`, `7496`, `8798`, `8796`) stay unwired.
 - [ ] No secrets, `.env*` files (other than `.env.example`), hardcoded home paths, or broker account identifiers committed (`gitleaks` reports `0` leaks).
 
 ### Zero Legacy References, Manifest & Docs Parity

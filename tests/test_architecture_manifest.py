@@ -130,7 +130,7 @@ def test_layers_l0_to_l10_and_spdx_firewall() -> None:
 
     ast_rules_text = (REPO_ROOT / "rules" / "zero_self_invention.yml").read_text(encoding="utf-8")
     rule_ids = re.findall(r"(?m)^id:\s*(\S+)", ast_rules_text)
-    assert len(rule_ids) == 22 and len(set(rule_ids)) == 22
+    assert len(rule_ids) == 24 and len(set(rule_ids)) == 24
     assert "no-handbuilt-plotly-chart" in rule_ids
 
 

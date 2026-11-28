@@ -358,6 +358,93 @@ paper-farm *args:
     active=$(ss -Htan '( sport = :4001 or dport = :4001 or sport = :7496 or dport = :7496 or sport = :8798 or dport = :8798 or sport = :8796 or dport = :8796 )'); test -z "$active"
     ibkr_tcp=0; if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/4002' 2>/dev/null; then ibkr_tcp=1; fi; IBKR_PAPER_TCP_REACHABLE="$ibkr_tcp" FNOX_AGE_KEY_FILE="${FNOX_AGE_KEY_FILE:-$HOME/.config/fnox/age.txt}" PYTHONPATH="$PWD/src" TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" {{uv_prefix}}fnox exec --profile paper -- uv run --no-sync python -m tier0_sota.live.runner {{if args == "" { "--observe" } else { args }}}
 
+# Store the Alpaca LIVE key pair as age_live ciphertext in the user-level fnox config (hidden fnox prompt; never an argument, a log or a repository file)
+[unix]
+live-key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    identity="$HOME/.config/fnox/live-age.txt"
+    user_config="$HOME/.config/fnox/config.toml"
+    age_live_recipients() { sed -n '/^\[profiles\.live\.providers\.age_live\]/,/^\[/p' "$1" | grep -oE 'age1[0-9a-z]+' || true; }
+    refuse() { echo "live-key: $1; nothing was stored" >&2; exit 1; }
+    test -t 0 || refuse "needs an interactive terminal, because fnox asks for each value with hidden input"
+    test -f "$identity" || refuse "missing live age identity $identity"
+    public_key="$(age-keygen -y "$identity")"
+    test -n "$public_key" || refuse "no public key could be derived from $identity"
+    test "$(age_live_recipients fnox.toml)" = "$public_key" || refuse "the live identity's public key is not the one age_live recipient in fnox.toml"
+    if test -f "$user_config" && test -n "$(age_live_recipients "$user_config")"; then
+      test "$(age_live_recipients "$user_config")" = "$public_key" || refuse "the live identity's public key is not the one age_live recipient in $user_config"
+    fi
+    echo "live-key: the live identity matches the age_live recipient; fnox asks for each value (input hidden)"
+    fnox set --global --profile live --provider age_live ALPACA_LIVE_API_KEY
+    fnox set --global --profile live --provider age_live ALPACA_LIVE_SECRET_KEY
+    echo "live-key: stored as age_live ciphertext in $user_config; check with: just live-self-check"
+
+# Store the Alpaca LIVE key pair as age_live ciphertext in the user-level fnox config (hidden fnox prompt; never an argument, a log or a repository file)
+[windows]
+live-key:
+    wsl.exe -d Noesis-SOTA --cd '{{justfile_directory()}}' -- bash -lc 'just live-key'; exit $LASTEXITCODE
+
+# Cut a frozen, hash-manifested release of src/ for the live supervisor (refuses unless ruff, ty, ast-grep and the pytest selection pass; no selection = whole suite)
+[unix]
+live-release *pytest_selection:
+    {{cache_prefix}}{{uv_prefix}}bash scripts/live_release.sh {{pytest_selection}}
+
+# Cut a frozen, hash-manifested release of src/ for the live supervisor (refuses unless ruff, ty, ast-grep and the pytest selection pass; no selection = whole suite)
+[windows]
+live-release *pytest_selection:
+    wsl.exe -d Noesis-SOTA --cd '{{justfile_directory()}}' -- bash -lc 'just live-release {{pytest_selection}}'; exit $LASTEXITCODE
+
+# Run the live lane's self-check from the current frozen release under the fnox live profile (reads only, places nothing)
+[unix]
+live-self-check *args:
+    bash scripts/live_release.sh --verify
+    test -z "$(ss -lntH | grep -E ':(4001|7496|8798|8796)\b' || true)"
+    cd "$(readlink -f "$HOME/tier0-live-releases/current")" && PYTHONPATH="$PWD/src" "{{wsl_venv}}/bin/python" -P -B -c 'import importlib.util as u, os, sys; sys.exit(not os.path.realpath(u.find_spec(sys.argv[1]).origin).startswith(os.path.realpath(sys.argv[2]) + os.sep))' tier0_sota src
+    cd "$(readlink -f "$HOME/tier0-live-releases/current")" && FNOX_AGE_KEY_FILE="$HOME/.config/fnox/live-age.txt" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/src" TIER0_VENUE_PROFILE=ALPACA_LIVE_PRO_LINE_1000 TIER0_DATA_ROOT="${TIER0_DATA_ROOT:-/mnt/z/sota-data}" fnox exec --profile live --no-defaults -- env -u APCA_API_KEY_ID -u APCA_API_SECRET_KEY "{{wsl_venv}}/bin/python" -P -B -m tier0_sota.live.runner --live-self-check {{args}}
+
+# Run the live lane's self-check from the current frozen release under the fnox live profile (reads only, places nothing)
+[windows]
+live-self-check *args:
+    wsl.exe -d Noesis-SOTA --cd '{{justfile_directory()}}' -- bash -lc 'just live-self-check {{args}}'; exit $LASTEXITCODE
+
+# Start the live supervisor unit on the current frozen release (verifies the release and that the installed unit is the repository unit)
+[unix]
+live-up:
+    bash scripts/live_release.sh --verify
+    cmp -s docker/systemd/tier0-live-supervisor.service /etc/systemd/system/tier0-live-supervisor.service || { echo "live-up: the installed unit is missing or differs from docker/systemd/tier0-live-supervisor.service; install it with: sudo install -m 0644 docker/systemd/tier0-live-supervisor.service /etc/systemd/system/ && sudo systemctl daemon-reload" >&2; exit 1; }
+    sudo systemctl start tier0-live-supervisor.service
+    systemctl is-active tier0-live-supervisor.service
+
+# Start the live supervisor unit on the current frozen release (verifies the release and that the installed unit is the repository unit)
+[windows]
+live-up:
+    wsl.exe -d Noesis-SOTA --cd '{{justfile_directory()}}' -- bash -lc 'just live-up'; exit $LASTEXITCODE
+
+# Stop the live supervisor unit (cancels and flattens nothing; resting broker-side stops stay at the broker)
+[unix]
+live-down:
+    sudo systemctl stop tier0-live-supervisor.service
+    @systemctl is-active tier0-live-supervisor.service || true
+    @echo "live-down: the supervisor is stopped; open positions keep only their resting broker-side stops, which trigger in the regular session only"
+
+# Stop the live supervisor unit (cancels and flattens nothing; resting broker-side stops stay at the broker)
+[windows]
+live-down:
+    wsl.exe -d Noesis-SOTA --cd '{{justfile_directory()}}' -- bash -lc 'just live-down'; exit $LASTEXITCODE
+
+# Print the live lane's supervisor status and lossless coverage manifest (reads local files only; decrypts nothing, contacts no broker)
+[unix]
+live-telemetry:
+    @echo "=== tier0-live-supervisor.service ==="
+    @systemctl is-active tier0-live-supervisor.service || true
+    @status=0; for name in paper_farm_execution_status.json lossless_coverage_manifest.json; do path="${TIER0_DATA_ROOT:-/mnt/z/sota-data}/live/manifests/$name"; echo "=== $path ==="; cat "$path" || status=1; echo; done; exit "$status"
+
+# Print the live lane's supervisor status and lossless coverage manifest (reads local files only; decrypts nothing, contacts no broker)
+[windows]
+live-telemetry:
+    wsl.exe -d Noesis-SOTA --cd '{{justfile_directory()}}' -- bash -lc 'just live-telemetry'; exit $LASTEXITCODE
+
 # Run full fail-closed ecosystem automation cycle (reconcile -> portals/TV -> scan -> paper-farm -> reflect -> verify)
 [windows]
 automate: resume

@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 212,
+    "repository_files_count": 217,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -172,9 +172,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 28,
+    "total_adrs": 29,
     "counts_by_status": {
-      "accepted": 24,
+      "accepted": 25,
       "superseded": 4
     },
     "supersession_edges": [
@@ -211,7 +211,8 @@
         "ADR-0022",
         "ADR-0023",
         "ADR-0025",
-        "ADR-0026"
+        "ADR-0026",
+        "ADR-0029"
       ],
       "L1": [
         "ADR-0001",
@@ -288,7 +289,8 @@
         "ADR-0016",
         "ADR-0019",
         "ADR-0020",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0029"
       ],
       "L4": [
         "ADR-0001",
@@ -299,7 +301,8 @@
         "ADR-0014",
         "ADR-0019",
         "ADR-0020",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0029"
       ],
       "L5": [
         "ADR-0001",
@@ -339,7 +342,8 @@
         "ADR-0024",
         "ADR-0025",
         "ADR-0026",
-        "ADR-0028"
+        "ADR-0028",
+        "ADR-0029"
       ],
       "L8": [
         "ADR-0001",
@@ -358,12 +362,13 @@
         "ADR-0024",
         "ADR-0025",
         "ADR-0026",
-        "ADR-0027"
+        "ADR-0027",
+        "ADR-0029"
       ]
     },
-    "fitness_bound_accepted_ratio": "24/24",
+    "fitness_bound_accepted_ratio": "25/25",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "e076ffd23a395859a309662fa561b98e08d616bf9055efbd8913392619eb702e"
+    "corpus_sha256": "22495669e1088380091456a2c622fc59f047bfcf7bc7fe48d07c619e6ba5a73f"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -630,7 +635,8 @@
         "docs/adr/ADR-0025.md",
         "docs/adr/ADR-0026.md",
         "docs/adr/ADR-0027.md",
-        "docs/adr/ADR-0028.md"
+        "docs/adr/ADR-0028.md",
+        "docs/adr/ADR-0029.md"
       ]
     },
     "L7": {
@@ -930,6 +936,7 @@
     "docker/prometheus_rules.yml",
     "docker/systemd/tier0-compounding-loop.service",
     "docker/systemd/tier0-compounding-loop.timer",
+    "docker/systemd/tier0-live-supervisor.service",
     "docker/systemd/tier0-paper-farm-execution.service",
     "docker/systemd/tier0-workstation-sota-guard.service",
     "docker/systemd/tier0-workstation-sota-guard.timer",
@@ -968,6 +975,7 @@
     "docs/adr/ADR-0026.md",
     "docs/adr/ADR-0027.md",
     "docs/adr/ADR-0028.md",
+    "docs/adr/ADR-0029.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
@@ -1000,6 +1008,7 @@
     "scripts/grand_reset/03_hosted_stack_tv_paper.ps1",
     "scripts/grand_reset/verify_grand_reset.ps1",
     "scripts/launch_clean_lanes.ps1",
+    "scripts/live_release.sh",
     "scripts/nautilus_mcp_server.py",
     "scripts/orca_account_failover.py",
     "scripts/paper_farm_loop_hidden.pyw",
@@ -1047,6 +1056,8 @@
     "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",
     "tests/test_live_merit.py",
+    "tests/test_live_runner_modes.py",
+    "tests/test_live_tiers.py",
     "tests/test_mcp_server.py",
     "tests/test_ml4t_shap_tearsheets.py",
     "tests/test_nonstop_compounding_loop.py",

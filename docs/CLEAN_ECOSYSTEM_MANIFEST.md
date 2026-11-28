@@ -3,8 +3,8 @@
 - **Generated:** 2026-11-26
 - **Target Standalone Repository:** `Z:\noesis` (`$env:TIER0_REPO_ROOT`, branch `main`, Python 3.13 via `uv` + `mise` + `just`)
 - **Immutable Risk Kernel SHA-256 (`src/tier0_sota/risk.py`):** `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`
-- **Live Execution Guard:** `live_execution_enabled = False`, `paper_only = True`, zero live broker ports (`:4001`, `:7496`, `:8798`, `:8796`)
-- **Zero Self-Invention Policy:** Enforced strictly through official upstream gates (`ast-grep`, `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `zizmor`, `trivy`, `syft`, GitHub `CodeQL`/`Dependabot`, `z3-solver`, `just adr-check`, `zero_paper_winners_audit`, immutable `risk.py` SHA-256, and `live_execution_enabled = False`) with zero arbitrary LOC caps.
+- **Live Tier Gate:** `risk.py` invariants and lossless trailing coverage hold in every lane; live operations follow the three tiers of [ADR-0029](adr/ADR-0029.md) on `ALPACA_LIVE_PRO_LINE_1000` (`live_execution_enabled = False` means tier 3 is off); IBKR live ports (`:4001`, `:7496`, `:8798`, `:8796`) are not wired
+- **Zero Self-Invention Policy:** Enforced strictly through official upstream gates (`ast-grep`, `uv.lock`, `deptry`, `ruff`, `ty`, `prek`, `gitleaks`, `zizmor`, `trivy`, `syft`, GitHub `CodeQL`/`Dependabot`, `z3-solver`, `just adr-check`, `zero_paper_winners_audit`, immutable `risk.py` SHA-256, and the live tier gate, where `live_execution_enabled = False` means tier 3 is off) with zero arbitrary LOC caps.
 
 ---
 
@@ -14,7 +14,7 @@
 |---|---|---|
 | `justfile` | Cross-platform declarative task runner | Official upstream `just` wrapping `uv`, `adr-check`, `fnox-check`, `scan`, `paper-farm`, `ruff`, `ty`, `deptry`, `ast-grep`, `sync_manifest.py`, `pytest`, `zensical`, `prek`, `gitleaks`, `zizmor`, `trivy`, `preflight`, `resume`, `reflect`, `account-status`, `open-agy`, `open-agy-wsl`, and `docker compose` |
 | `mise.toml` | Declarative upstream CLI registry | Pins 12 official upstream CLIs (`python`, `uv`, `just`, `ruff`, `gitleaks`, `trivy`, `zizmor`, `syft`, `prek`, `ast-grep`, `fnox`, `age`) |
-| `fnox.toml` | Encrypted secret profiles (`jdx/fnox` + `age`) | Zero-plaintext `age` ciphertexts (`default`/`data`, `paper`, isolated dormant `live` per [ADR-0023](adr/ADR-0023.md)) with out-of-repo private key (`~/.config/fnox/age.txt`) |
+| `fnox.toml` | Encrypted secret profiles (`jdx/fnox` + `age`) | Zero-plaintext `age` ciphertexts (`default`/`data`, `paper`, isolated `live` per [ADR-0023](adr/ADR-0023.md) and [ADR-0029](adr/ADR-0029.md)) with out-of-repo private key (`~/.config/fnox/age.txt`) |
 | `scripts/sync_manifest.py` | Programmatic SSOT manifest & ADR validator | Derives `ARCHITECTURE_MANIFEST.json` (`adr_graph`, `clean_sota_harness`) & `LLM_HARNESS_MANIFEST.json` deterministically from `upstream-map.toml`, living MADR 4.0 ADRs (`ADR-0001..ADR-0025+`), real repo files, and `risk.py` SHA-256 (`--write` / `--check`) |
 | `.pre-commit-config.yaml` | Upstream pre-commit hooks (`prek`) | Installed locally via `prek install` (`check-merge-conflict`, `check-toml`, `check-json`, `ruff-check`, `ruff-format`, `gitleaks`, `shellcheck`, `zizmor`, `ty`, `ast-grep`) |
 | `.github/workflows/{ci,security,docs,release,multi-model-sota}.yml` | Hardened upstream GitHub Actions suite | Full 40-char commit SHA pins, least-privilege `permissions`, `persist-credentials: false`, `zizmor --offline --persona=pedantic` (`0` findings), CycloneDX SBOM via `syft` on release, `trivy`, `gitleaks`, native `CodeQL`/`Dependabot`, and OmniRoute/Anthropic/OpenAI workflow |

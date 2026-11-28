@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from functools import lru_cache
 from types import MappingProxyType
-from typing import Any, Literal, NamedTuple, Self, overload
+from typing import Any, Literal, NamedTuple, Self, get_args, overload
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -39,7 +39,12 @@ __all__ = [
     "EXIT_TAG",
     "FORBIDDEN_LIVE_IBKR_PORTS",
     "IBKR_OUTSIDE_RTH_TAG",
+    "LIVE_TIERED_VENUE_ID",
+    "LIVE_VENUE_INTENT_GRANTS",
     "POOLED_TRAILING_SCHEDULES",
+    "REENTRY_MAX_ATTEMPTS_PER_SESSION",
+    "REGIME_FLIP_MIN_GENERATIONS",
+    "REGIME_FLIP_MIN_SECONDS",
     "SESSION_PROTECTION_24X5",
     "SIP_23X5_CUTOVER_DATE",
     "SUPPORTED_TRAILING_OFFSET_TYPES",
@@ -50,6 +55,7 @@ __all__ = [
     "SignalExecutionConfig",
     "SignalExecutionStrategy",
     "UsEquitySessionBoundsET",
+    "VenueOrderIntent",
     "build_ibkr_paper_connection_spec",
     "build_sandbox_live_node",
     "build_venue_live_node_config",
@@ -93,6 +99,27 @@ VenueProfileId = Literal[
     "ALPACA_LIVE_PRO_LINE_1000",
     "ALPACA_LIVE_ELITE_SMART_ROUTER",
 ]
+VenueOrderIntent = Literal[
+    "READ_ONLY",
+    "PROTECTIVE",
+    "OWNER_LINEAGE_ENTRY",
+    "OPERATOR_CONFIRMED_ENTRY",
+    "AUTONOMOUS_ENTRY",
+]
+_VENUE_ORDER_INTENTS: tuple[VenueOrderIntent, ...] = get_args(VenueOrderIntent)
+LIVE_TIERED_VENUE_ID = "ALPACA_LIVE_PRO_LINE_1000"
+# Tiers 1-2 on the single tiered LIVE venue. AUTONOMOUS_ENTRY (tier 3) is never a standing
+# grant: it needs the owner opt-in and a per-leg paper-merit record on every call.
+LIVE_VENUE_INTENT_GRANTS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        LIVE_TIERED_VENUE_ID: frozenset(
+            {"READ_ONLY", "PROTECTIVE", "OWNER_LINEAGE_ENTRY", "OPERATOR_CONFIRMED_ENTRY"}
+        )
+    }
+)
+REENTRY_MAX_ATTEMPTS_PER_SESSION = 3
+REGIME_FLIP_MIN_GENERATIONS = 3
+REGIME_FLIP_MIN_SECONDS = 180
 
 
 @dataclass(frozen=True)
@@ -170,6 +197,25 @@ def _resolve_venue(venue_id: str) -> ExecutionVenueProfile:
     return prof
 
 
+def _default_authorized_intents(p: ExecutionVenueProfile) -> frozenset[str]:
+    """Intents a venue accepts with both tier-3 flags False (LIVE: never AUTONOMOUS_ENTRY)."""
+    if p.environment == "LIVE":
+        return LIVE_VENUE_INTENT_GRANTS.get(p.venue_id, frozenset()) - {"AUTONOMOUS_ENTRY"}
+    return frozenset() if p.live_execution_enabled else frozenset(_VENUE_ORDER_INTENTS)
+
+
+def _venue_intent_posture(p: ExecutionVenueProfile) -> dict[str, Any]:
+    ok, live = _default_authorized_intents(p), p.environment == "LIVE"
+    return {
+        "authorized_intents": sorted(ok),
+        "live_tiers": {
+            "tier1_protective": live and "PROTECTIVE" in ok,
+            "tier2_operator_confirmed": live and "OPERATOR_CONFIRMED_ENTRY" in ok,
+            "tier3_autonomous_default": False,
+        },
+    }
+
+
 def _chk_n(v: Any, name: str, lo: int = 1, *, hi: int | None = None) -> int:
     if isinstance(v, bool) or not isinstance(v, int) or v < lo or (hi is not None and v > hi):
         raise ValueError(f"{name} out of bounds [{lo}, {hi}]: {v!r}")
@@ -233,16 +279,35 @@ def inspect_venue_capability(venue_id: str, **o: Any) -> dict[str, Any]:
         "reasons": rsn,
         "exit_reserve_rpm": res_rpm,
         "active_entry_rpm": p.max_rpm - res_rpm,
+        **_venue_intent_posture(p),
     }
 
 
-def validate_venue_order_capability(venue_id: str, **o: Any) -> ExecutionVenueProfile:
-    """Enforce venue capabilities and fail closed on LIVE execution profiles."""
+def validate_venue_order_capability(
+    venue_id: str,
+    *,
+    intent: VenueOrderIntent = "AUTONOMOUS_ENTRY",
+    autonomous_opt_in: bool = False,
+    leg_merit: bool = False,
+    **o: Any,
+) -> ExecutionVenueProfile:
+    """Enforce venue capabilities; LIVE returns only for a tier-granted intent (default refuses).
+
+    PAPER ignores ``intent``. LIVE returns for an intent in ``LIVE_VENUE_INTENT_GRANTS``, or for
+    ``AUTONOMOUS_ENTRY`` on the tiered venue when both flags are literally ``True``.
+    """
     st = inspect_venue_capability(venue_id, **o)
     if not st["capability_ok"]:
         raise ValueError("; ".join(st["reasons"]))
     prof = _resolve_venue(venue_id)
-    if prof.environment == "LIVE" or not st["executable_now"]:
+    if prof.environment != "LIVE":
+        granted = bool(st["executable_now"])
+    elif intent == "AUTONOMOUS_ENTRY":
+        tiered = prof.venue_id == LIVE_TIERED_VENUE_ID
+        granted = tiered and autonomous_opt_in is True and leg_merit is True
+    else:
+        granted = isinstance(intent, str) and intent in _default_authorized_intents(prof)
+    if not granted:
         raise PermissionError(f"Refused live profile {venue_id!r}: live_execution_enabled=False")
     return prof
 
@@ -434,6 +499,7 @@ def build_venue_order_handle_spec(
         "paper_only": prof.environment == "PAPER",
         "live_execution_enabled": prof.live_execution_enabled,
         "executable_now": prof.environment == "PAPER" and not prof.live_execution_enabled,
+        **_venue_intent_posture(prof),
     }
 
 
@@ -987,7 +1053,7 @@ def compute_non_noise_min_trail_spec(
         "max_rpm": int(venue_handle["max_rpm"]),
         "exit_reserve_rpm": int(venue_handle["exit_reserve_rpm"]),
         "trailing_modify_cadence_secs": float(venue_handle["trailing_modify_cadence_secs"]),
-        "reentry_max_attempts_per_session": 3,
+        "reentry_max_attempts_per_session": REENTRY_MAX_ATTEMPTS_PER_SESSION,
         "exit_reserve_protected": True,
     }
     return {

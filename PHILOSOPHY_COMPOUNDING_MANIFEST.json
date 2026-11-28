@@ -328,7 +328,7 @@
       "command": ".claude/commands/lane-live.md",
       "mcp_lane": ".claude/mcp-lanes/gate.mcp.json",
       "status": "stage5_promotion_readiness_gated",
-      "staged_adr_0029_rollout": "Active staged rollout of ADR-0029 (Three-Tier Live Operations on ALPACA_LIVE_PRO_LINE_1000) in Z:\\noesis-tier-model; merges once its gates clear. Until merge, this tree stays paper_only=true / live_execution_enabled=false with read-only Tier-1 live account telemetry.",
+      "staged_adr_0029_rollout": "ADR-0029 (Three-Tier Live Operations on ALPACA_LIVE_PRO_LINE_1000) was staged in Z:\\noesis-tier-model and has since landed in this tree; its Build Status states what the code does today. While it was staged, this tree stayed paper_only=true / live_execution_enabled=false with read-only Tier-1 live account telemetry.",
       "live_execution_enabled": false,
       "paper_only": true,
       "forbidden_live_ports": [4001, 7496, 8798, 8796],
