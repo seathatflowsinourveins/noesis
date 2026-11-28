@@ -207,3 +207,121 @@ def test_sim_vs_paper_parity_perold_order_and_notional_weighting(
     assert bad_rep["liquid_ge10_order_mean_is_bps"] == 12.5
     assert bad_rep["liquid_ge10_within_2x_envelope"] is False
     assert cost_calibration_allows_entry(manifests_dir) is False
+
+
+def test_frontier_trigger_telemetry_mechanized_upstream_watches(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All 3 ADR-0016/ADR-0024 prose watches emit deterministic structured telemetry & booleans."""
+    from datetime import date
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as stdlib_version
+
+    from packaging.version import Version
+
+    import tier0_sota.definitions as defs_mod
+    from tier0_sota.definitions import (
+        _evaluate_upstream_watch_triggers,
+        frontier_trigger_telemetry,
+    )
+
+    monkeypatch.setenv("TIER0_DATA_ROOT", str(tmp_path))
+    rep = frontier_trigger_telemetry()
+    assert isinstance(rep, dict)
+
+    watches = rep["upstream_watch_triggers"]
+    triggers = rep["triggers"]
+    assert isinstance(watches, dict) and isinstance(triggers, dict)
+
+    # All existing trigger keys must remain intact alongside the 3 new mechanized booleans.
+    for existing_key in (
+        "l11_vortex_lake_gt_100gb",
+        "l12_tabicl_benchmark_pending",
+        "l13_multi_day_positions_gt_10",
+        "l14_observability_tca_calibrated",
+        "l14_alertmanager_9093_live",
+        "l15_dspy_gepa_compiled",
+        "l15_crosshair_symbolic_verified",
+        "l11_l13_starred_frontier_graduated",
+    ):
+        assert existing_key in triggers
+
+    # 1. NautilusTrader GA reverification (derived from live Version(...).is_prerelease, GA-safe).
+    installed_nautilus = stdlib_version("nautilus_trader")
+    expected_prerelease = bool(Version(installed_nautilus).is_prerelease)
+    naut = watches["nautilus_ga_reverification"]
+    assert naut["check_kind"] == "installed_package_metadata"
+    assert naut["package"] == "nautilus_trader"
+    assert naut["pinned_version"] == installed_nautilus
+    assert naut["installed"] is True
+    assert naut["is_prerelease"] is expected_prerelease
+    assert naut["ga_reverification_required"] is expected_prerelease
+    assert triggers["nautilus_ga_reverification"] is expected_prerelease
+
+    # 2. hftbacktest release freshness (calendar review timer from 2025-12-10, >365d threshold).
+    hft = watches["hftbacktest_release_freshness"]
+    assert hft["check_kind"] == "calendar_review_timer"
+    assert hft["package"] == "hftbacktest"
+    assert isinstance(hft["pinned_version"], str) and hft["pinned_version"] != "not-installed"
+    assert hft["last_verified_release_date"] == "2025-12-10"
+    assert isinstance(hft["days_since_upstream_release"], int)
+    assert hft["staleness_review_due"] == (hft["days_since_upstream_release"] > 365)
+    assert triggers["hftbacktest_release_freshness"] is hft["staleness_review_due"]
+
+    # 3. Promptfoo quarterly license & OpenAI acquisition audit (calendar timer, 90d cadence).
+    pf = watches["promptfoo_quarterly_license_audit"]
+    assert pf["check_kind"] == "calendar_review_timer"
+    assert pf["spdx_license"] == "MIT"
+    assert pf["last_audited_utc"] == "2026-11-27"
+    assert pf["cadence_days"] == 90
+    assert isinstance(pf["days_since_audit"], int)
+    assert pf["audit_due"] == (pf["days_since_audit"] >= 90)
+    assert triggers["promptfoo_quarterly_license_audit"] is pf["audit_due"]
+
+    # Explicit PEP-440 version cases (verified against packaging.version.Version.is_prerelease):
+    for ver_str, exp_installed, exp_pre, exp_reverify in (
+        ("2.0.0rc9", True, True, True),
+        ("2.0.0a1", True, True, True),
+        ("2.0.0.dev0", True, True, True),
+        ("2.0.0.post1", True, False, False),
+        ("2.0.0.post1.dev0", True, True, True),
+        ("2.0.0", True, False, False),
+        ("2.0.0+abc", True, False, False),
+        ("2.0.0+ü", False, False, True),
+        ("not-installed", False, False, True),
+        ("invalid!!!version", False, False, True),
+    ):
+        if exp_installed:
+            assert bool(Version(ver_str).is_prerelease) is exp_pre, ver_str
+        if ver_str == "not-installed":
+
+            def _missing(name: str) -> str:
+                if name == "nautilus_trader":
+                    raise PackageNotFoundError(name)
+                return "2.4.4"
+
+            monkeypatch.setattr(defs_mod, "pkg_version", _missing)
+        else:
+            monkeypatch.setattr(
+                defs_mod,
+                "pkg_version",
+                lambda name, _v=ver_str: _v if name == "nautilus_trader" else "2.4.4",
+            )
+        w = _evaluate_upstream_watch_triggers(today_utc=date(2026, 12, 10))
+        nw = w["nautilus_ga_reverification"]
+        assert nw["installed"] is exp_installed, ver_str
+        assert nw["is_prerelease"] is exp_pre, ver_str
+        assert nw["ga_reverification_required"] is exp_reverify, ver_str
+
+    # Calendar boundary flips: >365d trips hftbacktest; >=90d trips Promptfoo.
+    monkeypatch.setattr(defs_mod, "pkg_version", lambda _name: "2.0.0")
+    fresh = _evaluate_upstream_watch_triggers(today_utc=date(2026, 12, 10))
+    assert fresh["hftbacktest_release_freshness"]["days_since_upstream_release"] == 365
+    assert fresh["hftbacktest_release_freshness"]["staleness_review_due"] is False
+    assert fresh["promptfoo_quarterly_license_audit"]["audit_due"] is False
+
+    due = _evaluate_upstream_watch_triggers(today_utc=date(2027, 2, 25))
+    assert due["hftbacktest_release_freshness"]["days_since_upstream_release"] == 442
+    assert due["hftbacktest_release_freshness"]["staleness_review_due"] is True
+    assert due["promptfoo_quarterly_license_audit"]["days_since_audit"] == 90
+    assert due["promptfoo_quarterly_license_audit"]["audit_due"] is True

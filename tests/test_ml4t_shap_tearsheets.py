@@ -177,8 +177,18 @@ def test_cpcv_artifacts_and_unmodified_upstream_tearsheets(tmp_path: Path) -> No
     shap_html = ts_dir / "shap_shapiq_prewall_attribution_tearsheet.html"
     assert ml4t_html.is_file() and ml4t_html.stat().st_size > 10_000
     assert shap_html.is_file() and shap_html.stat().st_size > 10_000
-    assert "plotly" in ml4t_html.read_text(encoding="utf-8").lower()
-    assert "plotly" in shap_html.read_text(encoding="utf-8").lower()
+    ml4t_text = ml4t_html.read_text(encoding="utf-8").lower()
+    shap_text = shap_html.read_text(encoding="utf-8").lower()
+    assert "plotly" in ml4t_text and "tab" in ml4t_text and "workspace" in ml4t_text
+    assert "plotly" in shap_text and "tab" in shap_text
+    assert (
+        manifest["tearsheets"]["ml4t_diagnostic_h109_falsification"]["generator"]
+        == "ml4t.diagnostic.visualization.backtest.tearsheet.generate_backtest_tearsheet"
+    )
+    assert (
+        manifest["tearsheets"]["shap_shapiq_prewall_attribution"]["generator"]
+        == "ml4t.diagnostic.visualization.dashboards.importance.FeatureImportanceDashboard"
+    )
 
     shap_meta = manifest["tearsheets"]["shap_shapiq_prewall_attribution"]
     assert shap_meta["lgbm_additivity_max_error"] < 1e-4
@@ -200,7 +210,17 @@ def test_cpcv_artifacts_and_unmodified_upstream_tearsheets(tmp_path: Path) -> No
 
 def test_script_has_zero_handwritten_html_tags() -> None:
     src = (SCRIPTS_DIR / "generate_ml4t_and_shap_tearsheets.py").read_text(encoding="utf-8")
-    for forbidden in ("<!DOCTYPE", "<html", "<body", "<script", "<div"):
+    for forbidden in (
+        "<!DOCTYPE",
+        "<html",
+        "<body",
+        "<script",
+        "<div",
+        "go.Figure",
+        "make_subplots",
+        "combine_figures_to_html",
+        "import plotly",
+    ):
         assert forbidden.lower() not in src.lower()
 
 

@@ -30,7 +30,11 @@ from zoneinfo import ZoneInfo
 
 import nautilus_trader.model as nm
 import polars as pl
-from nautilus_trader.analysis.tearsheet import TearsheetConfig, create_tearsheet
+from nautilus_trader.analysis.tearsheet import (
+    TearsheetConfig,
+    create_bars_with_fills,
+    create_tearsheet,
+)
 from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.common import LoggerConfig, LogLevel
 from nautilus_trader.execution import MakerTakerFeeModel
@@ -618,6 +622,39 @@ def run_empirical_backtest_from_catalog(
                         "theme": "nautilus_dark",
                     }
                 )
+            if strategies:
+                top_sym = max(
+                    strategies,
+                    key=lambda s: (
+                        len(strategies[s]._trade_returns),
+                        strategies[s].signals_received,
+                    ),
+                )
+                if top_sym in parsed_bar_types:
+                    bwf_path = primary_ts.parent / "nautilus_prewall_bars_with_fills.html"
+                    create_bars_with_fills(
+                        engine,
+                        bar_type=parsed_bar_types[top_sym],
+                        title=(
+                            f"NautilusTrader v2 Native Bars & Execution Fills — {top_sym} "
+                            f"({catalog_meta['first_bar_utc'][:10]} to "
+                            f"{catalog_meta['last_bar_utc'][:10]})"
+                        ),
+                        theme="nautilus_dark",
+                        output_path=str(bwf_path),
+                    )
+                    tearsheet_receipts.append(
+                        {
+                            "path": str(bwf_path),
+                            "symbol": top_sym,
+                            "size_bytes": bwf_path.stat().st_size,
+                            "sha256": _sha256_file(bwf_path),
+                            "generator": (
+                                "nautilus_trader.analysis.tearsheet.create_bars_with_fills"
+                            ),
+                            "theme": "nautilus_dark",
+                        }
+                    )
 
         per_strategy = {
             sym: {

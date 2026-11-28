@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -167,33 +166,15 @@ def _is_warrant_or_right_symbol(sym: str) -> bool:
     return len(s) == 5 and s[-1] in {"W", "R", "U"}
 
 
-# Strictly causal pre-wall (<= 2026-10-15) monotone U-shape RTH cumulative volume CDF
-# fitted on 40 train sessions (2026-07-23..2026-09-17, 4,116 liquid symbol-days) and
-# 4 pre-wall XNYS 13:00 ET early-close sessions (sim_tod_rvol_prewall_study.json, ADR-0028).
-TOD_RVOL_RTH_CDF_ONE_MINUS_B: float = 0.823262
-TOD_RVOL_RTH_CDF_B: float = 0.176738
-TOD_RVOL_RTH_CDF_P: float = 0.596474
-TOD_RVOL_RTH_SHARE_OF_FULLDAY: float = 0.83018
-TOD_RVOL_PM_SHARE_OF_FULLDAY: float = 0.01871
-TOD_RVOL_EARLY_CLOSE_SCALE: float = 0.4026
-
-
-@lru_cache(maxsize=2048)
-def _xnys_rth_close_hm(ny_day: date) -> int:
-    """Return XNYS RTH close in ET minutes (960 regular 16:00 ET, 780 early close 13:00 ET)."""
-    from exchange_calendars.errors import DateOutOfBounds
-
-    xnys = disc.get_xnys_calendar()
-    try:
-        if not (xnys.first_session.date() <= ny_day <= xnys.last_session.date()):
-            return 960
-        iso = ny_day.isoformat()
-        if not xnys.is_session(iso):
-            return 960
-        close_et = xnys.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
-        return close_et.hour * 60 + close_et.minute
-    except (DateOutOfBounds, ValueError, TypeError, KeyError):
-        return 960
+# Single source of truth for pre-wall (<= 2026-10-15) U-shape ToD RVOL constants & XNYS close
+# minute lives in `tier0_sota.discovery` (ADR-0028, sim_tod_rvol_prewall_study.json).
+TOD_RVOL_RTH_CDF_ONE_MINUS_B: float = disc.TOD_RVOL_RTH_CDF_ONE_MINUS_B
+TOD_RVOL_RTH_CDF_B: float = disc.TOD_RVOL_RTH_CDF_B
+TOD_RVOL_RTH_CDF_P: float = disc.TOD_RVOL_RTH_CDF_P
+TOD_RVOL_RTH_SHARE_OF_FULLDAY: float = disc.TOD_RVOL_RTH_SHARE_OF_FULLDAY
+TOD_RVOL_PM_SHARE_OF_FULLDAY: float = disc.TOD_RVOL_PM_SHARE_OF_FULLDAY
+TOD_RVOL_EARLY_CLOSE_SCALE: float = disc.TOD_RVOL_EARLY_CLOSE_SCALE
+_xnys_rth_close_hm = disc.xnys_rth_close_minute_et
 
 
 def compute_rth_tod_cdf(elapsed_rth_mins: float, *, rth_session_mins: float = 390.0) -> float:

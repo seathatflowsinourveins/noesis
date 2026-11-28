@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +26,88 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_RISK_SHA256 = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 _DEFAULT_SIM_COST_BPS_1X = 4.0
 _DEFAULT_SIM_COST_BPS_2X = 8.0
+# Official PEP 440 Appendix B canonical version grammar (exact match to packaging.version.Version;
+# stdlib-only so `just deptry` stays 0-issue without importing undeclared transitive `packaging`).
+_PEP440_VERSION_RE = re.compile(
+    r"^\s*v?"
+    r"(?:(?:(?P<epoch>[0-9]+)!)?)"
+    r"(?P<release>[0-9]+(?:\.[0-9]+)*)"
+    r"(?P<pre>[-_\.]?(?P<pre_l>alpha|a|beta|b|preview|pre|c|rc)[-_\.]?(?P<pre_n>[0-9]+)?)?"
+    r"(?P<post>(?:-(?P<post_n1>[0-9]+))|(?:[-_\.]?(?P<post_l>post|rev|r)[-_\.]?(?P<post_n2>[0-9]+)?))?"
+    r"(?P<dev>[-_\.]?(?P<dev_l>dev)[-_\.]?(?P<dev_n>[0-9]+)?)?"
+    r"(?:\+(?P<local>[a-z0-9]+(?:[-_\.][a-z0-9]+)*))?"
+    r"\s*$",
+    re.IGNORECASE | re.ASCII,
+)
+_HFTBACKTEST_LAST_RELEASE_DATE = date(2025, 12, 10)
+_HFTBACKTEST_STALENESS_DAYS = 365
+_PROMPTFOO_LAST_AUDITED_DATE = date(2026, 11, 27)
+_PROMPTFOO_AUDIT_CADENCE_DAYS = 90
+
+
+def _installed_pkg_version(dist_name: str) -> str:
+    try:
+        return pkg_version(dist_name)
+    except PackageNotFoundError:
+        return "not-installed"
+
+
+def _parse_pep440_prerelease(ver: str) -> tuple[bool, bool]:
+    """Return `(valid_pep440, is_prerelease)` matching `packaging.version.Version.is_prerelease`."""
+    if not ver or ver == "not-installed":
+        return False, False
+    match = _PEP440_VERSION_RE.match(ver)
+    if match is None:
+        return False, False
+    return True, bool(match.group("pre") or match.group("dev"))
+
+
+def _evaluate_upstream_watch_triggers(*, today_utc: date | None = None) -> dict[str, Any]:
+    """Mechanize ADR-0016/ADR-0024 upstream version, freshness, and license review watches."""
+    ref_day = today_utc or datetime.now(UTC).date()
+    nautilus_ver = _installed_pkg_version("nautilus_trader")
+    nautilus_installed, nautilus_is_prerelease = _parse_pep440_prerelease(nautilus_ver)
+    nautilus_reverify = (not nautilus_installed) or nautilus_is_prerelease
+
+    hft_ver = _installed_pkg_version("hftbacktest")
+    hft_days = max(0, (ref_day - _HFTBACKTEST_LAST_RELEASE_DATE).days)
+    hft_stale = hft_days > _HFTBACKTEST_STALENESS_DAYS
+
+    pf_days = max(0, (ref_day - _PROMPTFOO_LAST_AUDITED_DATE).days)
+    pf_due = pf_days >= _PROMPTFOO_AUDIT_CADENCE_DAYS
+
+    return {
+        "nautilus_ga_reverification": {
+            "check_kind": "installed_package_metadata",
+            "package": "nautilus_trader",
+            "pinned_version": nautilus_ver,
+            "installed": nautilus_installed,
+            "is_prerelease": nautilus_is_prerelease,
+            "ga_reverification_required": nautilus_reverify,
+            "adr_ref": "ADR-0016",
+        },
+        "hftbacktest_release_freshness": {
+            "check_kind": "calendar_review_timer",
+            "package": "hftbacktest",
+            "pinned_version": hft_ver,
+            "last_verified_release_date": _HFTBACKTEST_LAST_RELEASE_DATE.isoformat(),
+            "days_since_upstream_release": hft_days,
+            "staleness_threshold_days": _HFTBACKTEST_STALENESS_DAYS,
+            "staleness_review_due": hft_stale,
+            "adr_ref": "ADR-0016",
+        },
+        "promptfoo_quarterly_license_audit": {
+            "check_kind": "calendar_review_timer",
+            "upstream": "promptfoo/promptfoo",
+            "spdx_license": "MIT",
+            "acquisition_watch": "OpenAI acquisition watch (MIT license & neutrality)",
+            "last_audited_utc": _PROMPTFOO_LAST_AUDITED_DATE.isoformat(),
+            "cadence_days": _PROMPTFOO_AUDIT_CADENCE_DAYS,
+            "days_since_audit": pf_days,
+            "audit_due": pf_due,
+            "adr_ref": "ADR-0024",
+        },
+    }
 
 
 def _resolve_data_root() -> Path:
@@ -548,6 +633,7 @@ def frontier_trigger_telemetry() -> dict[str, object]:
         )
     )
     starred_graduated = list(starred_doc.get("graduated_packages") or sorted(starred_versions))
+    upstream_watches = _evaluate_upstream_watch_triggers()
 
     payload: dict[str, Any] = {
         "schema_version": "tier0.frontier-trigger-telemetry.v1",
@@ -587,6 +673,7 @@ def frontier_trigger_telemetry() -> dict[str, object]:
             "skills_46_parity_ok": skills_46_ok,
             "alertmanager_9093_healthy": alertmanager_9093_healthy,
         },
+        "upstream_watch_triggers": upstream_watches,
         "triggers": {
             "l11_vortex_lake_gt_100gb": prewall_lake_gb > 100.0,
             "l12_tabicl_benchmark_pending": False,
@@ -596,6 +683,15 @@ def frontier_trigger_telemetry() -> dict[str, object]:
             "l15_dspy_gepa_compiled": gepa_compiled,
             "l15_crosshair_symbolic_verified": crosshair_ok,
             "l11_l13_starred_frontier_graduated": starred_all_ok,
+            "nautilus_ga_reverification": bool(
+                upstream_watches["nautilus_ga_reverification"]["ga_reverification_required"]
+            ),
+            "hftbacktest_release_freshness": bool(
+                upstream_watches["hftbacktest_release_freshness"]["staleness_review_due"]
+            ),
+            "promptfoo_quarterly_license_audit": bool(
+                upstream_watches["promptfoo_quarterly_license_audit"]["audit_due"]
+            ),
         },
     }
     out_path = manifests_dir / "frontier_trigger_status.json"

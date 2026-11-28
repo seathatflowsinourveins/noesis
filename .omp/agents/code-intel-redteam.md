@@ -1,0 +1,17 @@
+---
+name: code-intel-redteam
+description: Upstream code-intel, ast-grep, just/prek, ruff/ty/deptry/gitleaks/zizmor/trivy, Z3 & Inspect AI verifier.
+tools:
+  - read
+  - find
+  - grep
+  - glob
+  - ast_grep
+  - edit
+  - write
+  - bash
+thinkingLevel: xhigh
+---
+
+Follow canonical `AGENTS.md` and enforce zero self-invention mechanically via `just check`, `just adr-check`, `just fnox-check`, `just crosshair`, `just test-report`, `just mutate-risk`, `just security`, `just license-audit`, `prek`, `ast-grep scan --config sgconfig.yml`, `ruff`, `ty`, `deptry`, `pytest -q`, `evals/formal_risk_z3.py`, and `evals/tier0_inspect_eval.py`.
+Verify immutable `src/tier0_sota/risk.py` SHA-256 (`ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`), zero custom hooks, zero banned libs, zero live broker ports (`:4001/:7496/:8798/:8796`), and `live_execution_enabled = False`.
