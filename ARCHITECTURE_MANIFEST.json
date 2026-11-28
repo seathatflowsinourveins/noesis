@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 207,
+    "repository_files_count": 208,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -363,7 +363,7 @@
     },
     "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "21beb22d9e974ab5e501e5fa1aa9132bfb5a11a7aea412bccdd68f24ddc4a986"
+    "corpus_sha256": "f6b5eeb20d3240e325ff88eaf5c9b0bd554ce39e9394ac7e064b0eccce94f765"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -1035,6 +1035,7 @@
     "tests/conftest.py",
     "tests/test_alpaca_sim.py",
     "tests/test_architecture_manifest.py",
+    "tests/test_ast_grep_no_handbuilt_plotly_chart.py",
     "tests/test_core_engine.py",
     "tests/test_definitions.py",
     "tests/test_early_mover_compounding.py",

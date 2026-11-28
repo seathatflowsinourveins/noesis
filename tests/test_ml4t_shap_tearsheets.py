@@ -1,4 +1,4 @@
-"""Fast offline tests for ml4t-diagnostic & SHAP/shapiq pre-wall tearsheets and Grafana JSON."""
+"""Offline tests: pre-wall reports come from the upstreams' own functions; Grafana JSON."""
 
 from __future__ import annotations
 
@@ -91,6 +91,7 @@ def test_cpcv_artifacts_and_unmodified_upstream_tearsheets(tmp_path: Path) -> No
 
     h109_mock = {
         "trial_accounting": {"cumulative_trials_total": 211, "hlz_t_hurdle": 4.3636},
+        "tuning": {"selected_arm_id": "H109_A12"},
         "verdict": {"overall_verdict": "DISCARD", "cross_leg_promoted": False},
         "l1_queue_markout": {
             "LONG": {"passive_filled": 35, "mean_markout_bps": -3.995},
@@ -156,7 +157,6 @@ def test_cpcv_artifacts_and_unmodified_upstream_tearsheets(tmp_path: Path) -> No
     manifest = mod.run_pipeline(
         df10_path=pq_path,
         h109_dossier_path=h109_path,
-        ablation_dossier_path=tmp_path / "missing_ablation.json",
         cpcv_dir=cpcv_dir,
         tearsheet_dir=ts_dir,
         manifest_out_path=out_manifest,
@@ -173,24 +173,48 @@ def test_cpcv_artifacts_and_unmodified_upstream_tearsheets(tmp_path: Path) -> No
     assert (cpcv_dir / "h109_cpcv_oos_paths.parquet").is_file()
     assert (cpcv_dir / "h109_cpcv_summary.json").is_file()
 
-    ml4t_html = ts_dir / "ml4t_diagnostic_h109_falsification_tearsheet.html"
-    shap_html = ts_dir / "shap_shapiq_prewall_attribution_tearsheet.html"
-    assert ml4t_html.is_file() and ml4t_html.stat().st_size > 10_000
-    assert shap_html.is_file() and shap_html.stat().st_size > 10_000
-    ml4t_text = ml4t_html.read_text(encoding="utf-8").lower()
-    shap_text = shap_html.read_text(encoding="utf-8").lower()
-    assert "plotly" in ml4t_text and "tab" in ml4t_text and "workspace" in ml4t_text
-    assert "plotly" in shap_text and "tab" in shap_text
-    assert (
-        manifest["tearsheets"]["ml4t_diagnostic_h109_falsification"]["generator"]
-        == "ml4t.diagnostic.visualization.backtest.tearsheet.generate_backtest_tearsheet"
-    )
-    assert (
-        manifest["tearsheets"]["shap_shapiq_prewall_attribution"]["generator"]
-        == "ml4t.diagnostic.visualization.dashboards.importance.FeatureImportanceDashboard"
-    )
+    summary = manifest["cpcv_artifacts"]
+    assert summary["ml4t_diagnostic_stats"]["n_trials_total"] == 211  # read from the dossier
+    assert summary["ml4t_diagnostic_stats"]["dsr_probability"] is not None
+    assert summary["oos_paths_arm_selection"] == "best_in_sample_sharpe_per_split"
+    assert summary["selected_arm_id"] == "H109_A12"  # read from the dossier's tuning block
+    assert manifest["reports_not_produced"] == {}
 
-    shap_meta = manifest["tearsheets"]["shap_shapiq_prewall_attribution"]
+    # One upstream call per report file; the manifest records which function wrote it.
+    expected_generators = {
+        "ml4t_backtest_tearsheet": (
+            "ml4t.diagnostic.visualization.backtest.generate_backtest_tearsheet"
+        ),
+        "skfolio_cpcv_train_test_folds": (
+            "skfolio.model_selection.CombinatorialPurgedCV.plot_train_test_folds"
+        ),
+        "skfolio_cpcv_path_sharpe_distribution": "skfolio.population.Population.plot_distribution",
+        "ml4t_feature_importance_lightgbm": (
+            "ml4t.diagnostic.visualization.FeatureImportanceDashboard"
+        ),
+        "ml4t_feature_importance_catboost": (
+            "ml4t.diagnostic.visualization.FeatureImportanceDashboard"
+        ),
+    }
+    reports = manifest["reports"]
+    assert {name: r["generator"] for name, r in reports.items()} == expected_generators
+    for report in reports.values():
+        path = Path(report["path"])
+        assert path.parent == ts_dir and path.is_file() and path.stat().st_size > 10_000
+        # Interactive upstream pages only (no static images).
+        assert path.suffix == ".html"
+        assert "plotly" in path.read_text(encoding="utf-8").lower()
+    tearsheet_html = Path(reports["ml4t_backtest_tearsheet"]["path"]).read_text(encoding="utf-8")
+    assert "executive_summary" in tearsheet_html
+    assert 'data-section="validity_card"' in tearsheet_html  # trial count from the dossier
+    lgbm_path = Path(reports["ml4t_feature_importance_lightgbm"]["path"])
+    lgbm_page = lgbm_path.read_text(encoding="utf-8")
+    assert "Interactions" in lgbm_page  # SHAP interaction results passed to the dashboard
+    # The superseded locally composed pages are no longer written.
+    assert not (ts_dir / "ml4t_diagnostic_h109_falsification_tearsheet.html").exists()
+    assert not (ts_dir / "shap_shapiq_prewall_attribution_tearsheet.html").exists()
+
+    shap_meta = manifest["attribution"]
     assert shap_meta["lgbm_additivity_max_error"] < 1e-4
     assert shap_meta["catboost_additivity_max_error"] < 1e-4
     assert len(shap_meta["shap_top_features"]) == len(mod.CAUSAL_FEATURE_COLUMNS)
@@ -206,6 +230,109 @@ def test_cpcv_artifacts_and_unmodified_upstream_tearsheets(tmp_path: Path) -> No
         "prewall_shap_importance",
         "prewall_shapiq_interactions",
     }.issubset(tables)
+
+
+def test_missing_dossier_values_stay_missing(tmp_path: Path) -> None:
+    """No assumed trial count, verdict or zero: what the dossier lacks is None / NULL."""
+    df = _make_synthetic_prewall_df(80)
+    dates, mat, _spy, arm_ids = mod.build_multiarm_daily_returns(df)
+    cpcv = mod.run_skfolio_cpcv_analysis(dates, mat, arm_ids, cpcv_dir=tmp_path / "cpcv")
+    stats = cpcv["summary"]["ml4t_diagnostic_stats"]
+    assert stats["n_trials_total"] is None
+    assert stats["dsr_probability"] is None and stats["expected_max_sharpe_daily"] is None
+    # No selected arm in the dossier: no arm is assumed and its tearsheet is not produced.
+    assert cpcv["summary"]["selected_arm_id"] is None and cpcv["selected_returns"] is None
+    assert stats["observed_sharpe_ann"] is None and stats["min_trl_sessions"] is None
+    reports = mod.generate_h109_upstream_reports(
+        dates=dates, benchmark_returns=_spy, cpcv_result=cpcv, output_dir=tmp_path / "reports"
+    )
+    assert set(reports) == {
+        "skfolio_cpcv_train_test_folds",
+        "skfolio_cpcv_path_sharpe_distribution",
+    }
+
+    # Every recombined OOS path covers each session once (skfolio's get_path_ids assignment).
+    assert all(np.asarray(rets).size == len(dates) for rets in cpcv["path_returns"])
+
+    # skfolio's own Sharpe of each recombined path equals the run's path table.
+    from skfolio import Portfolio
+
+    skfolio_sharpes = [
+        Portfolio(
+            X=np.asarray(rets).reshape(-1, 1), weights=np.ones(1), annualization_factor=252.0
+        ).annualized_sharpe_ratio
+        for rets in cpcv["path_returns"]
+    ]
+    assert np.allclose(skfolio_sharpes, cpcv["paths_df"]["sharpe_ann"].to_list(), atol=1e-3)
+
+    db = tmp_path / "audit.duckdb"
+    mod.build_sim_prewall_audit_duckdb(
+        db_path=db,
+        cpcv_result=cpcv,
+        h109_dossier={},
+        shap_result={"shap_top_features": [], "shapiq_top5_interactions": []},
+    )
+    with duckdb.connect(str(db), read_only=True) as con:
+        rows = con.execute(
+            "SELECT verdict, gates_passed, n_trades, mean_1x_bps FROM h109_six_gate_verdicts"
+        ).fetchall()
+    assert rows == [(None, None, None, None)] * 3
+
+
+@pytest.mark.parametrize("n_sessions", [55, 103])
+def test_oos_paths_follow_skfolio_path_ids(tmp_path: Path, n_sessions: int) -> None:
+    """Uneven fold sizes: each recombined path still covers every session exactly once."""
+    df = _make_synthetic_prewall_df(n_sessions)
+    dates, mat, _spy, arm_ids = mod.build_multiarm_daily_returns(df)
+    cpcv = mod.run_skfolio_cpcv_analysis(dates, mat, arm_ids, cpcv_dir=tmp_path / "cpcv")
+    assert len(cpcv["path_returns"]) == cpcv["summary"]["skfolio_cpcv"]["n_test_paths"]
+    assert all(np.asarray(rets).size == len(dates) for rets in cpcv["path_returns"])
+
+
+def test_backtest_tearsheet_without_trial_count_or_full_benchmark(tmp_path: Path) -> None:
+    """No dossier trial count: statistical panels off. A session without SPY: no benchmark."""
+    df = _make_synthetic_prewall_df(80)
+    df = df.filter(~((pl.col("symbol") == "SPY") & (pl.col("trade_date") == "2025-01-05")))
+    dates, mat, spy, arm_ids = mod.build_multiarm_daily_returns(df)
+    assert int(np.isnan(spy).sum()) == 1  # the session without SPY stays missing, not 0.0
+    cpcv = mod.run_skfolio_cpcv_analysis(
+        dates, mat, arm_ids, selected_arm_id="H109_A12", cpcv_dir=tmp_path / "cpcv"
+    )
+    reports = mod.generate_h109_upstream_reports(
+        dates=dates, benchmark_returns=spy, cpcv_result=cpcv, output_dir=tmp_path / "reports"
+    )
+    html = Path(reports["ml4t_backtest_tearsheet"]["path"]).read_text(encoding="utf-8")
+    assert 'data-section="executive_summary"' in html
+    assert 'data-section="validity_card"' not in html
+    assert 'data-section="sharpe_bootstrap"' not in html
+    assert "SPY (next-session open to close)" not in html
+
+
+def test_reports_have_no_local_figure_or_page_code() -> None:
+    """The generator passes data to upstream report functions; it builds no figure or page."""
+    src = (SCRIPTS_DIR / "generate_ml4t_and_shap_tearsheets.py").read_text(encoding="utf-8")
+    for forbidden in (
+        "go.Figure",
+        "go.Bar",
+        "go.Scatter",
+        "go.Indicator",
+        "update_layout",
+        "add_trace",
+        "marker_color",
+        "make_subplots",
+        "combine_figures_to_html",
+        "visualization.core",
+        "to_html(",
+        "import plotly",
+        "from plotly",
+        "import matplotlib",
+        "from matplotlib",
+        "sections",
+    ):
+        assert forbidden not in src, forbidden
+    # Result numbers from the old pages may not be typed in.
+    for typed_in in ("211", "4.3636", "6.267", "70/72", "7.0538", "-3.995", "16.528", "DISCARD"):
+        assert typed_in not in src, typed_in
 
 
 def test_script_has_zero_handwritten_html_tags() -> None:
@@ -234,7 +361,67 @@ def test_grafana_sim_backtest_dashboard_declarative_json() -> None:
     doc = json.loads(raw)
     assert doc["uid"] == "tier0-sim-backtest-control-center"
     assert doc["schemaVersion"] == 39
-    assert len(doc["panels"]) >= 8
+    # Only panels whose metrics are emitted today (TCA envelope, risk guardrails, scrape health).
+    assert [panel["id"] for panel in doc["panels"]] == [7, 9, 10]
+    exprs = [target["expr"] for panel in doc["panels"] for target in panel["targets"]]
+    for never_emitted in (
+        "tier0_prewall_trials_total",
+        "tier0_sandbox_mlflow_trials_total",
+        "tier0_falsification_passes_total",
+        "tier0_sandbox_24x7_active",
+        "tier0_sandbox_live_execution_enabled",
+        "tier0_sandbox_broker_ports_open",
+        "tier0_rule612_stop_clamps_total",
+        "tier0_churn_blocks_total",
+        "tier0_intraday_throttle_scale",
+        "tier0_observability_up",
+    ):
+        assert not any(never_emitted in expr for expr in exprs)
+    assert not any("vector(0)" in expr for expr in exprs)
     for panel in doc["panels"]:
         assert panel["datasource"]["uid"] == "tier0-prometheus"
         assert panel["targets"]
+
+
+def test_mlflow_log_skips_missing_values_and_records_report_generators(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a dossier arm or trial count the run logs no invented param or metric."""
+    import mlflow
+    import mlflow.tracking._tracking_service.utils as tracking_utils
+    import mlflow.tracking.fluent as fluent
+
+    # log_suite_to_mlflow sets MLflow's process-wide tracking URI and experiment; restore both
+    # (and the env vars MLflow exports for subprocesses) so later tests are unaffected.
+    monkeypatch.setattr(tracking_utils, "_tracking_uri", tracking_utils._tracking_uri)
+    monkeypatch.setattr(fluent, "_active_experiment_id", fluent._active_experiment_id)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("MLFLOW_EXPERIMENT_ID", raising=False)
+
+    df = _make_synthetic_prewall_df(80)
+    dates, mat, spy, arm_ids = mod.build_multiarm_daily_returns(df)
+    cpcv = mod.run_skfolio_cpcv_analysis(dates, mat, arm_ids, cpcv_dir=tmp_path / "cpcv")
+    reports = mod.generate_h109_upstream_reports(
+        dates=dates, benchmark_returns=spy, cpcv_result=cpcv, output_dir=tmp_path / "reports"
+    )
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    logged = mod.log_suite_to_mlflow(
+        tracking_uri=uri,
+        experiment_name="test-upstream-reports",
+        cpcv_summary=cpcv["summary"],
+        attribution={
+            "lgbm_additivity_max_error": 0.0,
+            "catboost_additivity_max_error": 0.0,
+            "shapiq_version": "test",
+        },
+        reports=reports,
+        cpcv_summary_path=Path(cpcv["summary"]["artifacts"]["summary_json"]),
+    )
+    run = mlflow.MlflowClient(tracking_uri=uri).get_run(logged["run_id"])
+    assert "selected_arm_id" not in run.data.params and "n_trials_total" not in run.data.params
+    assert "cpcv_dsr_probability" not in run.data.metrics
+    assert "cpcv_observed_sharpe_ann" not in run.data.metrics
+    assert run.data.metrics["cpcv_pbo"] == cpcv["summary"]["ml4t_diagnostic_stats"]["pbo"]
+    for name, report in reports.items():
+        assert run.data.tags[f"report_{name}_generator"] == report["generator"]
+        assert run.data.tags[f"report_{name}_sha256"] == report["sha256"]

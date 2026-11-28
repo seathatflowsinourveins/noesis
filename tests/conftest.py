@@ -1,4 +1,5 @@
-"""Shared pytest fixtures. Nothing here is autouse: existing tests are unaffected."""
+"""Shared pytest fixtures. One autouse fixture only unsets TIER0_OPTUNA_STORAGE (Optuna stays
+in memory under test); everything else here is opt-in, so existing tests are unaffected."""
 
 from __future__ import annotations
 
@@ -101,3 +102,9 @@ def no_live_broker_access(monkeypatch: pytest.MonkeyPatch) -> Iterator[LiveBroke
         pytest.fail(
             "non-loopback socket connect attempted: " + ", ".join(guard.blocked_connects),
         )
+
+
+@pytest.fixture(autouse=True)
+def _optuna_in_memory_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Optuna studies in memory under test even if TIER0_OPTUNA_STORAGE is exported."""
+    monkeypatch.delenv("TIER0_OPTUNA_STORAGE", raising=False)

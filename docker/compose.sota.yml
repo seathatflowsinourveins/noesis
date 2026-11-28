@@ -441,7 +441,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:13.3.1
+    image: grafana/grafana:13.3.2
     cpus: "2.0"
     mem_limit: 1g
     ports:
@@ -461,6 +461,9 @@ services:
       - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
       - GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false
       - GF_PLUGINS_DISABLE_PLUGINS=cloudwatch,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,stackdriver,tempo,zipkin
+      # Metrics Drilldown is a catalog plugin Grafana preinstalls on startup (not in the image);
+      # pin the version so the default preinstall_auto_update cannot change it on recreate.
+      - GF_PLUGINS_PREINSTALL=grafana-metricsdrilldown-app@3.2.0
       - GF_UNIFIED_ALERTING_ENABLED=false
       - GF_LIVE_MAX_CONNECTIONS=0
       - GF_NEWS_NEWS_FEED_ENABLED=false

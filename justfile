@@ -298,7 +298,7 @@ account-switch:
 reflect *args:
     {{uv_run}} python scripts/run_compounding_reflection.py {{args}}
 
-# Run native NautilusTrader v2 ParquetDataCatalog empirical backtest & official 3-tearsheet suite (Nautilus + ml4t-diagnostic + SHAP/shapiq, pre-wall <= 2026-10-15)
+# Run native NautilusTrader v2 ParquetDataCatalog empirical backtest (engine create_tearsheet) & interactive ml4t-diagnostic / skfolio report pages (pre-wall <= 2026-10-15)
 sim-tearsheets:
     {{uv_run}} python scripts/run_sim_backtest_tearsheet_suite.py
     {{uv_run}} python scripts/generate_ml4t_and_shap_tearsheets.py

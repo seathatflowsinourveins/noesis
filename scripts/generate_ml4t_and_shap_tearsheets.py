@@ -1,10 +1,13 @@
-"""Generate official unmodified ml4t-diagnostic & SHAP/shapiq pre-wall dashboards & CPCV files.
+"""Pre-wall H109 CPCV artifacts and reports written by the upstreams' own report functions.
 
-Strictly pre-wall (<= 2026-10-15), paper-only (paper_only=True, live_execution_enabled=False),
-zero hand-written HTML/JS and zero hand-built Plotly charts: all interactive dashboards are
-emitted exclusively by native upstream `ml4t.diagnostic.visualization.backtest.tearsheet`
-(`generate_backtest_tearsheet`) and `ml4t.diagnostic.visualization.dashboards.importance`
-(`FeatureImportanceDashboard`).
+Strictly pre-wall (<= 2026-10-15), paper-only (paper_only=True, live_execution_enabled=False).
+Each report file comes from one upstream call that receives run data only and is an
+interactive page: ml4t-diagnostic `generate_backtest_tearsheet` and `FeatureImportanceDashboard`
+(MDI, PFI and TreeSHAP importance with SHAP interactions, one page per model), and skfolio
+`CombinatorialPurgedCV.plot_train_test_folds` and `Population.plot_distribution`. No figure,
+page, section or table is composed here, and every number in a report is read from this run
+or the H109 dossier: a value the inputs lack is omitted (NULL in the DuckDB tables), never
+filled in.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import math
 import os
 import shutil
 from collections.abc import Mapping, Sequence
-from datetime import UTC, date, datetime, time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +42,6 @@ DEFAULT_DF10_PATH = (
     DEFAULT_DATA_ROOT / "prewall-lake" / "derived" / "df10_daily_20d_baselines.parquet"
 )
 DEFAULT_H109_DOSSIER = DEFAULT_MANIFEST_DIR / "prewall_h109_falsification_dossier.json"
-DEFAULT_ABLATION_DOSSIER = DEFAULT_MANIFEST_DIR / "prewall_alpha_ablation_dossier.json"
 DEFAULT_EARLY_MOVER_CAL = DEFAULT_MANIFEST_DIR / "prewall_early_mover_calibration_manifest.json"
 DEFAULT_OUT_MANIFEST = DEFAULT_MANIFEST_DIR / "ml4t_shap_tearsheet_manifest.json"
 DEFAULT_SIM_DUCKDB = DEFAULT_MANIFEST_DIR / "paper_farm_ui" / "sim_prewall_audit.duckdb"
@@ -95,7 +97,9 @@ CAUSAL_FEATURE_COLUMNS: tuple[str, ...] = (
     "mean_5d_range_pct_prior",
 )
 
-# 12 causal H109-aligned screening arms (min_rvol, min_ret_1d, max_coil_ratio, short_climax)
+# 12 causal daily-bar proxies named after the H109 arms (min_rvol, min_ret_1d, max_coil_ratio,
+# mode). They are daily screens, not the dossier's intraday arm definitions (signal mode,
+# conformal trail, re-entry), so reports label the selected arm a daily-bar proxy.
 H109_CPCV_ARMS: tuple[dict[str, Any], ...] = (
     {"arm_id": "H109_A01", "min_rvol": 1.4, "min_ret": 0.015, "max_coil": 1.35, "mode": "ignition"},
     {"arm_id": "H109_A02", "min_rvol": 1.6, "min_ret": 0.018, "max_coil": 1.30, "mode": "ignition"},
@@ -203,14 +207,24 @@ def _load_json_safe(path: Path) -> dict[str, Any]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-def _finite_or_zero(val: Any, digits: int = 6) -> float:
+def _finite_or_none(val: Any, digits: int = 6) -> float | None:
+    """Round a finite number; a missing or non-finite value stays missing (None)."""
     try:
         fval = float(val)
     except (TypeError, ValueError):
-        return 0.0
+        return None
     if not math.isfinite(fval):
-        return 0.0
+        return None
     return round(fval, digits)
+
+
+def _int_or_none(val: Any) -> int | None:
+    if val is None or isinstance(val, bool):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def load_prewall_causal_dataset(
@@ -294,12 +308,13 @@ def build_multiarm_daily_returns(
         )
     )
     macro_by_date: dict[str, float] = {}
-    spy_bench = np.zeros(n_dates, dtype=float)
+    spy_bench = np.full(n_dates, np.nan, dtype=float)
     for row in bench.iter_rows(named=True):
         d = str(row["trade_date"])
         idx = date_to_idx[d]
         macro_by_date[d] = float(row["macro_ret_1d"] or 0.0)
-        spy_bench[idx] = float(row["spy_next_ret"] or 0.0)
+        spy_next = row["spy_next_ret"]
+        spy_bench[idx] = float(spy_next) if spy_next is not None else np.nan
 
     # Pre-group non-benchmark active rows by date
     active_df = df.filter(~pl.col("symbol").is_in(["SPY", "QQQ", "SOXX"]))
@@ -365,14 +380,20 @@ def run_skfolio_cpcv_analysis(
     returns_1x: np.ndarray,
     arm_ids: Sequence[str],
     *,
-    n_trials_total: int = 211,
+    selected_arm_id: str | None = None,
+    n_trials_total: int | None = None,
     n_folds: int = 8,
     n_test_folds: int = 3,
     purged_size: int = 2,
     embargo_size: int = 2,
     cpcv_dir: Path = DEFAULT_CPCV_DIR,
 ) -> dict[str, Any]:
-    """Run real skfolio CombinatorialPurgedCV (>= 16 paths) + ml4t-diagnostic DSR/PBO/MinTRL."""
+    """Run real skfolio CombinatorialPurgedCV (>= 16 paths) + ml4t-diagnostic DSR/PBO/MinTRL.
+
+    The selected arm comes from the H109 dossier (``tuning.selected_arm_id``) and the DSR needs
+    its cumulative trial count; without either, the dependent fields stay None instead of
+    assuming an arm or a count.
+    """
     from ml4t.diagnostic.evaluation import stats as mstats
     from scipy.stats import kurtosis, skew
     from skfolio.model_selection import CombinatorialPurgedCV
@@ -437,12 +458,12 @@ def run_skfolio_cpcv_analysis(
                     "arm_id": str(aid),
                     "n_train": int(tr.size),
                     "n_test": int(te.size),
-                    "is_mean_bps": _finite_or_zero(np.mean(is_r) * 1e4, 4),
-                    "oos_mean_bps": _finite_or_zero(np.mean(oos_r) * 1e4, 4),
-                    "is_sharpe_ann": _finite_or_zero(is_sr, 4),
-                    "oos_sharpe_ann": _finite_or_zero(oos_sr, 4),
-                    "oos_max_dd_pct": _finite_or_zero(_max_dd(oos_r) * 100.0, 4),
-                    "oos_win_rate": _finite_or_zero(np.mean(oos_r > 0.0), 4),
+                    "is_mean_bps": _finite_or_none(np.mean(is_r) * 1e4, 4),
+                    "oos_mean_bps": _finite_or_none(np.mean(oos_r) * 1e4, 4),
+                    "is_sharpe_ann": _finite_or_none(is_sr, 4),
+                    "oos_sharpe_ann": _finite_or_none(oos_sr, 4),
+                    "oos_max_dd_pct": _finite_or_none(_max_dd(oos_r) * 100.0, 4),
+                    "oos_win_rate": _finite_or_none(np.mean(oos_r > 0.0), 4),
                 }
             )
         is_sharpe_rows.append(is_row)
@@ -452,34 +473,31 @@ def run_skfolio_cpcv_analysis(
     oos_mat = np.vstack(oos_sharpe_rows)
     pbo_res = mstats.compute_pbo(is_mat, oos_mat)
 
-    # Reconstruct the 21 combinatorial OOS paths via skfolio path_ids
-    # Group each split's test fold segments into their canonical combinatorial backtest paths
-    n_obs = returns_1x.shape[0]
-    fold_bounds = np.array_split(np.arange(n_obs), n_folds)
-    fold_to_path_segments: list[list[np.ndarray]] = [[] for _ in range(n_folds)]
-    selected_arm_idx = len(arm_ids) - 1  # H109_A12 (canonical selected arm)
+    # Recombine the test-fold segments into the combinatorial OOS paths with skfolio's own
+    # get_path_ids(). In each split the segment uses the arm with the best in-sample Sharpe, so the
+    # paths describe that selection rule, not the fixed selected arm.
+    path_ids = np.asarray(cpcv.get_path_ids(), dtype=int)
+    path_segments: list[list[tuple[int, np.ndarray]]] = [[] for _ in range(n_test_paths)]
     for s_idx, (_tr_idx, te_groups) in enumerate(splits):
         te_list = list(te_groups) if isinstance(te_groups, (list, tuple)) else [te_groups]
         best_is_arm = int(np.argmax(is_mat[s_idx]))
-        for seg in te_list:
+        for g_idx, seg in enumerate(te_list):
             seg_arr = np.asarray(seg, dtype=int)
             if seg_arr.size == 0:
                 continue
-            # Match test segment to its canonical fold index by start position
-            f_idx = int(
-                np.argmin([abs(int(fb[0]) - int(seg_arr[0])) for fb in fold_bounds if fb.size > 0])
+            path_segments[int(path_ids[s_idx, g_idx])].append(
+                (int(seg_arr[0]), returns_1x[seg_arr, best_is_arm])
             )
-            fold_to_path_segments[f_idx].append(returns_1x[seg_arr, best_is_arm])
 
     path_records: list[dict[str, Any]] = []
     path_sharpes: list[float] = []
+    path_returns: list[np.ndarray] = []
     for p_idx in range(n_test_paths):
-        pieces: list[np.ndarray] = []
-        for f_idx in range(n_folds):
-            segs = fold_to_path_segments[f_idx]
-            if segs:
-                pieces.append(segs[p_idx % len(segs)])
-        p_rets = np.concatenate(pieces) if pieces else returns_1x[:, selected_arm_idx]
+        pieces = [rets for _start, rets in sorted(path_segments[p_idx], key=lambda seg: seg[0])]
+        if not pieces:
+            raise RuntimeError(f"CPCV path {p_idx + 1} has no test segments")
+        p_rets = np.concatenate(pieces)
+        path_returns.append(p_rets)
         p_sr = _ann_sharpe(p_rets)
         p_dd = _max_dd(p_rets)
         p_tot = float(np.prod(1.0 + p_rets) - 1.0)
@@ -488,38 +506,46 @@ def run_skfolio_cpcv_analysis(
             {
                 "path_id": int(p_idx + 1),
                 "n_sessions": int(p_rets.size),
-                "mean_daily_bps": _finite_or_zero(np.mean(p_rets) * 1e4, 4),
-                "sharpe_ann": _finite_or_zero(p_sr, 4),
-                "total_return_pct": _finite_or_zero(p_tot * 100.0, 4),
-                "max_drawdown_pct": _finite_or_zero(p_dd * 100.0, 4),
-                "win_rate": _finite_or_zero(np.mean(p_rets > 0.0), 4),
+                "mean_daily_bps": _finite_or_none(np.mean(p_rets) * 1e4, 4),
+                "sharpe_ann": _finite_or_none(p_sr, 4),
+                "total_return_pct": _finite_or_none(p_tot * 100.0, 4),
+                "max_drawdown_pct": _finite_or_none(p_dd * 100.0, 4),
+                "win_rate": _finite_or_none(np.mean(p_rets > 0.0), 4),
             }
         )
 
-    sel_rets = returns_1x[:, selected_arm_idx]
-    sel_mean = float(np.mean(sel_rets))
-    sel_std = float(np.std(sel_rets, ddof=1))
-    sel_sr_daily = (sel_mean / sel_std) if sel_std > 1e-12 else 0.0
-    sel_sr_ann = sel_sr_daily * math.sqrt(252.0)
-
-    arm_daily_srs = [
-        float(np.mean(returns_1x[:, i]) / max(float(np.std(returns_1x[:, i], ddof=1)), 1e-12))
-        for i in range(n_arms)
-    ]
-    var_trials = max(1e-6, float(np.var(np.asarray(arm_daily_srs, dtype=float), ddof=1)))
-    dsr_res = mstats.deflated_sharpe_ratio_from_statistics(
-        observed_sharpe=sel_sr_daily,
-        n_samples=int(sel_rets.size),
-        n_trials=int(n_trials_total),
-        variance_trials=var_trials,
-        skewness=float(skew(sel_rets)) if sel_std > 1e-12 else 0.0,
-        excess_kurtosis=float(kurtosis(sel_rets)) if sel_std > 1e-12 else 0.0,
-        frequency="daily",
-    )
-    min_trl_res = mstats.compute_min_trl(returns=sel_rets, target_sharpe=0.0, frequency="daily")
-    min_trl_val = (
-        round(float(min_trl_res.min_trl), 2) if np.isfinite(float(min_trl_res.min_trl)) else None
-    )
+    arm_list = [str(arm) for arm in arm_ids]
+    sel_rets: np.ndarray | None = None
+    sel_sr_daily: float | None = None
+    sel_sr_ann: float | None = None
+    dsr_res = None
+    min_trl_val: float | None = None
+    if selected_arm_id is not None and selected_arm_id in arm_list:
+        rets = returns_1x[:, arm_list.index(selected_arm_id)]
+        sel_mean = float(np.mean(rets))
+        sel_std = float(np.std(rets, ddof=1))
+        sr_daily = (sel_mean / sel_std) if sel_std > 1e-12 else 0.0
+        sel_rets, sel_sr_daily, sel_sr_ann = rets, sr_daily, sr_daily * math.sqrt(252.0)
+        if n_trials_total is not None:
+            arm_daily_srs = [
+                float(
+                    np.mean(returns_1x[:, i]) / max(float(np.std(returns_1x[:, i], ddof=1)), 1e-12)
+                )
+                for i in range(n_arms)
+            ]
+            var_trials = max(1e-6, float(np.var(np.asarray(arm_daily_srs, dtype=float), ddof=1)))
+            dsr_res = mstats.deflated_sharpe_ratio_from_statistics(
+                observed_sharpe=sr_daily,
+                n_samples=int(rets.size),
+                n_trials=int(n_trials_total),
+                variance_trials=var_trials,
+                skewness=float(skew(rets)) if sel_std > 1e-12 else 0.0,
+                excess_kurtosis=float(kurtosis(rets)) if sel_std > 1e-12 else 0.0,
+                frequency="daily",
+            )
+        min_trl_res = mstats.compute_min_trl(returns=rets, target_sharpe=0.0, frequency="daily")
+        if np.isfinite(float(min_trl_res.min_trl)):
+            min_trl_val = round(float(min_trl_res.min_trl), 2)
 
     cpcv_dir.mkdir(parents=True, exist_ok=True)
     folds_pq = cpcv_dir / "h109_cpcv_fold_distributions.parquet"
@@ -539,7 +565,8 @@ def run_skfolio_cpcv_analysis(
         "date_end": str(max(dates)),
         "n_sessions": int(len(dates)),
         "n_arms": int(n_arms),
-        "selected_arm_id": str(arm_ids[selected_arm_idx]),
+        "selected_arm_id": selected_arm_id if sel_rets is not None else None,
+        "oos_paths_arm_selection": "best_in_sample_sharpe_per_split",
         "paper_only": True,
         "live_execution_enabled": False,
         "skfolio_cpcv": {
@@ -552,19 +579,23 @@ def run_skfolio_cpcv_analysis(
             "min_cpcv_paths_satisfied": bool(n_test_paths >= res.MIN_CPCV_SAMPLES),
         },
         "ml4t_diagnostic_stats": {
-            "n_trials_total": int(n_trials_total),
-            "observed_sharpe_ann": _finite_or_zero(sel_sr_ann, 4),
-            "observed_sharpe_daily": _finite_or_zero(sel_sr_daily, 6),
-            "dsr_probability": _finite_or_zero(dsr_res.probability, 6),
-            "expected_max_sharpe_daily": _finite_or_zero(dsr_res.expected_max_sharpe, 6),
-            "pbo": _finite_or_zero(pbo_res.pbo, 4),
+            "n_trials_total": n_trials_total,
+            "observed_sharpe_ann": _finite_or_none(sel_sr_ann, 4),
+            "observed_sharpe_daily": _finite_or_none(sel_sr_daily, 6),
+            "dsr_probability": (
+                _finite_or_none(dsr_res.probability, 6) if dsr_res is not None else None
+            ),
+            "expected_max_sharpe_daily": (
+                _finite_or_none(dsr_res.expected_max_sharpe, 6) if dsr_res is not None else None
+            ),
+            "pbo": _finite_or_none(pbo_res.pbo, 4),
             "pbo_n_combinations": int(pbo_res.n_combinations),
             "min_trl_sessions": min_trl_val,
-            "current_sessions": int(sel_rets.size),
-            "oos_path_sharpe_mean": _finite_or_zero(np.mean(path_sharpes), 4),
-            "oos_path_sharpe_median": _finite_or_zero(np.median(path_sharpes), 4),
-            "oos_path_sharpe_p05": _finite_or_zero(np.percentile(path_sharpes, 5), 4),
-            "oos_path_sharpe_p95": _finite_or_zero(np.percentile(path_sharpes, 95), 4),
+            "current_sessions": int(sel_rets.size) if sel_rets is not None else None,
+            "oos_path_sharpe_mean": _finite_or_none(np.mean(path_sharpes), 4),
+            "oos_path_sharpe_median": _finite_or_none(np.median(path_sharpes), 4),
+            "oos_path_sharpe_p05": _finite_or_none(np.percentile(path_sharpes, 5), 4),
+            "oos_path_sharpe_p95": _finite_or_none(np.percentile(path_sharpes, 95), 4),
         },
         "artifacts": {
             "fold_distributions_parquet": str(folds_pq),
@@ -580,303 +611,138 @@ def run_skfolio_cpcv_analysis(
     summary["artifacts"]["summary_json_sha256"] = _file_sha256(summary_json)
     return {
         "summary": summary,
+        "cpcv": cpcv,
         "folds_df": folds_df,
         "paths_df": paths_df,
+        "path_returns": path_returns,
         "selected_returns": sel_rets,
         "is_mat": is_mat,
         "oos_mat": oos_mat,
     }
 
 
-def build_selected_arm_trades_df(
-    df: pl.DataFrame,
-    *,
-    arm_id: str,
-    cost_bps_roundtrip: float = 4.0,
-    notional_per_trade: float = 10_000.0,
-) -> pl.DataFrame:
-    """Build real pre-wall Polars trade ledger for native ml4t-diagnostic backtest workspace."""
-    arm = next((a for a in H109_CPCV_ARMS if str(a["arm_id"]) == arm_id), H109_CPCV_ARMS[-1])
-    min_rvol = float(arm["min_rvol"])
-    min_ret = float(arm["min_ret"])
-    max_coil = float(arm["max_coil"])
-    mode = str(arm["mode"])
-    fee_dec = float(cost_bps_roundtrip) / 1e4
-
-    bench = (
-        df.filter(pl.col("symbol").is_in(["SPY", "QQQ", "SOXX"]))
-        .group_by("trade_date")
-        .agg(pl.col("ret_1d").mean().alias("macro_ret_1d"))
-    )
-    macro_by_date = {
-        str(row["trade_date"]): float(row["macro_ret_1d"] or 0.0)
-        for row in bench.iter_rows(named=True)
+def _report_receipt(path: Path, generator: str) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "bytes": int(path.stat().st_size),
+        "sha256": _file_sha256(path),
+        "generator": generator,
     }
 
-    active_df = df.filter(~pl.col("symbol").is_in(["SPY", "QQQ", "SOXX"]))
-    records: list[dict[str, Any]] = []
-    for r in active_df.iter_rows(named=True):
-        d_str = str(r["trade_date"])
-        macro_r = macro_by_date.get(d_str, 0.0)
-        regime = -1 if macro_r <= -0.008 else (1 if macro_r >= 0.003 else 0)
-        sym = str(r["symbol"])
-        rvol = float(r["rvol_20d"])
-        ret1 = float(r["ret_1d"])
-        coil = float(r["coil_5d_20d_range_ratio"])
-        nxt = float(r["next1_open_to_close_ret"])
-        nxt_open = float(r["next1_split_open"])
-        nxt_low = float(r["next1_split_low"])
-        nxt_high = float(r["next1_split_high"])
-        if nxt_open <= 0.0:
-            continue
-        long_stopped = bool(nxt_low <= nxt_open * 0.98)
-        short_stopped = bool(nxt_high >= nxt_open * 1.02)
-        is_inv = sym in ("SOXS", "SQQQ")
 
-        direction = 0
-        stopped = False
-        gross_ret = 0.0
-        mfe_ret = 0.0
-        mae_ret = 0.0
-        if is_inv:
-            if regime == -1 and mode in ("dual_hedge", "regime_vwap") and rvol >= 1.1:
-                direction = 1
-                stopped = long_stopped
-                gross_ret = -0.02 if stopped else nxt
-                mfe_ret = max(0.0, (nxt_high - nxt_open) / nxt_open)
-                mae_ret = min(0.0, max(-0.02, (nxt_low - nxt_open) / nxt_open))
-        elif regime >= 0 and rvol >= min_rvol and ret1 >= min_ret and coil <= max_coil:
-            direction = 1
-            stopped = long_stopped
-            gross_ret = -0.02 if stopped else nxt
-            mfe_ret = max(0.0, (nxt_high - nxt_open) / nxt_open)
-            mae_ret = min(0.0, max(-0.02, (nxt_low - nxt_open) / nxt_open))
-        elif (
-            regime == -1
-            and mode in ("ignition", "dual_hedge", "regime_vwap")
-            and rvol >= min_rvol
-            and ret1 <= -min_ret
-        ):
-            direction = -1
-            stopped = short_stopped
-            gross_ret = -0.02 if stopped else -nxt
-            mfe_ret = max(0.0, (nxt_open - nxt_low) / nxt_open)
-            mae_ret = min(0.0, max(-0.02, (nxt_open - nxt_high) / nxt_open))
-
-        if direction == 0:
-            continue
-        net_ret = gross_ret - fee_dec
-        gross_pnl = notional_per_trade * gross_ret
-        fees = notional_per_trade * fee_dec
-        net_pnl = notional_per_trade * net_ret
-        if stopped:
-            exit_reason = "RULE612_STOP_2PCT"
-        elif net_ret >= 0.0:
-            exit_reason = "SESSION_CLOSE_PROFIT"
-        else:
-            exit_reason = "SESSION_CLOSE_LOSS"
-        d_obj = date.fromisoformat(d_str)
-        entry_dt = datetime.combine(d_obj, time(9, 30), tzinfo=UTC)
-        exit_dt = datetime.combine(d_obj, time(16, 0), tzinfo=UTC)
-        records.append(
-            {
-                "symbol": sym,
-                "entry_time": entry_dt,
-                "exit_time": exit_dt,
-                "direction": "LONG" if direction > 0 else "SHORT",
-                "size": round(notional_per_trade / nxt_open, 4),
-                "entry_price": round(nxt_open, 4),
-                "exit_price": round(nxt_open * (1.0 + direction * gross_ret), 4),
-                "gross_pnl": round(gross_pnl, 4),
-                "fees": round(fees, 4),
-                "net_pnl": round(net_pnl, 4),
-                "pnl": round(net_pnl, 4),
-                "pnl_pct": round(net_ret, 6),
-                "mfe": round(mfe_ret, 6),
-                "mae": round(mae_ret, 6),
-                "duration": 6.5,
-                "exit_reason": exit_reason,
-            }
-        )
-    if not records:
-        return pl.DataFrame(
-            schema={
-                "symbol": pl.Utf8,
-                "entry_time": pl.Datetime(time_zone="UTC"),
-                "exit_time": pl.Datetime(time_zone="UTC"),
-                "direction": pl.Utf8,
-                "size": pl.Float64,
-                "entry_price": pl.Float64,
-                "exit_price": pl.Float64,
-                "gross_pnl": pl.Float64,
-                "fees": pl.Float64,
-                "net_pnl": pl.Float64,
-                "pnl": pl.Float64,
-                "pnl_pct": pl.Float64,
-                "mfe": pl.Float64,
-                "mae": pl.Float64,
-                "duration": pl.Float64,
-                "exit_reason": pl.Utf8,
-            }
-        )
-    return pl.DataFrame(records)
-
-
-def generate_ml4t_h109_falsification_tearsheet(
+def generate_h109_upstream_reports(
     *,
     dates: Sequence[str],
-    selected_returns: np.ndarray,
     benchmark_returns: np.ndarray,
-    trades_df: pl.DataFrame,
     cpcv_result: Mapping[str, Any],
-    h109_dossier: Mapping[str, Any],
-    ablation_dossier: Mapping[str, Any],
-    output_path: Path,
-) -> dict[str, Any]:
-    """Emit unmodified native ml4t-diagnostic interactive tabbed backtest workspace."""
-    from ml4t.diagnostic.visualization.backtest.tearsheet import (
-        BacktestReportMetadata,
-        generate_backtest_tearsheet,
+    output_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Write the H109 reports with ml4t-diagnostic's and skfolio's own report and plot functions.
+
+    One upstream call per file; this function passes run data only (no figure, section or text).
+    """
+    from ml4t.diagnostic.visualization.backtest import generate_backtest_tearsheet
+    from skfolio import Population, Portfolio
+    from skfolio.measures import RatioMeasure
+
+    summary = cpcv_result["summary"]
+    stats = summary["ml4t_diagnostic_stats"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    reports: dict[str, dict[str, Any]] = {}
+
+    # ml4t-diagnostic's complete backtest tearsheet of the dossier's selected arm (not produced
+    # when the dossier names none). Its own DSR with n_trials would deflate n_trials identical
+    # copies of one series, so the run's DSR (cross-arm trial variance) is passed as data;
+    # without a trial count from the dossier the statistical panels are off.
+    if cpcv_result["selected_returns"] is not None:
+        selected_arm = str(summary["selected_arm_id"])
+        selected_returns = np.asarray(cpcv_result["selected_returns"], dtype=float)
+        benchmark = np.asarray(benchmark_returns, dtype=float)
+        has_benchmark = bool(
+            benchmark.shape == selected_returns.shape and np.all(np.isfinite(benchmark))
+        )
+        metrics: dict[str, Any] = {}
+        if stats["dsr_probability"] is not None:
+            metrics["dsr_probability"] = stats["dsr_probability"]
+        if stats["min_trl_sessions"] is not None:
+            metrics["min_trl"] = stats["min_trl_sessions"]
+        statistical = stats["n_trials_total"] is not None and "dsr_probability" in metrics
+        tearsheet_path = output_dir / "h109_ml4t_backtest_tearsheet.html"
+        generate_backtest_tearsheet(
+            returns=pl.Series(selected_arm, selected_returns),
+            equity_curve=pl.DataFrame(
+                {
+                    "timestamp": pl.Series("timestamp", list(dates)).str.to_date(),
+                    "equity": np.cumprod(1.0 + selected_returns),
+                }
+            ),
+            benchmark_returns=pl.Series("SPY", benchmark) if has_benchmark else None,
+            benchmark_name="SPY (next-session open to close)",
+            metrics=metrics or None,
+            n_trials=stats["n_trials_total"] if statistical else None,
+            include_statistical=statistical,
+            template="full",
+            interactive=True,
+            include_plotlyjs=True,
+            theme="dark",
+            title=f"{selected_arm} daily-bar proxy: pre-wall next-session open-to-close returns",
+            subtitle=f"{summary['date_start']} to {summary['date_end']}",
+            periods_per_year=252,
+            output_path=tearsheet_path,
+        )
+        reports["ml4t_backtest_tearsheet"] = _report_receipt(
+            tearsheet_path, "ml4t.diagnostic.visualization.backtest.generate_backtest_tearsheet"
+        )
+
+    # skfolio's own fold diagram of the CombinatorialPurgedCV object the run used.
+    cpcv = cpcv_result["cpcv"]
+    folds_path = output_dir / "h109_skfolio_cpcv_train_test_folds.html"
+    cpcv.plot_train_test_folds().write_html(str(folds_path))
+    reports["skfolio_cpcv_train_test_folds"] = _report_receipt(
+        folds_path, "skfolio.model_selection.CombinatorialPurgedCV.plot_train_test_folds"
     )
 
-    cpcv_sum = cpcv_result["summary"]
-    mstats = cpcv_sum["ml4t_diagnostic_stats"]
-    cpcv_cfg = cpcv_sum["skfolio_cpcv"]
-
-    h109_verdict = h109_dossier.get("verdict") or {}
-    h109_l1 = (h109_dossier.get("l1_queue_markout") or {}).get("COMBINED") or {}
-    h109_trials = int(
-        (h109_dossier.get("trial_accounting") or {}).get("cumulative_trials_total")
-        or mstats["n_trials_total"]
+    # skfolio's own population view of the run's recombined OOS paths: each path's returns (in
+    # each split, the arm with the best in-sample Sharpe) become one single-asset Portfolio, and
+    # skfolio computes and plots the annualized Sharpe distribution itself.
+    population = Population(
+        [
+            Portfolio(
+                X=np.asarray(path_rets, dtype=float).reshape(-1, 1),
+                weights=np.ones(1),
+                name=f"path_{path_id}",
+                annualization_factor=252.0,
+            )
+            for path_id, path_rets in enumerate(cpcv_result["path_returns"], start=1)
+        ]
     )
-    hlz_hurdle = float((h109_dossier.get("trial_accounting") or {}).get("hlz_t_hurdle") or 4.3636)
-    verdict_str = str(h109_verdict.get("overall_verdict") or "DISCARD")
-    selected_arm_id = str(cpcv_sum.get("selected_arm_id") or "H109_A12")
-
-    obs_sr = float(mstats["observed_sharpe_ann"])
-    dsr_prob = float(mstats["dsr_probability"])
-    pbo_val = float(mstats["pbo"])
-    min_trl = float(mstats["min_trl_sessions"] or 5000.0)
-    ab_trials = len(ablation_dossier.get("trials") or [])
-
-    eq_vals = 100_000.0 * np.cumprod(1.0 + selected_returns)
-    eq_df = pl.DataFrame(
-        {
-            "timestamp": [date.fromisoformat(str(d)) for d in dates],
-            "equity": eq_vals,
-        }
+    paths_path = output_dir / "h109_skfolio_cpcv_path_sharpe_distribution.html"
+    population.plot_distribution(measure_list=[RatioMeasure.ANNUALIZED_SHARPE_RATIO]).write_html(
+        str(paths_path)
     )
-    max_dd = float(np.min(eq_vals / np.maximum.accumulate(eq_vals) - 1.0)) if eq_vals.size else 0.0
-    total_ret = float(eq_vals[-1] / 100_000.0 - 1.0) if eq_vals.size else 0.0
-    years = max(len(dates) / 252.0, 1.0 / 252.0)
-    cagr = float((1.0 + max(total_ret, -0.9999)) ** (1.0 / years) - 1.0)
-
-    if trades_df.height > 0:
-        gross_pnl_sum = float(trades_df["gross_pnl"].sum())
-        total_fees = float(trades_df["fees"].sum())
-        wins = trades_df.filter(pl.col("pnl") > 0.0)
-        losses = trades_df.filter(pl.col("pnl") < 0.0)
-        win_rate = float(wins.height / trades_df.height)
-        gross_win = float(wins["pnl"].sum()) if wins.height else 0.0
-        gross_loss = abs(float(losses["pnl"].sum())) if losses.height else 0.0
-        profit_factor = (gross_win / gross_loss) if gross_loss > 1e-12 else 0.0
-    else:
-        gross_pnl_sum = float(eq_vals[-1] - 100_000.0) if eq_vals.size else 0.0
-        total_fees = 0.0
-        win_rate = float(np.mean(selected_returns > 0.0)) if selected_returns.size else 0.0
-        profit_factor = 0.0
-
-    metadata = BacktestReportMetadata(
-        title="Tier-0 SOTA — Native ml4t-diagnostic Pre-Wall Backtest & 6-Gate Workspace",
-        subtitle=(
-            f"H109 Verdict: {verdict_str} | {h109_trials} Cumulative Trials (HLZ={hlz_hurdle:.4f}) "
-            f"| skfolio CPCV {cpcv_cfg['n_test_paths']} Paths (PBO={pbo_val:.4f}) | "
-            f"Pre-Wall <= {PREWALL_CUTOFF_ISO}"
-        ),
-        strategy_name=f"H109 Multi-Feed Pre-Wall ({selected_arm_id})",
-        strategy_id=selected_arm_id,
-        universe="27 Pre-Wall Leaders & Regime Benchmarks (df10_daily_20d_baselines.parquet)",
-        benchmark_name="SPY (Pre-Wall)",
-        evaluation_window=f"{dates[0]} to {dates[-1]} (strictly <= {PREWALL_CUTOFF_ISO})",
-        calendar="XNYS",
-        execution_summary=(
-            f"Gate 1 real Rust hftbacktest L1 passive markout: "
-            f"{int(h109_l1.get('passive_filled') or 70)}/72 fills "
-            f"({float(h109_l1.get('mean_markout_bps') or 6.267):+.3f} bps); "
-            f"Rule-612 <= 2.00% stop; paper_only=True, live_execution_enabled=False."
-        ),
-        cost_summary="1x 4.0 bps/side | Calibrated Liquid 7.0538 bps | 2x 8.0 bps/side",
-        data_summary=(
-            f"prewall-lake df10 ({len(dates)} sessions, {trades_df.height} trades, "
-            f"{ab_trials} prior H108 ablation trials)"
-        ),
-        ml_summary=(
-            f"skfolio {cpcv_cfg['n_folds']}/{cpcv_cfg['n_test_folds']} CPCV: "
-            f"{cpcv_cfg['n_splits']} splits, {cpcv_cfg['n_test_paths']} OOS paths, "
-            f"PBO={pbo_val:.4f}, DSR={dsr_prob:.4f}"
-        ),
+    reports["skfolio_cpcv_path_sharpe_distribution"] = _report_receipt(
+        paths_path, "skfolio.population.Population.plot_distribution"
     )
-
-    metrics_payload: dict[str, Any] = {
-        "sharpe": obs_sr,
-        "cagr": cagr,
-        "total_return": total_ret,
-        "max_drawdown": max_dd,
-        "win_rate": win_rate,
-        "profit_factor": profit_factor,
-        "dsr_probability": dsr_prob,
-        "min_trl": min_trl,
-        "pbo": pbo_val,
-        "gross_pnl": gross_pnl_sum,
-        "total_commission": total_fees * 0.5,
-        "total_slippage": total_fees * 0.5,
-        "n_trades": int(trades_df.height),
-    }
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    generate_backtest_tearsheet(
-        trades=trades_df if trades_df.height > 0 else None,
-        returns=pl.Series("returns", selected_returns),
-        equity_curve=eq_df,
-        metrics=metrics_payload,
-        output_path=output_path,
-        template="full",
-        theme="dark",
-        title=metadata.title,
-        subtitle=metadata.subtitle,
-        benchmark_returns=pl.Series("SPY", benchmark_returns),
-        benchmark_name="SPY (Pre-Wall)",
-        report_metadata=metadata,
-        n_trials=h109_trials,
-        interactive=True,
-        include_plotlyjs=True,
-        periods_per_year=252,
-        include_statistical=True,
-    )
-    return {
-        "path": str(output_path),
-        "bytes": int(output_path.stat().st_size),
-        "sha256": _file_sha256(output_path),
-        "trades_count": int(trades_df.height),
-        "template": "full",
-        "interactive": True,
-        "generator": "ml4t.diagnostic.visualization.backtest.tearsheet.generate_backtest_tearsheet",
-    }
+    return reports
 
 
-def generate_shap_shapiq_prewall_tearsheet(
+def generate_prewall_attribution_reports(
     df: pl.DataFrame,
     *,
-    output_path: Path,
+    output_dir: Path,
     max_eval_rows: int = 240,
     shapiq_eval_rows: int = 48,
 ) -> dict[str, Any]:
-    """Fit causal pre-wall LightGBM + CatBoost models and emit native interactive dashboard."""
+    """Fit causal pre-wall LightGBM + CatBoost; write ml4t-diagnostic's interactive dashboards.
+
+    TreeSHAP values feed the additivity check and the DuckDB audit tables; shapiq k-SII values
+    feed the interaction table. Pages come only from ``FeatureImportanceDashboard``.
+    """
     import lightgbm as lgb
     import shap
     from catboost import CatBoostRegressor
     from ml4t.diagnostic.api import analyze_ml_importance, compute_shap_interactions
-    from ml4t.diagnostic.visualization.dashboards.importance import FeatureImportanceDashboard
+    from ml4t.diagnostic.visualization import FeatureImportanceDashboard
 
     max_date = str(df.select(pl.col("trade_date").max()).item())
     disc.assert_pre_wall_date(max_date)
@@ -927,25 +793,40 @@ def generate_shap_shapiq_prewall_tearsheet(
     )
     cat_model.fit(x_train, y_train)
 
-    # Verify exact TreeSHAP additivity on both LightGBM and CatBoost
-    lgb_exp = shap.TreeExplainer(lgb_model)
-    lgb_shap = np.asarray(lgb_exp.shap_values(x_eval), dtype=float)
-    lgb_base = float(np.asarray(lgb_exp.expected_value).reshape(-1)[0])
-    lgb_pred = np.asarray(lgb_model.predict(x_eval), dtype=float)
-    lgb_additivity_err = float(np.max(np.abs(lgb_pred - (lgb_base + np.sum(lgb_shap, axis=1)))))
+    # Exact TreeSHAP Explanations for both models, with additivity checked against predictions
+    lgb_expl = shap.TreeExplainer(lgb_model, feature_names=fnames)(x_eval)
+    cat_expl = shap.TreeExplainer(cat_model, feature_names=fnames)(x_eval)
+    lgb_additivity_err = float(
+        np.max(
+            np.abs(
+                np.asarray(lgb_model.predict(x_eval), dtype=float)
+                - (np.asarray(lgb_expl.base_values) + np.sum(lgb_expl.values, axis=1))
+            )
+        )
+    )
+    cat_additivity_err = float(
+        np.max(
+            np.abs(
+                np.asarray(cat_model.predict(x_eval), dtype=float)
+                - (np.asarray(cat_expl.base_values) + np.sum(cat_expl.values, axis=1))
+            )
+        )
+    )
+    lgb_mean_abs = np.mean(np.abs(lgb_expl.values), axis=0)
+    cat_mean_abs = np.mean(np.abs(cat_expl.values), axis=0)
 
-    cat_exp = shap.TreeExplainer(cat_model)
-    cat_shap = np.asarray(cat_exp.shap_values(x_eval), dtype=float)
-    cat_base = float(np.asarray(cat_exp.expected_value).reshape(-1)[0])
-    cat_pred = np.asarray(cat_model.predict(x_eval), dtype=float)
-    cat_additivity_err = float(np.max(np.abs(cat_pred - (cat_base + np.sum(cat_shap, axis=1)))))
-
-    lgb_mean_abs = np.mean(np.abs(lgb_shap), axis=0)
-    cat_mean_abs = np.mean(np.abs(cat_shap), axis=0)
-
-    # Official ml4t-diagnostic multi-method importance (MDI + PFI + SHAP) & SHAP interactions
+    # ml4t-diagnostic multi-method importance (MDI + PFI + SHAP) per model & SHAP interactions
     imp_res = analyze_ml_importance(
         lgb_model,
+        x_eval,
+        y_eval,
+        feature_names=fnames,
+        methods=["mdi", "pfi", "shap"],
+        n_repeats=5,
+        random_state=42,
+    )
+    cat_imp_res = analyze_ml_importance(
+        cat_model,
         x_eval,
         y_eval,
         feature_names=fnames,
@@ -960,26 +841,39 @@ def generate_shap_shapiq_prewall_tearsheet(
         max_samples=min(120, x_eval.shape[0]),
     )
 
-    # Official shapiq k-SII order-2 interactions (ADR-0028 graduated primitive)
+    # shapiq k-SII order-2 interactions (ADR-0028 graduated primitive) for the audit tables
+    n_shapiq = min(shapiq_eval_rows, x_eval.shape[0])
     shapiq_res = disc.compute_shapiq_interactions(
         lgb_model,
         x_train[: min(256, x_train.shape[0])],
-        x_eval[: min(shapiq_eval_rows, x_eval.shape[0])],
+        x_eval[:n_shapiq],
         fnames,
         max_order=2,
-        max_eval_rows=min(shapiq_eval_rows, x_eval.shape[0]),
+        max_eval_rows=n_shapiq,
     )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    dashboard = FeatureImportanceDashboard(
-        title="Tier-0 SOTA — Native ml4t-diagnostic Pre-Wall Feature Importance & Interactions",
+    # ml4t-diagnostic's own interactive dashboards, one page per model. (Its
+    # FeatureInteractionDashboard is a placeholder in 0.2.1 -- "to be implemented" text and no
+    # charts -- so interactions are shown in the Interactions tab of the LightGBM page.)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    reports: dict[str, dict[str, Any]] = {}
+    lgbm_path = output_dir / "prewall_ml4t_feature_importance_lightgbm.html"
+    FeatureImportanceDashboard(
+        title="Pre-wall LightGBM: MDI, PFI and TreeSHAP importance with SHAP interactions",
         theme="dark",
         n_top_features=len(fnames),
+    ).save(str(lgbm_path), imp_res, interaction_results=int_res)
+    reports["ml4t_feature_importance_lightgbm"] = _report_receipt(
+        lgbm_path, "ml4t.diagnostic.visualization.FeatureImportanceDashboard"
     )
-    dashboard.save(
-        str(output_path),
-        analysis_results=imp_res,
-        interaction_results=int_res,
+    catboost_path = output_dir / "prewall_ml4t_feature_importance_catboost.html"
+    FeatureImportanceDashboard(
+        title="Pre-wall CatBoost: MDI, PFI and TreeSHAP importance",
+        theme="dark",
+        n_top_features=len(fnames),
+    ).save(str(catboost_path), cat_imp_res)
+    reports["ml4t_feature_importance_catboost"] = _report_receipt(
+        catboost_path, "ml4t.diagnostic.visualization.FeatureImportanceDashboard"
     )
 
     order = np.argsort(-(lgb_mean_abs + cat_mean_abs))
@@ -987,9 +881,9 @@ def generate_shap_shapiq_prewall_tearsheet(
         {
             "rank": rank_idx + 1,
             "feature": fnames[int(i)],
-            "lgbm_mean_abs_shap": _finite_or_zero(lgb_mean_abs[int(i)], 6),
-            "catboost_mean_abs_shap": _finite_or_zero(cat_mean_abs[int(i)], 6),
-            "consensus_mean_abs_shap": _finite_or_zero(
+            "lgbm_mean_abs_shap": _finite_or_none(lgb_mean_abs[int(i)], 6),
+            "catboost_mean_abs_shap": _finite_or_none(cat_mean_abs[int(i)], 6),
+            "consensus_mean_abs_shap": _finite_or_none(
                 0.5 * (lgb_mean_abs[int(i)] + cat_mean_abs[int(i)]), 6
             ),
         }
@@ -997,21 +891,14 @@ def generate_shap_shapiq_prewall_tearsheet(
     ]
 
     return {
-        "path": str(output_path),
-        "bytes": int(output_path.stat().st_size),
-        "sha256": _file_sha256(output_path),
-        "interactive": True,
-        "tabs_count": 4,
-        "generator": (
-            "ml4t.diagnostic.visualization.dashboards.importance.FeatureImportanceDashboard"
-        ),
+        "reports": reports,
         "train_rows": int(train_df.height),
         "eval_rows_total": int(eval_df.height),
         "eval_rows_explained": int(x_eval.shape[0]),
         "lgbm_additivity_max_error": float(f"{lgb_additivity_err:.3e}"),
         "catboost_additivity_max_error": float(f"{cat_additivity_err:.3e}"),
         "shap_top_features": shap_ranking,
-        "shapiq_version": str(shapiq_res.get("shapiq_version", "unknown")),
+        "shapiq_version": shapiq_res.get("shapiq_version"),
         "shapiq_top_interaction": shapiq_res.get("top_interaction"),
         "shapiq_top5_interactions": list(shapiq_res.get("pairwise_interactions") or [])[:5],
     }
@@ -1024,7 +911,10 @@ def build_sim_prewall_audit_duckdb(
     h109_dossier: Mapping[str, Any],
     shap_result: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Create standalone read-only sim_prewall_audit.duckdb without touching pa1..3/tv_audit."""
+    """Create standalone read-only sim_prewall_audit.duckdb without touching pa1..3/tv_audit.
+
+    Values come from the run and the H109 dossier; a value the dossier lacks is stored as NULL.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_db = db_path.with_suffix(".duckdb.tmp")
     if tmp_db.exists():
@@ -1041,43 +931,66 @@ def build_sim_prewall_audit_duckdb(
         h109_rows.append(
             {
                 "leg": leg,
-                "verdict": str(blk.get("verdict") or "DISCARD"),
-                "gates_passed": int(blk.get("gates_passed_count") or 0),
-                "n_trades": int(f1x.get("n_trades") or 0),
-                "l1_passive_filled": int(l1.get("passive_filled") or 0),
-                "l1_mean_markout_bps": _finite_or_zero(l1.get("mean_markout_bps"), 4),
-                "mean_1x_bps": _finite_or_zero(f1x.get("mean_bps"), 4),
-                "mean_cal_liquid_bps": _finite_or_zero(fcal.get("mean_bps"), 4),
-                "mean_2x_bps": _finite_or_zero(f2x.get("mean_bps"), 4),
-                "dsr": _finite_or_zero(f1x.get("dsr"), 6),
-                "pbo": _finite_or_zero(blk.get("empirical_pbo"), 4),
-                "hac_t_1x": _finite_or_zero(f1x.get("hac_t"), 4),
-                "spa_p_1x": _finite_or_zero(f1x.get("spa_p"), 4),
+                "verdict": blk.get("verdict"),
+                "gates_passed": _int_or_none(blk.get("gates_passed_count")),
+                "n_trades": _int_or_none(f1x.get("n_trades")),
+                "l1_passive_filled": _int_or_none(l1.get("passive_filled")),
+                "l1_mean_markout_bps": _finite_or_none(l1.get("mean_markout_bps"), 4),
+                "mean_1x_bps": _finite_or_none(f1x.get("mean_bps"), 4),
+                "mean_cal_liquid_bps": _finite_or_none(fcal.get("mean_bps"), 4),
+                "mean_2x_bps": _finite_or_none(f2x.get("mean_bps"), 4),
+                "dsr": _finite_or_none(f1x.get("dsr"), 6),
+                "pbo": _finite_or_none(blk.get("empirical_pbo"), 4),
+                "hac_t_1x": _finite_or_none(f1x.get("hac_t"), 4),
+                "spa_p_1x": _finite_or_none(f1x.get("spa_p"), 4),
             }
         )
 
-    h109_df = pl.DataFrame(h109_rows)
+    h109_df = pl.DataFrame(
+        h109_rows,
+        schema={
+            "leg": pl.String,
+            "verdict": pl.String,
+            "gates_passed": pl.Int64,
+            "n_trades": pl.Int64,
+            "l1_passive_filled": pl.Int64,
+            "l1_mean_markout_bps": pl.Float64,
+            "mean_1x_bps": pl.Float64,
+            "mean_cal_liquid_bps": pl.Float64,
+            "mean_2x_bps": pl.Float64,
+            "dsr": pl.Float64,
+            "pbo": pl.Float64,
+            "hac_t_1x": pl.Float64,
+            "spa_p_1x": pl.Float64,
+        },
+    )
     folds_df: pl.DataFrame = cpcv_result["folds_df"]
     paths_df: pl.DataFrame = cpcv_result["paths_df"]
-    shap_df = pl.DataFrame(shap_result["shap_top_features"])
+    shap_df = pl.DataFrame(
+        shap_result["shap_top_features"],
+        schema={
+            "rank": pl.Int64,
+            "feature": pl.String,
+            "lgbm_mean_abs_shap": pl.Float64,
+            "catboost_mean_abs_shap": pl.Float64,
+            "consensus_mean_abs_shap": pl.Float64,
+        },
+    )
     sq_rows = [
         {
-            "pair": str(item.get("pair") or ""),
-            "mean_abs_interaction": _finite_or_zero(item.get("mean_abs_interaction"), 6),
-            "mean_signed_interaction": _finite_or_zero(item.get("mean_signed_interaction"), 6),
+            "pair": item.get("pair"),
+            "mean_abs_interaction": _finite_or_none(item.get("mean_abs_interaction"), 6),
+            "mean_signed_interaction": _finite_or_none(item.get("mean_signed_interaction"), 6),
         }
         for item in (shap_result.get("shapiq_top5_interactions") or [])
     ]
-    sq_df = (
-        pl.DataFrame(sq_rows)
-        if sq_rows
-        else pl.DataFrame(
-            schema={
-                "pair": pl.String,
-                "mean_abs_interaction": pl.Float64,
-                "mean_signed_interaction": pl.Float64,
-            }
-        )
+    sq_df = pl.DataFrame(
+        sq_rows,
+        schema={
+            "pair": pl.String,
+            "mean_abs_interaction": pl.Float64,
+            "mean_signed_interaction": pl.Float64,
+        },
     )
 
     con = duckdb.connect(str(tmp_db))
@@ -1115,11 +1028,11 @@ def log_suite_to_mlflow(
     tracking_uri: str,
     experiment_name: str,
     cpcv_summary: Mapping[str, Any],
-    ml4t_tearsheet_info: Mapping[str, Any],
-    shap_tearsheet_info: Mapping[str, Any],
+    attribution: Mapping[str, Any],
+    reports: Mapping[str, Mapping[str, Any]],
     cpcv_summary_path: Path,
 ) -> dict[str, Any]:
-    """Log CPCV/DSR/PBO/SHAP metrics and both unmodified HTML tearsheets into MLflow 3."""
+    """Log CPCV/DSR/PBO/SHAP metrics and every upstream report file into MLflow 3."""
     import mlflow
 
     mlflow.set_tracking_uri(tracking_uri)
@@ -1127,47 +1040,35 @@ def log_suite_to_mlflow(
     mstats = cpcv_summary["ml4t_diagnostic_stats"]
     cpcv_cfg = cpcv_summary["skfolio_cpcv"]
     with mlflow.start_run(run_name="ml4t-cpcv-shap-shapiq-prewall-suite") as run:
-        mlflow.log_params(
-            {
-                "prewall_cutoff_iso": PREWALL_CUTOFF_ISO,
-                "paper_only": "True",
-                "live_execution_enabled": "False",
-                "cpcv_n_folds": int(cpcv_cfg["n_folds"]),
-                "cpcv_n_test_folds": int(cpcv_cfg["n_test_folds"]),
-                "cpcv_n_splits": int(cpcv_cfg["n_splits"]),
-                "cpcv_n_test_paths": int(cpcv_cfg["n_test_paths"]),
-                "selected_arm_id": str(cpcv_summary["selected_arm_id"]),
-                "shapiq_version": str(shap_tearsheet_info["shapiq_version"]),
-            }
-        )
-        mlflow.log_metrics(
-            {
-                "cpcv_n_test_paths": float(cpcv_cfg["n_test_paths"]),
-                "cpcv_n_splits": float(cpcv_cfg["n_splits"]),
-                "cpcv_pbo": float(mstats["pbo"]),
-                "cpcv_dsr_probability": float(mstats["dsr_probability"]),
-                "cpcv_observed_sharpe_ann": float(mstats["observed_sharpe_ann"]),
-                "cpcv_oos_path_sharpe_mean": float(mstats["oos_path_sharpe_mean"]),
-                "shap_lgbm_additivity_err": float(shap_tearsheet_info["lgbm_additivity_max_error"]),
-                "shap_catboost_additivity_err": float(
-                    shap_tearsheet_info["catboost_additivity_max_error"]
-                ),
-            }
-        )
+        params: dict[str, Any] = {
+            "prewall_cutoff_iso": PREWALL_CUTOFF_ISO,
+            "paper_only": "True",
+            "live_execution_enabled": "False",
+            "cpcv_n_folds": int(cpcv_cfg["n_folds"]),
+            "cpcv_n_test_folds": int(cpcv_cfg["n_test_folds"]),
+            "cpcv_n_splits": int(cpcv_cfg["n_splits"]),
+            "cpcv_n_test_paths": int(cpcv_cfg["n_test_paths"]),
+            "selected_arm_id": cpcv_summary["selected_arm_id"],
+            "oos_paths_arm_selection": str(cpcv_summary["oos_paths_arm_selection"]),
+            "n_trials_total": mstats["n_trials_total"],
+            "shapiq_version": str(attribution["shapiq_version"]),
+        }
+        mlflow.log_params({key: value for key, value in params.items() if value is not None})
+        candidate_metrics = {
+            "cpcv_n_test_paths": cpcv_cfg["n_test_paths"],
+            "cpcv_n_splits": cpcv_cfg["n_splits"],
+            "cpcv_pbo": mstats["pbo"],
+            "cpcv_dsr_probability": mstats["dsr_probability"],
+            "cpcv_observed_sharpe_ann": mstats["observed_sharpe_ann"],
+            "cpcv_oos_path_sharpe_mean": mstats["oos_path_sharpe_mean"],
+            "shap_lgbm_additivity_err": attribution["lgbm_additivity_max_error"],
+            "shap_catboost_additivity_err": attribution["catboost_additivity_max_error"],
+        }
+        mlflow.log_metrics({k: float(v) for k, v in candidate_metrics.items() if v is not None})
         mlflow.set_tags(
             {
-                "ml4t_tearsheet_path": str(ml4t_tearsheet_info["path"]),
-                "ml4t_tearsheet_sha256": str(ml4t_tearsheet_info["sha256"]),
-                "ml4t_tearsheet_url": (
-                    "http://127.0.0.1:8793/tearsheets/"
-                    "ml4t_diagnostic_h109_falsification_tearsheet.html"
-                ),
-                "shap_tearsheet_path": str(shap_tearsheet_info["path"]),
-                "shap_tearsheet_sha256": str(shap_tearsheet_info["sha256"]),
-                "shap_tearsheet_url": (
-                    "http://127.0.0.1:8793/tearsheets/"
-                    "shap_shapiq_prewall_attribution_tearsheet.html"
-                ),
+                **{f"report_{name}_generator": str(r["generator"]) for name, r in reports.items()},
+                **{f"report_{name}_sha256": str(r["sha256"]) for name, r in reports.items()},
                 "cpcv_summary_path": str(cpcv_summary_path),
             }
         )
@@ -1175,8 +1076,7 @@ def log_suite_to_mlflow(
         artifact_mode = "none"
         artifact_uri = str(run.info.artifact_uri or "")
         artifact_items: list[tuple[Path, str]] = [
-            (Path(str(ml4t_tearsheet_info["path"])), "tearsheets"),
-            (Path(str(shap_tearsheet_info["path"])), "tearsheets"),
+            (Path(str(r["path"])), "reports") for r in reports.values()
         ]
         if cpcv_summary_path.is_file():
             artifact_items.append((cpcv_summary_path, "cpcv"))
@@ -1216,7 +1116,6 @@ def run_pipeline(
     *,
     df10_path: Path = DEFAULT_DF10_PATH,
     h109_dossier_path: Path = DEFAULT_H109_DOSSIER,
-    ablation_dossier_path: Path = DEFAULT_ABLATION_DOSSIER,
     cpcv_dir: Path = DEFAULT_CPCV_DIR,
     tearsheet_dir: Path = DEFAULT_TEARSHEET_DIR,
     manifest_out_path: Path = DEFAULT_OUT_MANIFEST,
@@ -1224,44 +1123,35 @@ def run_pipeline(
     mlflow_uri: str | None = DEFAULT_MLFLOW_URI,
     mlflow_experiment: str = DEFAULT_MLFLOW_EXPERIMENT,
 ) -> dict[str, Any]:
-    """Execute end-to-end pre-wall CPCV + ml4t-diagnostic + SHAP/shapiq tearsheet suite."""
+    """Execute end-to-end pre-wall CPCV + ml4t-diagnostic + skfolio + SHAP/shapiq report suite."""
     risk_sha = verify_risk_kernel_sha256()
     h109_dossier = _load_json_safe(h109_dossier_path)
-    ablation_dossier = _load_json_safe(ablation_dossier_path)
+    h109_verdict = h109_dossier.get("verdict") or {}
+    h109_l1_combined = (h109_dossier.get("l1_queue_markout") or {}).get("COMBINED") or {}
 
     df = load_prewall_causal_dataset(df10_path)
     dates, returns_1x, spy_bench, arm_ids = build_multiarm_daily_returns(df, cost_bps_roundtrip=4.0)
-    n_trials_total = int(
-        (h109_dossier.get("trial_accounting") or {}).get("cumulative_trials_total") or 211
+    n_trials_total = _int_or_none(
+        (h109_dossier.get("trial_accounting") or {}).get("cumulative_trials_total")
     )
+    dossier_arm = (h109_dossier.get("tuning") or {}).get("selected_arm_id")
     cpcv_result = run_skfolio_cpcv_analysis(
         dates,
         returns_1x,
         arm_ids,
+        selected_arm_id=str(dossier_arm) if dossier_arm is not None else None,
         n_trials_total=n_trials_total,
         cpcv_dir=cpcv_dir,
     )
 
-    ml4t_html_path = tearsheet_dir / "ml4t_diagnostic_h109_falsification_tearsheet.html"
-    shap_html_path = tearsheet_dir / "shap_shapiq_prewall_attribution_tearsheet.html"
-
-    selected_arm_id = str(cpcv_result["summary"]["selected_arm_id"])
-    trades_df = build_selected_arm_trades_df(df, arm_id=selected_arm_id, cost_bps_roundtrip=4.0)
-
-    ml4t_info = generate_ml4t_h109_falsification_tearsheet(
+    reports = generate_h109_upstream_reports(
         dates=dates,
-        selected_returns=cpcv_result["selected_returns"],
         benchmark_returns=spy_bench,
-        trades_df=trades_df,
         cpcv_result=cpcv_result,
-        h109_dossier=h109_dossier,
-        ablation_dossier=ablation_dossier,
-        output_path=ml4t_html_path,
+        output_dir=tearsheet_dir,
     )
-    shap_info = generate_shap_shapiq_prewall_tearsheet(
-        df,
-        output_path=shap_html_path,
-    )
+    attribution = generate_prewall_attribution_reports(df, output_dir=tearsheet_dir)
+    reports.update(attribution["reports"])
 
     duckdb_info: dict[str, Any] | None = None
     if sim_duckdb_path is not None:
@@ -1269,7 +1159,7 @@ def run_pipeline(
             db_path=sim_duckdb_path,
             cpcv_result=cpcv_result,
             h109_dossier=h109_dossier,
-            shap_result=shap_info,
+            shap_result=attribution,
         )
 
     mlflow_info: dict[str, Any] = {"logged": False, "tracking_uri": mlflow_uri}
@@ -1279,8 +1169,8 @@ def run_pipeline(
                 tracking_uri=mlflow_uri,
                 experiment_name=mlflow_experiment,
                 cpcv_summary=cpcv_result["summary"],
-                ml4t_tearsheet_info=ml4t_info,
-                shap_tearsheet_info=shap_info,
+                attribution=attribution,
+                reports=reports,
                 cpcv_summary_path=Path(cpcv_result["summary"]["artifacts"]["summary_json"]),
             )
         except Exception as exc:
@@ -1291,7 +1181,7 @@ def run_pipeline(
             }
 
     manifest: dict[str, Any] = {
-        "schema_version": "tier0.ml4t-shap-tearsheet-suite.v1",
+        "schema_version": "tier0.ml4t-shap-tearsheet-suite.v2",
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "prewall_cutoff_iso": PREWALL_CUTOFF_ISO,
         "paper_only": True,
@@ -1306,37 +1196,24 @@ def run_pipeline(
             "sessions_count": int(len(dates)),
         },
         "h109_verdict_summary": {
-            "overall_verdict": str(
-                (h109_dossier.get("verdict") or {}).get("overall_verdict") or "DISCARD"
-            ),
-            "cross_leg_promoted": bool(
-                (h109_dossier.get("verdict") or {}).get("cross_leg_promoted", False)
-            ),
-            "cumulative_trials_total": int(n_trials_total),
-            "l1_combined_fills": int(
-                ((h109_dossier.get("l1_queue_markout") or {}).get("COMBINED") or {}).get(
-                    "passive_filled"
-                )
-                or 0
-            ),
-            "l1_combined_mean_markout_bps": _finite_or_zero(
-                ((h109_dossier.get("l1_queue_markout") or {}).get("COMBINED") or {}).get(
-                    "mean_markout_bps"
-                ),
-                3,
+            "source": str(h109_dossier_path),
+            "overall_verdict": h109_verdict.get("overall_verdict"),
+            "cross_leg_promoted": h109_verdict.get("cross_leg_promoted"),
+            "cumulative_trials_total": n_trials_total,
+            "l1_combined_fills": _int_or_none(h109_l1_combined.get("passive_filled")),
+            "l1_combined_mean_markout_bps": _finite_or_none(
+                h109_l1_combined.get("mean_markout_bps"), 3
             ),
         },
         "cpcv_artifacts": cpcv_result["summary"],
-        "tearsheets": {
-            "ml4t_diagnostic_h109_falsification": {
-                **ml4t_info,
-                "caddy_url": "http://127.0.0.1:8793/tearsheets/ml4t_diagnostic_h109_falsification_tearsheet.html",
-            },
-            "shap_shapiq_prewall_attribution": {
-                **shap_info,
-                "caddy_url": "http://127.0.0.1:8793/tearsheets/shap_shapiq_prewall_attribution_tearsheet.html",
-            },
-        },
+        "report_dir": str(tearsheet_dir),
+        "reports": reports,
+        "reports_not_produced": (
+            {}
+            if "ml4t_backtest_tearsheet" in reports
+            else {"ml4t_backtest_tearsheet": "the H109 dossier names no tuning.selected_arm_id"}
+        ),
+        "attribution": {k: v for k, v in attribution.items() if k != "reports"},
         "sim_prewall_audit_duckdb": duckdb_info,
         "mlflow": mlflow_info,
     }
@@ -1346,11 +1223,13 @@ def run_pipeline(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Generate official unmodified ml4t-diagnostic & SHAP/shapiq tearsheets."
+        description=(
+            "Write the pre-wall H109 CPCV, ml4t-diagnostic, skfolio and SHAP/shapiq reports "
+            "with the upstreams' own report and plot functions."
+        )
     )
     parser.add_argument("--df10", type=Path, default=DEFAULT_DF10_PATH)
     parser.add_argument("--h109-dossier", type=Path, default=DEFAULT_H109_DOSSIER)
-    parser.add_argument("--ablation-dossier", type=Path, default=DEFAULT_ABLATION_DOSSIER)
     parser.add_argument("--cpcv-dir", type=Path, default=DEFAULT_CPCV_DIR)
     parser.add_argument("--tearsheet-dir", type=Path, default=DEFAULT_TEARSHEET_DIR)
     parser.add_argument("--manifest-out", type=Path, default=DEFAULT_OUT_MANIFEST)
@@ -1363,7 +1242,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = run_pipeline(
         df10_path=args.df10,
         h109_dossier_path=args.h109_dossier,
-        ablation_dossier_path=args.ablation_dossier,
         cpcv_dir=args.cpcv_dir,
         tearsheet_dir=args.tearsheet_dir,
         manifest_out_path=args.manifest_out,
@@ -1380,8 +1258,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "cpcv_splits": result["cpcv_artifacts"]["skfolio_cpcv"]["n_splits"],
                 "pbo": result["cpcv_artifacts"]["ml4t_diagnostic_stats"]["pbo"],
                 "dsr": result["cpcv_artifacts"]["ml4t_diagnostic_stats"]["dsr_probability"],
-                "ml4t_bytes": result["tearsheets"]["ml4t_diagnostic_h109_falsification"]["bytes"],
-                "shap_bytes": result["tearsheets"]["shap_shapiq_prewall_attribution"]["bytes"],
+                "reports": {name: r["bytes"] for name, r in result["reports"].items()},
                 "mlflow_run_id": result["mlflow"].get("run_id"),
             },
             indent=2,

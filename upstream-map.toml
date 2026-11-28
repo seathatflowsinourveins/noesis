@@ -349,7 +349,7 @@ why = "Runs every hosted portal, telemetry service, and agent sandbox strictly i
 how = "integrate"
 upstream = "caddy"
 secondary_upstreams = ["nautilus_trader", "ml4t-diagnostic", "allure-report", "duckdb"]
-feature = "Loopback-bound (bind 127.0.0.1) Caddy v2.11.9 server hosting unmodified Nautilus/ml4t/SHAP tearsheets & Allure 3 test reports (:8793) plus Origin-normalising CSRF proxy for DuckDB SQL UI (:4213 -> 127.0.0.1:4214)"
+feature = "Loopback-bound (bind 127.0.0.1) Caddy v2.11.9 server hosting the upstream report pages (Nautilus create_tearsheet, ml4t-diagnostic, skfolio) & Allure 3 test reports (:8793) plus Origin-normalising CSRF proxy for DuckDB SQL UI (:4213 -> 127.0.0.1:4214)"
 why = "Serves unmodified upstream static HTML/test reports and preserves DuckDB UI HTTP 401 CSRF rejection on foreign Origins strictly via declarative Caddyfile with zero custom web servers"
 
 [files."docker/otel-collector-config.yaml"]
@@ -439,15 +439,15 @@ why = "Populates native NautilusTrader v2 ParquetDataCatalog and generates unmod
 how = "integrate"
 upstream = "ml4t-diagnostic"
 secondary_upstreams = ["skfolio", "shap", "shapiq", "lightgbm", "catboost", "polars", "duckdb", "mlflow"]
-feature = "Causal pre-wall skfolio CombinatorialPurgedCV (>=16 paths) artifact persistence and unmodified ml4t-diagnostic & SHAP/shapiq HTML tearsheets + DuckDB sim audit snapshot"
-why = "Delegates statistical falsification, CPCV distributions, and TreeSHAP/k-SII attribution visuals strictly to official upstream libraries with zero custom HTML/JS"
+feature = "Causal pre-wall skfolio CombinatorialPurgedCV (>=16 paths) artifacts, interactive reports written by the upstreams' own functions (ml4t-diagnostic generate_backtest_tearsheet / FeatureImportanceDashboard, skfolio plot_train_test_folds / Population.plot_distribution) + DuckDB sim audit snapshot (TreeSHAP and shapiq k-SII values)"
+why = "One upstream call per report file with run data only: no figure, page, section or table composed here, and no typed-in result numbers (missing inputs stay missing)"
 
 [files."docker/grafana/dashboards/tier0-sim-backtest-control-center.json"]
 how = "integrate"
 upstream = "grafana"
 secondary_upstreams = ["prometheus", "otel-collector-contrib"]
-feature = "Declarative 10-panel Grafana Sim-Backtest & Official Control Center dashboard provisioned automatically on :3001"
-why = "Renders sim-backtest and control-center telemetry strictly via declarative Grafana JSON with zero hand-written HTML/JS"
+feature = "Declarative 3-panel Grafana control-center dashboard (paper TCA cost envelope, risk guardrails, scrape health) provisioned automatically on :3001"
+why = "Shows the harness's own emitted Prometheus metrics through Grafana dashboard JSON (configuration only); panels without an emitted metric were removed 2026-11-27"
 
 [files.".omp/mcp.json"]
 how = "integrate"

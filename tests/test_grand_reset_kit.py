@@ -195,7 +195,7 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     assert services["tearsheets"]["image"] == "caddy:2.11.9-alpine"
     assert services["telemetry-exporter"]["image"] == "otel/opentelemetry-collector-contrib:0.166.0"
     assert services["prometheus"]["image"] == "prom/prometheus:v3.16.0"
-    assert services["grafana"]["image"] == "grafana/grafana:13.3.1"
+    assert services["grafana"]["image"] == "grafana/grafana:13.3.2"
     assert (
         "./prometheus_rules.yml:/etc/prometheus/prometheus_rules.yml:ro"
         in services["prometheus"]["volumes"]
