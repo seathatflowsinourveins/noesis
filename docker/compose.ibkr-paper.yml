@@ -10,7 +10,7 @@ services:
   ibkr-paper:
     # The upstream stable release: 10.50.1h has the digest of :stable and :10.50 (2026-11-28). A full
     # patch tag plus digest per ADR-0032 §4; Dependabot docker-compose updates the two together.
-    image: ghcr.io/gnzsnz/ib-gateway:10.50.1h@sha256:4f2704a1ab2ebcd468ac6ca58e2b99d2c6c056b303a3f499b67fc80012ad5a10
+    image: ghcr.io/gnzsnz/ib-gateway:10.53.1a@sha256:3a2fe376a1bb8c77026e41246ec5655f766d58e33404a5df28ba31964198963d
     container_name: ibkr-paper
     cpus: "2.0"
     mem_limit: 2048m
