@@ -45,6 +45,7 @@ MISE_PINNED_HOOKS = frozenset(
 WRITE_GRANTS: dict[tuple[str, str], frozenset[str]] = {
     ("release.yml", "draft-release"): frozenset({"contents"}),
     ("multi-model-sota.yml", "claude-omniroute-or-anthropic-banked"): frozenset({"id-token"}),
+    ("dependabot-auto-merge.yml", "enable-auto-merge"): frozenset({"contents", "pull-requests"}),
 }
 # (workflow file, job id, step name) -> the only step conditional a required job may carry.
 # `!cancelled()` runs the step whenever the default `success()` would, and also after a failure,
@@ -317,3 +318,36 @@ def test_dependabot_covers_every_pinned_ecosystem() -> None:
         set(actions["groups"]["actions-in-required-checks"]["patterns"])
         == required_workflow_actions
     )
+
+
+def test_dependabot_auto_merge_is_scoped_and_spoof_proof() -> None:
+    workflow_text = (WORKFLOWS_DIR / "dependabot-auto-merge.yml").read_text(encoding="utf-8")
+    doc = _load_workflows()["dependabot-auto-merge.yml"]
+    assert set(_triggers(doc)) == {"pull_request"}
+    (job,) = doc["jobs"].values()
+    # The pull request author, not the actor of the triggering event, identifies Dependabot,
+    # and the job condition is a conjunction, so no clause can widen it.
+    assert "||" not in job["if"]
+    assert "github.event.pull_request.user.login == 'dependabot[bot]'" in job["if"].split(" && ")
+    assert "github.actor" not in workflow_text
+    assert job["permissions"] == {"contents": "write", "pull-requests": "write"}
+    assert len(job["steps"]) == 2
+    metadata, merge_step = job["steps"]
+    assert str(metadata["uses"]).startswith("dependabot/fetch-metadata@")
+    assert metadata["id"] == "metadata"
+    # Default verification: fetch-metadata checks that dependabot[bot] authored the pull request
+    # and its first commit, and that commit's signature; the skip inputs turn those checks off.
+    assert not {"skip-commit-verification", "skip-verification"} & set(metadata.get("with", {}))
+    assert merge_step["run"] == 'gh pr merge --auto --squash "$PR_URL"'
+    # Exactly one group, patch or minor only: no other group, ecosystem or major can qualify.
+    condition = " ".join(str(merge_step["if"]).split())
+    assert condition == (
+        "steps.metadata.outputs.dependency-group == 'actions-in-required-checks'"
+        " && (steps.metadata.outputs.update-type == 'version-update:semver-patch'"
+        " || steps.metadata.outputs.update-type == 'version-update:semver-minor')"
+    )
+    dependabot = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    )
+    (actions,) = [u for u in dependabot["updates"] if u["package-ecosystem"] == "github-actions"]
+    assert "actions-in-required-checks" in actions["groups"]

@@ -1,0 +1,45 @@
+# Upstream directives:
+#   - https://docs.github.com/en/code-security/tutorials/secure-your-dependencies/automate-dependabot-with-actions
+#   - https://github.com/dependabot/fetch-metadata
+# Enables auto-merge only; GitHub merges when every required check of ruleset protect-main is green
+# on an up-to-date branch. Only the Dependabot group whose updates a required check exercises
+# qualifies: actions-in-required-checks (patch and minor). uv-patch stays with the landing worker,
+# because a passing suite did not reveal the silent hftbacktest downgrade of pull request #2 (ADR-0032).
+
+name: noesis — Dependabot Auto-Merge
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: noesis-dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  enable-auto-merge:
+    name: Enable auto-merge for exercised Dependabot updates
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'seathatflowsinourveins/noesis'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge --auto (GitHub merges later; this job never pushes)
+      pull-requests: write # gh pr merge --auto
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge (squash)
+        if: >-
+          steps.metadata.outputs.dependency-group == 'actions-in-required-checks'
+          && (steps.metadata.outputs.update-type == 'version-update:semver-patch'
+          || steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
