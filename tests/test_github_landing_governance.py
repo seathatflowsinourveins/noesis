@@ -411,3 +411,31 @@ def test_release_attests_build_provenance_and_sbom() -> None:
     for job_id, job in jobs.items():
         if job_id != "attest":
             assert "id-token" not in job["permissions"], job_id
+
+
+def test_zizmor_audits_the_repository_root() -> None:
+    jobs = _load_workflows()["security.yml"]["jobs"]
+
+    def zizmor_inputs(job_id: str) -> dict[str, Any]:
+        (step,) = [
+            s for s in jobs[job_id]["steps"] if str(s.get("uses", "")).startswith("zizmorcore/")
+        ]
+        assert not {"if", "continue-on-error"} & set(step)
+        return step["with"]
+
+    required = zizmor_inputs("zizmor")
+    assert required["inputs"] == "."
+    assert required["online-audits"] == "false"
+    # Online audits call the GitHub API, so they run on a schedule in a job that is not required
+    # and that no pull_request event can start.
+    online_job = jobs["zizmor-online"]
+    assert online_job["name"] not in REQUIRED_CHECKS
+    assert online_job["if"] == (
+        "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+    )
+    online = zizmor_inputs("zizmor-online")
+    assert online["inputs"] == "."
+    assert online["online-audits"] == "true"
+    assert online["version"] == required["version"]
+    justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^\s+zizmor --offline --persona=pedantic \.\s*$", justfile)

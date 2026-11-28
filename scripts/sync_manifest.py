@@ -1963,7 +1963,7 @@ def build_llm_harness_manifest(
                 "just fnox-check",
                 "just docs-build",
                 "prek run --all-files",
-                "zizmor --offline .github/workflows",
+                "zizmor --offline --persona=pedantic .",
                 "pwsh -NoProfile -File scripts/grand_reset/verify_grand_reset.ps1",
             ],
             "primary_scripts": [
@@ -2138,7 +2138,7 @@ def build_llm_harness_manifest(
             "compounding_reflection": "just reflect",
             "pre_commit_hooks": "prek run --all-files",
             "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
-            "workflow_audit": "zizmor --offline .github/workflows",
+            "workflow_audit": "zizmor --offline --persona=pedantic .",
             "supply_chain_scan": (
                 "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL "
                 "--exit-code 1 --skip-dirs "
