@@ -2193,5 +2193,13 @@
       "layer": "L6",
       "isolation": "Unmodified loopback-only (127.0.0.1:3001) Docker container outside src/ Python import graph; companion to L14 watched grafana/{loki,tempo,pyroscope}"
     }
+  },
+  "sovereign_mac_companion": {
+    "repo": "seathatflowsinourveins/mac-sota-ecosystem",
+    "visibility": "public",
+    "layers": "M0-M7",
+    "adr_count": 8,
+    "mac_broker_ports": 0,
+    "federation_adr": "ADR-0034"
   }
 }
