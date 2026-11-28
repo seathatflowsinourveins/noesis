@@ -1237,3 +1237,139 @@ def test_zizmor_gates_use_pedantic_persona() -> None:
     ]
     assert len(steps) == 2
     assert all(step["with"]["persona"] == "pedantic" for step in steps)
+
+
+def test_compose_l6_portal_commands_and_loopback_ports() -> None:
+    """Each L6 portal runs its upstream CLI and is published on loopback only."""
+    from importlib.metadata import entry_points
+
+    services = yaml.safe_load(
+        (REPO_ROOT / "docker" / "compose.sota.yml").read_text(encoding="utf-8")
+    )["services"]
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = {(pkg["name"], pkg["version"]) for pkg in lock["package"]}
+    console_scripts = {ep.name: ep for ep in entry_points(group="console_scripts")}
+    any_host = "0.0.0.0"  # noqa: S104 - container side of the port; the host side is 127.0.0.1
+    # service: (upstream CLI, subcommand words, flag values, container port, host port)
+    portals: dict[str, tuple[str, list[str], dict[str, str], int, int]] = {
+        "mlflow": (
+            "mlflow",
+            ["server"],
+            {
+                "--backend-store-uri": "sqlite:////state/mlflow/mlflow.db",
+                "--host": any_host,
+                "--port": "5000",
+                "--workers": "1",
+            },
+            5000,
+            5000,
+        ),
+        "optuna-dashboard": (
+            "optuna-dashboard",
+            ["sqlite:////state/mlflow/optuna.db"],
+            {"--host": any_host, "--port": "8080"},
+            8080,
+            8080,
+        ),
+        "dagster-webserver": (
+            "dagster-webserver",
+            [],
+            {"-w": "/var/dagster_home/workspace.yaml", "-h": any_host, "-p": "3000"},
+            3000,
+            3000,
+        ),
+        "inspect-view": (
+            "inspect",
+            ["view", "start"],
+            {"--host": any_host, "--port": "7575"},
+            7575,
+            7575,
+        ),
+        "zensical": ("zensical", ["serve"], {"--dev-addr": f"{any_host}:8000"}, 8000, 8010),
+    }
+    for name, (cli, words, flags, container_port, host_port) in portals.items():
+        svc = services[name]
+        command = [str(part) for part in svc["command"]]
+        assert svc["image"] == "tier0-sota-research:latest", name
+        assert command[: 1 + len(words)] == [cli, *words], name
+        for flag, value in flags.items():
+            assert command.count(flag) == 1, (name, flag)
+            assert command[command.index(flag) + 1] == value, (name, flag)
+        # The CLI is the console script of a distribution installed at its uv.lock version.
+        dist = console_scripts[cli].dist
+        assert dist is not None, cli
+        assert (re.sub(r"[-_.]+", "-", dist.name).lower(), dist.version) in locked, cli
+        assert svc["ports"] == [f"127.0.0.1:{host_port}:{container_port}"], name
+        assert f"http://127.0.0.1:{container_port}/" in " ".join(svc["healthcheck"]["test"]), name
+
+    xerj = services["xerj"]
+    assert xerj["build"]["dockerfile"] == "docker/Dockerfile.xerj"
+    dockerfile = (REPO_ROOT / "docker" / "Dockerfile.xerj").read_text(encoding="utf-8")
+    assert re.findall(r"(?m)^ENTRYPOINT\s+(.+?)\s*$", dockerfile) == ['["/usr/local/bin/xerj"]']
+    assert xerj["command"][xerj["command"].index("--data-dir") + 1] == "/data"
+    assert xerj["ports"] == ["127.0.0.1:9200:9200"]
+    assert "http://127.0.0.1:9200/" in " ".join(xerj["healthcheck"]["test"])
+
+
+def test_duckdb_ui_dropin_binds_ledgers_read_only() -> None:
+    """The DuckDB UI unit sees the paper ledgers only as read-only view catalogs."""
+    from tier0_sota.live.paper_farm import ALPACA_LANE_PROFILES, _duckdb_filename
+
+    manifests = "/mnt/z/sota-data/manifests"
+    dropin = (REPO_ROOT / "docker" / "duckdb-ui" / "paper-farm.conf").read_text(encoding="utf-8")
+    lines = [
+        line.strip()
+        for line in dropin.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", ";"))
+    ]
+    assert lines[0] == "[Service]"
+    binds: dict[str, str] = {}
+    for line in lines[1:]:
+        key, _, value = line.partition("=")
+        # Read-only bind mounts only: no BindPaths, ReadWritePaths or other directives.
+        assert key == "BindReadOnlyPaths", line
+        source, _, target = value.partition(":")
+        assert target not in binds, line
+        binds[target] = source
+    assert binds == {
+        f"{manifests}/paper_lane_pa1.duckdb": f"{manifests}/paper_farm_ui/pa1.duckdb",
+        f"{manifests}/paper_lane_pa2.duckdb": f"{manifests}/paper_farm_ui/pa2.duckdb",
+        f"{manifests}/paper_lane_pa3.duckdb": f"{manifests}/paper_farm_ui/pa3.duckdb",
+        f"{manifests}/tv_sota_pack/tv_half_auto_audit.duckdb": (
+            f"{manifests}/paper_farm_ui/tv_audit.duckdb"
+        ),
+    }
+    # The shadowed paths are the ledgers the paper-farm lanes write.
+    lane_ledgers = {f"{manifests}/{_duckdb_filename(account)}" for account in ALPACA_LANE_PROFILES}
+    assert lane_ledgers == {target for target in binds if "/paper_lane_" in target}
+
+    script = (REPO_ROOT / "scripts" / "configure_paper_farm_ui.sh").read_text(encoding="utf-8")
+    assert "for lane in pa1 pa2 pa3; do" in script
+    assert "for ledger in paper_wire_orders paper_tca_fills; do" in script
+    views = re.findall(r"CREATE OR REPLACE VIEW (\S+) AS SELECT \* FROM read_parquet\(", script)
+    assert views == ["$ledger", "tv_staged_presets"]
+    assert '"$repo_root/docker/duckdb-ui/paper-farm.conf"' in script
+    assert "/etc/systemd/system/tier0-duckdb-ui.service.d/paper-farm.conf" in script
+    # The script builds the view catalogs only; it never opens a lane ledger.
+    assert "paper_lane_" not in script
+
+
+def test_test_report_recipe_pins_allure_versions() -> None:
+    """Both test-report recipes run one exact Allure 3 CLI and the locked allure-pytest."""
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    bodies = _just_recipe_bodies(just_txt, "test-report")
+    assert set(bodies) == {"unix", "windows"}
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = {pkg["name"]: pkg["version"] for pkg in lock["package"]}
+    plugin_pin = f"allure-pytest=={locked['allure-pytest']}"
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["dependency-groups"]["test-reports"] == [plugin_pin]
+    cli_specs: set[str] = set()
+    for os_name, body in bodies.items():
+        assert re.findall(r"--with (allure-pytest==\S+)", body) == [plugin_pin], os_name
+        assert "--alluredir=" in body and "--junitxml=" in body, os_name
+        specs = re.findall(r"\bnpx --yes (allure@\S+) awesome ", body)
+        assert len(specs) == 1 and "--single-file" in body, os_name
+        cli_specs.update(specs)
+    assert len(cli_specs) == 1, f"Allure CLI pins differ across platforms: {cli_specs}"
+    assert re.fullmatch(r"allure@3\.\d+\.\d+", cli_specs.pop())

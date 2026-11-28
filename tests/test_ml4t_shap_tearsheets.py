@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -425,3 +427,110 @@ def test_mlflow_log_skips_missing_values_and_records_report_generators(
     for name, report in reports.items():
         assert run.data.tags[f"report_{name}_generator"] == report["generator"]
         assert run.data.tags[f"report_{name}_sha256"] == report["sha256"]
+
+
+def test_tearsheets_use_only_upstream_figure_functions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every figure on the report pages is built inside an upstream library, none here."""
+    from plotly.basedatatypes import BaseFigure
+
+    builders: list[str] = []
+    upstream_init = BaseFigure.__init__
+
+    def recording_init(self: BaseFigure, *args: Any, **kwargs: Any) -> None:
+        # The first caller outside plotly is the code that asked for this figure.
+        frame = inspect.currentframe()
+        caller = frame.f_back if frame is not None else None
+        while caller is not None and caller.f_globals.get("__name__", "").startswith(
+            ("plotly.", "_plotly_utils.")
+        ):
+            caller = caller.f_back
+        builders.append(caller.f_globals.get("__name__", "") if caller is not None else "")
+        upstream_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(BaseFigure, "__init__", recording_init)
+    df = _make_synthetic_prewall_df(80)
+    dates, mat, spy, arm_ids = mod.build_multiarm_daily_returns(df)
+    cpcv = mod.run_skfolio_cpcv_analysis(
+        dates, mat, arm_ids, selected_arm_id="H109_A12", cpcv_dir=tmp_path / "cpcv"
+    )
+    reports = mod.generate_h109_upstream_reports(
+        dates=dates, benchmark_returns=spy, cpcv_result=cpcv, output_dir=tmp_path / "reports"
+    )
+    attribution = mod.generate_prewall_attribution_reports(df, output_dir=tmp_path / "reports")
+    assert set(reports) == {
+        "ml4t_backtest_tearsheet",
+        "skfolio_cpcv_train_test_folds",
+        "skfolio_cpcv_path_sharpe_distribution",
+    }
+    assert set(attribution["reports"]) == {
+        "ml4t_feature_importance_lightgbm",
+        "ml4t_feature_importance_catboost",
+    }
+    assert builders, "the report functions built no plotly figure"
+    assert mod.__name__ not in builders
+    assert {builder.split(".")[0] for builder in builders} <= {"ml4t", "skfolio"}, builders
+
+
+def test_sim_backtest_suite_calls_upstream_create_tearsheet() -> None:
+    """The engine report pages are nautilus_trader's own functions, called on the engine."""
+    from nautilus_trader.analysis import tearsheet as upstream
+    from scripts import run_sim_backtest_tearsheet_suite as suite
+
+    tree = ast.parse(
+        (SCRIPTS_DIR / "run_sim_backtest_tearsheet_suite.py").read_text(encoding="utf-8")
+    )
+    backtest = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "run_empirical_backtest_from_catalog"
+    )
+    engines = [
+        node
+        for node in ast.walk(backtest)
+        if isinstance(node, ast.Assign)
+        and [ast.unparse(target) for target in node.targets] == ["engine"]
+    ]
+    assert len(engines) == 1 and isinstance(engines[0].value, ast.Call)
+    assert ast.unparse(engines[0].value.func) == "BacktestEngine"
+    in_backtest = set(map(id, ast.walk(backtest)))
+    for name in ("create_tearsheet", "create_bars_with_fills"):
+        # The name the suite calls is the upstream function, not a local stand-in.
+        assert getattr(suite, name) is getattr(upstream, name), name
+        assert getattr(upstream, name).__module__ == "nautilus_trader.analysis.tearsheet"
+        stand_ins = [
+            node
+            for node in ast.walk(tree)
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+                and node.name == name
+            )
+            or (isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store))
+        ]
+        assert stand_ins == [], name
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        ]
+        # One call, inside the backtest, on the BacktestEngine that ran it, writing a file.
+        assert len(calls) == 1 and id(calls[0]) in in_backtest, name
+        assert [ast.unparse(arg) for arg in calls[0].args] == ["engine"], name
+        assert "output_path" in {keyword.arg for keyword in calls[0].keywords}, name
+    # Each receipt names the upstream function that wrote its file.
+    generators = {
+        value.value
+        for node in ast.walk(backtest)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant)
+        and key.value == "generator"
+        and isinstance(value, ast.Constant)
+    }
+    assert generators == {
+        "nautilus_trader.analysis.tearsheet.create_tearsheet",
+        "nautilus_trader.analysis.tearsheet.create_bars_with_fills",
+    }
