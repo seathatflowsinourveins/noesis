@@ -363,7 +363,7 @@
     },
     "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "aaa9fb336eeb9fae66933ce30dee91fba99095a709e11424bb2a478b66c0ba48"
+    "corpus_sha256": "285cb612072107bc2d94c52fe3d665e43c1789083d806008d13f7ec380e04b82"
   },
   "clean_sota_harness": {
     "ok": true,
