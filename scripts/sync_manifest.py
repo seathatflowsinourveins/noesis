@@ -1143,15 +1143,17 @@ def _run_git(repo_root: Path, *args: str) -> str | None:
 
 
 def _detect_branch(repo_root: Path) -> str:
-    head_file = repo_root / ".git" / "HEAD"
-    if head_file.is_file():
-        content = head_file.read_text(encoding="utf-8").strip()
-        if content.startswith("ref: refs/heads/"):
-            return content.removeprefix("ref: refs/heads/")
-    out = _run_git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+    """Return the repository's default branch, never the checkout's current branch.
+
+    The generated manifests record the branch they describe (``origin/HEAD``), so a
+    checkout on a feature branch or a detached CI merge ref produces the same bytes. The full
+    ref is read instead of ``--short``, which turns ambiguous (``remotes/origin/main``) when a
+    local branch or tag is named ``origin/main``.
+    """
+    out = _run_git(repo_root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
     if out:
-        branch = out.strip()
-        if branch and branch != "HEAD":
+        branch = out.strip().removeprefix("refs/remotes/origin/")
+        if branch:
             return branch
     return "main"
 
