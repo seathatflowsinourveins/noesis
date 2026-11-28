@@ -978,3 +978,32 @@ def test_sota_manifest_frontier_spdx_zero_crypto_and_options_sidecar() -> None:
     assert guardrails["live_execution_enabled"] is False
     assert guardrails["replaces_nautilus_v2_l3_ssot"] is False
     assert guardrails["requires_local_6gate_falsification"] is True
+
+    runners_up = sidecar["evaluated_runners_up"]
+    runner_names = {r["provider"] for r in runners_up}
+    assert {"ThetaData", "Cboe LiveVol"}.issubset(runner_names)
+    assert all(r["installed_in_uv_lock"] is False for r in runners_up)
+    assert all(str(r.get("spdx", "")).strip() in allowed_sidecar_spdx for r in runners_up)
+
+    final_dec = sota["us_equities_options_sota_convergence_audit"][
+        "final_llm_native_engine_dashboard_manifest_decision"
+    ]
+    assert final_dec["paper_only"] is True
+    assert final_dec["live_execution_enabled"] is False
+    assert final_dec["replaces_nautilus_v2_l3_ssot"] is False
+    assert final_dec["zero_crypto_enforced"] is True
+    assert final_dec["canonical_decision_manifest_path"].endswith(
+        "tier0_final_llm_native_engine_dashboard_manifest.json"
+    )
+
+    accepted_adr_count = sum(
+        1
+        for p in sorted((REPO_ROOT / "docs" / "adr").glob("ADR-*.md"))
+        if re.search(r"^status:\s*accepted\s*$", p.read_text(encoding="utf-8"), re.MULTILINE)
+    )
+    assert (
+        sota["full_ecosystem_sota_saturation_audit"]["coverage_metrics"][
+            "accepted_adrs_verified_2026_11_28"
+        ]
+        == f"{accepted_adr_count}/{accepted_adr_count} (100%)"
+    )

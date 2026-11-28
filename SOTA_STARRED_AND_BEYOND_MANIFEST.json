@@ -1931,12 +1931,47 @@
           "disposition": "optional_paid_additive_off_repo_sidecar"
         }
       ],
+      "evaluated_runners_up": [
+        {
+          "provider": "ThetaData",
+          "layer": "L4",
+          "spdx": "LicenseRef-Commercial-Data-Feed",
+          "pricing_floor": "$40-$160/mo",
+          "installed_in_uv_lock": false,
+          "role": "Prosumer US Equity Options historical/intraday tick runner-up to Phase-1 ORATS and Phase-3 Databento OPRA (ADR-0013/ADR-0016)",
+          "disposition": "evaluated_runner_up_not_primary"
+        },
+        {
+          "provider": "Cboe LiveVol",
+          "layer": "L4",
+          "spdx": "LicenseRef-Commercial-Data-Feed",
+          "pricing_floor": "$350-$420/mo",
+          "installed_in_uv_lock": false,
+          "role": "Exchange-direct US Equity Options data runner-up to Phase-1 ORATS (ADR-0013/ADR-0016)",
+          "disposition": "evaluated_runner_up_not_primary"
+        }
+      ],
       "execution_guardrails": {
         "paper_only": true,
         "live_execution_enabled": false,
         "replaces_nautilus_v2_l3_ssot": false,
         "requires_local_6gate_falsification": true
       }
+    },
+    "final_llm_native_engine_dashboard_manifest_decision": {
+      "verified_date": "2026-11-28",
+      "audit_lens": "pure_engineering_quality_and_sota_ness_first",
+      "canonical_decision_manifest_path": "/mnt/z/sota-data/manifests/tier0_final_llm_native_engine_dashboard_manifest.json",
+      "verdict_id": "TIER0_CONVERGED_HYBRID_SOTA_ECOSYSTEM_V1",
+      "overall_sota_score": 9.6,
+      "single_turnkey_saas_runner_up": "QuantConnect Cloud (8.8/10) — adopted strictly as optional Stratum-2 off-repo US Options research sidecar",
+      "sovereign_engine_core": "nautechsystems/nautilus_trader v2 + nkaz001/hftbacktest + alpacahq/alpaca-py + immutable pure-Decimal risk.py (Z3/CrossHair)",
+      "llm_native_mcp_and_rd_plane": "9 active MCP endpoints (238 tools incl. nautilus-engine, mlflow, optuna, alpaca, tradingview, edgartools, xerj, codebase-memory) + DSPy/GEPA/Inspect Dual-Flywheel; microsoft/RD-Agent + Qlib audited as daily-research-only pattern reference; TauricResearch/TradingAgents rejected as trading engine",
+      "advanced_backtest_dashboard_4_forms": "Form 1 marimo :2718 + Form 2 Nautilus/ml4t-diagnostic/skfolio/Allure3 Caddy :8793 + Form 3 MLflow/Optuna/Dagster/Inspect/Zensical/XERJ + Form 4 FINOS/OpenBB/Perspective/Grafana/Prometheus/Alertmanager/OTel/DuckDB",
+      "paper_only": true,
+      "live_execution_enabled": false,
+      "replaces_nautilus_v2_l3_ssot": false,
+      "zero_crypto_enforced": true
     },
     "root_license_audit_findings": [
       {
@@ -2091,7 +2126,7 @@
     "coverage_metrics": {
       "layers_saturated": "16/16 (L0-L15)",
       "compounding_lanes_saturated": "4/4 (sim-backtest, paper, half-auto-tv, live)",
-      "accepted_adrs_verified_2026_11_28": "24/24 (100%)",
+      "accepted_adrs_verified_2026_11_28": "26/26 (100%)",
       "frontier_candidates_spdx_backfilled": "36 backfilled -> 75/75 (0 missing)",
       "spdx_license_firewall_preserved_exact_7": true,
       "supported_runtimes_parity": "8/8 (Codex, Claude Code, Gemini CLI, OpenCode, Antigravity, Orca, oh-my-pi, pi)",
