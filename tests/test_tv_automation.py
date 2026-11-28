@@ -20,6 +20,8 @@ from tier0_sota.tv import (
     TV_CLOUD_WATCHLIST_IDS,
     TvAlertV1,
     build_half_auto_tickets,
+    build_tv_compounding_manifest,
+    build_tv_layout_blueprints,
     build_tv_order_presets,
     build_tv_watchlist_sync_payload,
     build_venue_order_handles,
@@ -4477,3 +4479,21 @@ def test_refuse_live_endpoints_allows_market_decimals_and_hex_ids_while_blocking
     for bad in forbidden_payloads:
         with pytest.raises(ValueError, match="live broker endpoint"):
             refuse_live_endpoints(bad)
+
+
+def test_finos_ag_grid_plugin_pin() -> None:
+    """Both FINOS command-center payloads pin the official ag-grid widget plugin version."""
+    payloads = {
+        "tv_compounding_manifest": build_tv_compounding_manifest({})[
+            "finos_command_center_summary"
+        ]["plugins"],
+        "tv_layout_blueprints": build_tv_layout_blueprints({})["finos_openbb_command_center"][
+            "plugins"
+        ],
+    }
+    for name, plugins in payloads.items():
+        ag_grid = [plugin for plugin in plugins if plugin.startswith("@finos-workspace/ag-grid")]
+        assert ag_grid == ["@finos-workspace/ag-grid@2.3.0"], name
+        for plugin in plugins:
+            # Exact released versions of the official @finos-workspace plugins only.
+            assert re.fullmatch(r"@finos-workspace/[a-z0-9-]+@\d+\.\d+\.\d+", plugin), plugin
