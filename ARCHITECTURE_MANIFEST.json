@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 204,
+    "repository_files_count": 207,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -1031,6 +1031,9 @@
     "src/tier0_sota/tv/bridge.py",
     "src/tier0_sota/tv/schema_v1.json",
     "src/tier0_sota/tv/tickets.py",
+    "tests/alpaca_sim.py",
+    "tests/conftest.py",
+    "tests/test_alpaca_sim.py",
     "tests/test_architecture_manifest.py",
     "tests/test_core_engine.py",
     "tests/test_definitions.py",
