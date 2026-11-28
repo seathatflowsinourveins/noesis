@@ -154,6 +154,7 @@
         "unionai-oss/pandera",
         "pydantic/pydantic",
         "gerrymanoim/exchange_calendars",
+        "rsheftel/pandas_market_calendars",
         "dgunning/edgartools",
         "mortada/fredapi",
         "tobymao/sqlglot"

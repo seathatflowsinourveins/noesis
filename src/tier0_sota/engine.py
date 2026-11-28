@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from functools import lru_cache
-from typing import Any, Literal, Self
+from types import MappingProxyType
+from typing import Any, Literal, NamedTuple, Self, overload
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -47,6 +49,7 @@ __all__ = [
     "SignalBacktestResult",
     "SignalExecutionConfig",
     "SignalExecutionStrategy",
+    "UsEquitySessionBoundsET",
     "build_ibkr_paper_connection_spec",
     "build_sandbox_live_node",
     "build_venue_live_node_config",
@@ -64,7 +67,9 @@ __all__ = [
     "is_sip_dark_boats_overnight_window_et",
     "run_nautilus_signal_backtest",
     "select_pooled_trailing_schedule",
+    "session_calendar_consistency",
     "step_rth_5m_bar",
+    "us_equity_session_bounds_et",
     "validate_trailing_offset_type",
     "validate_venue_order_capability",
 ]
@@ -439,6 +444,32 @@ def _et_dt(ts_utc_ns: int) -> datetime:
     return datetime.fromtimestamp(sec, tz=UTC).replace(microsecond=rem // 1000).astimezone(_NY_TZ)
 
 
+# US equity session clock. Every intraday boundary of a trading day comes from an upstream calendar:
+#   exchange_calendars XNYS (discovery.get_xnys_calendar, the calendar the PIT and backtest lanes
+#     already use) is the authority for "is this day a session" and for the regular open and close;
+#   pandas_market_calendars NYSE supplies the pre-market open ("pre") and the post-market close
+#     ("post"), which exchange_calendars does not model. On a 13:00 early close its special_post
+#     rule ends the extended session at 17:00 ET instead of 20:00.
+# Neither library models the overnight session, so "20:00 ET on a night before an XNYS session"
+# stays derived from the XNYS session list. The minute constants below are that overnight open and
+# the pre-upstream bounds, which apply only to a day whose upstream bounds cannot be used: outside
+# the XNYS range, pandas_market_calendars unavailable, its row for the day unreadable, or the two
+# calendars disagreeing. session_calendar_consistency(day) reports which, so the supervisor can log
+# it; "fallback" on a day inside the XNYS range is the state to alert on.
+# A failed pandas_market_calendars load is not remembered. The classifier asks again when a day is
+# first looked up (one attempt per ET day, so a failing upstream is never hit once per call) and
+# session_calendar_consistency asks again on every call; a day already answered keeps its fallback
+# until one of the two succeeds. A loaded table is never rebuilt, and loading it drops the per-day
+# records made while it was missing, so every day gets its upstream bounds back. An unreadable row
+# stays unreadable for the life of the process.
+type _HmBounds = tuple[int, int, int, int]  # pre open, regular open, regular close, post close
+
+_OVERNIGHT_OPEN_HM = 1200
+_FALLBACK_BOUNDS_HM: _HmBounds = (240, 570, 960, 1200)
+_NYSE_LOAD_FAILED = "pandas_market_calendars_unavailable"
+_NYSE_ROW_INVALID = "pandas_market_calendars_row_invalid"
+
+
 @lru_cache(maxsize=2048)
 def _xnys_info(ny_day: date) -> tuple[bool, int] | None:
     from exchange_calendars.errors import DateOutOfBounds
@@ -455,28 +486,232 @@ def _xnys_info(ny_day: date) -> tuple[bool, int] | None:
         return None
 
 
-def classify_et_hm(hm: int, rth_close_hm: int = 960) -> MarketSession24x5:
-    """Classify ET minute-of-day into a US equity 24/5 session label."""
-    if 240 <= hm < 570:
+@lru_cache(maxsize=1)
+def _nyse_extended_hours_rows() -> Mapping[date, _HmBounds | str]:
+    """pandas_market_calendars NYSE (pre, open, close, post) ET minutes per session day.
+
+    One schedule() call over the XNYS range, because days outside it use the fallback anyway. A row
+    that cannot be read is kept as its error text, so it costs that day only. Raises when the
+    calendar cannot be loaded at all: lru_cache keeps only a returned value, so a failed load is
+    tried again by the next caller and a loaded table is never rebuilt.
+    """
+    import pandas_market_calendars as mcal
+
+    xnys = get_xnys_calendar()
+    sched: Any = mcal.get_calendar("NYSE").schedule(
+        start_date=xnys.first_session.date().isoformat(),
+        end_date=xnys.last_session.date().isoformat(),
+        start="pre",
+        end="post",
+        tz=_NY_TZ.key,
+    )
+    table: dict[date, _HmBounds | str] = {}
+    columns = (sched[name] for name in ("pre", "market_open", "market_close", "post"))
+    for session, *marks in zip(sched.index, *columns, strict=True):
+        day = session.date()
+        try:
+            # Wall-clock minutes from the session's ET midnight: a mark on another date falls
+            # outside 0..1200 and fails the ordering check in _session_day.
+            pre, opn, cls, post = (
+                int((m.date() - day).days * 1440 + m.hour * 60 + m.minute) for m in marks
+            )
+        except Exception as exc:  # an unreadable row (NaT, wrong type) costs that day only
+            table[day] = f"{type(exc).__name__}: {exc}"
+        else:
+            table[day] = (pre, opn, cls, post)
+    _session_day.cache_clear()  # per-day records made while the load was failing are stale now
+    return MappingProxyType(table)
+
+
+def _nyse_extended_hours_table() -> tuple[Mapping[date, _HmBounds | str], str | None]:
+    """The pandas_market_calendars table and its load error. Never raises.
+
+    An upstream failure gives an empty table and its text for session_calendar_consistency. The
+    failure is not kept here: _session_day keeps the day's fallback record, which bounds the
+    attempts, and the next day or the next consistency check tries the load again.
+    """
+    try:
+        return _nyse_extended_hours_rows(), None
+    except Exception as exc:  # any upstream import or schedule failure means fallback, not a raise
+        return MappingProxyType({}), f"{type(exc).__name__}: {exc}"
+
+
+class _SessionDay(NamedTuple):
+    """One ET day as the session clock sees it, with what each upstream calendar reported."""
+
+    bounds_hm: _HmBounds | None  # (pre, open, close, post) in use; None = closed
+    reason: str  # "ok" = both calendars cover the day and agree; otherwise why the fallback applies
+    xnys_in_range: bool
+    xnys_hm: tuple[int, int] | None  # XNYS regular (open, close); None = not an XNYS session
+    nyse_hm: _HmBounds | None  # pandas_market_calendars row; None = not a session, or unreadable
+    nyse_error: str | None  # the load error, or the error of this day's unreadable row
+
+
+@lru_cache(maxsize=2048)
+def _session_day(ny_day: date) -> _SessionDay:
+    inf = _xnys_info(ny_day)
+    if inf is None:  # outside the XNYS range: weekday rule with the pre-upstream bounds
+        bounds = _FALLBACK_BOUNDS_HM if ny_day.weekday() < 5 else None
+        return _SessionDay(bounds, "exchange_calendars_out_of_range", False, None, None, None)
+    xnys_hm: tuple[int, int] | None = None
+    fallback: _HmBounds | None = None
+    if inf[0]:
+        xnys_open = get_xnys_calendar().session_open(ny_day.isoformat())
+        opn = xnys_open.to_pydatetime().astimezone(_NY_TZ)
+        xnys_hm = (opn.hour * 60 + opn.minute, inf[1])
+        fallback = (_FALLBACK_BOUNDS_HM[0], _FALLBACK_BOUNDS_HM[1], inf[1], _FALLBACK_BOUNDS_HM[3])
+    table, error = _nyse_extended_hours_table()
+    row = table.get(ny_day)
+    nyse_hm = None if isinstance(row, str) else row
+    if error is not None:
+        reason = _NYSE_LOAD_FAILED
+    elif isinstance(row, str):
+        reason, error = _NYSE_ROW_INVALID, row
+    elif (xnys_hm is None) != (nyse_hm is None):
+        reason = "session_mismatch"
+    elif xnys_hm is None or nyse_hm is None:  # both agree: not a session
+        return _SessionDay(None, "ok", True, None, None, None)
+    elif xnys_hm[1] != nyse_hm[2]:
+        reason = "regular_close_mismatch"
+    elif xnys_hm[0] != nyse_hm[1]:
+        reason = "regular_open_mismatch"
+    elif not (0 <= nyse_hm[0] < nyse_hm[1] < nyse_hm[2] <= nyse_hm[3] <= _OVERNIGHT_OPEN_HM):
+        reason = "extended_bounds_out_of_order"
+    else:
+        bounds = (nyse_hm[0], xnys_hm[0], xnys_hm[1], nyse_hm[3])
+        return _SessionDay(bounds, "ok", True, xnys_hm, nyse_hm, None)
+    return _SessionDay(fallback, reason, True, xnys_hm, nyse_hm, error)
+
+
+@overload
+def classify_et_hm(hm: int, rth_close_hm: int = ...) -> MarketSession24x5: ...
+
+
+@overload
+def classify_et_hm(
+    hm: int,
+    rth_close_hm: int = ...,
+    *,
+    pre_open_hm: int = ...,
+    rth_open_hm: int = ...,
+    post_close_hm: int = ...,
+) -> SessionOrClosed: ...
+
+
+def classify_et_hm(
+    hm: int,
+    rth_close_hm: int = 960,
+    *,
+    pre_open_hm: int = _FALLBACK_BOUNDS_HM[0],
+    rth_open_hm: int = _FALLBACK_BOUNDS_HM[1],
+    post_close_hm: int = _FALLBACK_BOUNDS_HM[3],
+) -> SessionOrClosed:
+    """Classify ET minute-of-day into a US equity 24/5 session label.
+
+    The keyword bounds default to a regular day, for which the result is never CLOSED. A
+    post_close_hm before 20:00 (early-close day) makes the gap up to the overnight open CLOSED.
+    """
+    if pre_open_hm <= hm < rth_open_hm:
         return "PRE_MARKET"
-    if 570 <= hm < rth_close_hm:
+    if rth_open_hm <= hm < rth_close_hm:
         return "RTH"
-    if rth_close_hm <= hm < 1200:
+    if rth_close_hm <= hm < post_close_hm:
         return "AFTER_HOURS"
+    if post_close_hm <= hm < _OVERNIGHT_OPEN_HM:
+        return "CLOSED"
     return "OVERNIGHT"
 
 
 def classify_us_equity_session_et(ts_utc_ns: int) -> SessionOrClosed:
-    """Classify UTC ns timestamp into US 24/5 ET session or CLOSED via XNYS calendar."""
+    """Classify UTC ns timestamp into US 24/5 ET session or CLOSED via the upstream calendars."""
     dt_et = _et_dt(ts_utc_ns)
     ny_day, hm = dt_et.date(), dt_et.hour * 60 + dt_et.minute
-    is_open = lambda d: d.weekday() < 5 if (inf := _xnys_info(d)) is None else inf[0]  # noqa: E731
-    if hm >= 1200:
-        return "OVERNIGHT" if is_open(ny_day + timedelta(days=1)) else "CLOSED"
-    if not is_open(ny_day):
+    if hm >= _OVERNIGHT_OPEN_HM:
+        next_is_session = _session_day(ny_day + timedelta(days=1)).bounds_hm is not None
+        return "OVERNIGHT" if next_is_session else "CLOSED"
+    bounds = _session_day(ny_day).bounds_hm
+    if bounds is None:
         return "CLOSED"
-    inf = _xnys_info(ny_day)
-    return classify_et_hm(hm, inf[1] if inf else 960)
+    pre, opn, cls, post = bounds
+    return classify_et_hm(hm, cls, pre_open_hm=pre, rth_open_hm=opn, post_close_hm=post)
+
+
+@dataclass(frozen=True, slots=True)
+class UsEquitySessionBoundsET:
+    """Session boundaries of one trading day as America/New_York datetimes."""
+
+    pre_open: datetime
+    regular_open: datetime
+    regular_close: datetime
+    post_close: datetime
+    source: Literal["upstream", "fallback"]
+
+
+def _ny_date(day: date) -> date:
+    if isinstance(day, datetime):
+        return (day.astimezone(_NY_TZ) if day.tzinfo else day).date()
+    return day
+
+
+def us_equity_session_bounds_et(day: date) -> UsEquitySessionBoundsET | None:
+    """Return the session boundaries the classifier uses for `day`, or None for a non-session day.
+
+    Pure (no broker call, no I/O), so the supervisor can compare it with the broker's calendar.
+    `source` is "fallback" when the upstream bounds could not be used for the day;
+    session_calendar_consistency(day) gives the reason.
+    """
+    ny_day = _ny_date(day)
+    rec = _session_day(ny_day)
+    if rec.bounds_hm is None:
+        return None
+    pre, opn, cls, post = (
+        datetime(ny_day.year, ny_day.month, ny_day.day, hm // 60, hm % 60, tzinfo=_NY_TZ)
+        for hm in rec.bounds_hm
+    )
+    return UsEquitySessionBoundsET(
+        pre, opn, cls, post, "upstream" if rec.reason == "ok" else "fallback"
+    )
+
+
+def session_calendar_consistency(day: date) -> dict[str, Any]:
+    """Report how the two upstream calendars compare for `day`; for the supervisor to log.
+
+    `consistent` is True when both calendars cover the day and agree on session, regular open and
+    regular close. Otherwise the classifier uses the pre-upstream bounds and `reason` says why;
+    `source == "fallback"` with `exchange_calendars_xnys.in_range` True is the state to alert on.
+    No broker call, no I/O, no logging. When the last pandas_market_calendars load failed, this
+    check tries the load again (one attempt per call), and a load that now works gives every day
+    its upstream bounds back.
+    """
+    ny_day = _ny_date(day)
+    rec = _session_day(ny_day)
+    if rec.reason == _NYSE_LOAD_FAILED:
+        rec = _session_day.__wrapped__(ny_day)  # bypass the day's remembered failure
+    xnys, nyse = rec.xnys_hm, rec.nyse_hm
+    nyse_known = rec.xnys_in_range and rec.nyse_error is None
+    return {
+        "schema_version": "tier0.session-calendar-consistency.v1",
+        "day": ny_day.isoformat(),
+        "consistent": rec.reason == "ok",
+        "reason": rec.reason,
+        "source": "upstream" if rec.reason == "ok" else "fallback",
+        "is_session": rec.bounds_hm is not None,
+        "bounds_hm": list(rec.bounds_hm) if rec.bounds_hm is not None else None,
+        "exchange_calendars_xnys": {
+            "in_range": rec.xnys_in_range,
+            "is_session": (xnys is not None) if rec.xnys_in_range else None,
+            "regular_open_hm": xnys[0] if xnys else None,
+            "regular_close_hm": xnys[1] if xnys else None,
+        },
+        "pandas_market_calendars_nyse": {
+            "is_session": (nyse is not None) if nyse_known else None,
+            "pre_open_hm": nyse[0] if nyse else None,
+            "regular_open_hm": nyse[1] if nyse else None,
+            "regular_close_hm": nyse[2] if nyse else None,
+            "post_close_hm": nyse[3] if nyse else None,
+            "error": rec.nyse_error,
+        },
+    }
 
 
 SIP_23X5_CUTOVER_DATE: date = date(2026, 12, 6)

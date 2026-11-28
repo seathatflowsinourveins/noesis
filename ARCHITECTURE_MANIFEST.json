@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 188,
+    "repository_files_count": 189,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -362,7 +362,7 @@
     },
     "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "3a9b22caffa21e504ebbc2fc4a6e5106ca4bf1cbe5babbca69a15728e92f99ce"
+    "corpus_sha256": "674e881e8120817703497e9a0e18317faf7a90c98e2b6f853068f7bc1b215b83"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -373,8 +373,8 @@
     "src_files_mapped_ratio": "15/15",
     "zero_paper_winners_audit": {
       "ok": true,
-      "checked_default_packages": 49,
-      "imported_packages_count": 39,
+      "checked_default_packages": 50,
+      "imported_packages_count": 40,
       "cli_mcp_portal_mapped": [
         "ast-grep-cli",
         "dagster-webserver",
@@ -431,6 +431,7 @@
         "pandera",
         "pydantic",
         "exchange_calendars",
+        "pandas_market_calendars",
         "edgartools",
         "fredapi",
         "sqlglot"
@@ -1022,6 +1023,7 @@
     "tests/test_ml4t_shap_tearsheets.py",
     "tests/test_nonstop_compounding_loop.py",
     "tests/test_prewall_h109.py",
+    "tests/test_session_calendar.py",
     "tests/test_sim_backtest_suite.py",
     "tests/test_stage4_drills.py",
     "tests/test_starred_frontier_landscape.py",
