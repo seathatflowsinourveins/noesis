@@ -1,0 +1,12 @@
+[Unit]
+Description=Tier-0 SOTA Workstation Preflight & Hygiene Guard Timer (Every 30m, WSL2 Native)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=60s
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -32,7 +32,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ExpectedRiskSha = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
-$ExpectedCharterSha = "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c"
+$ExpectedCharterSha = "9fa037355c3942201e3c0813acaa7b01c590e6294cd5e85787ae1bdcef55a7b8"
 $ExpectedOriginSlug = "seathatflowsinourveins/noesis"
 $ExpectedMcps = @("codebase-memory", "edgartools", "nautilus-engine", "xerj")
 $ForbiddenLivePorts = @(4001, 7496, 8798, 8796)

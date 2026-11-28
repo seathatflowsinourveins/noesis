@@ -1,0 +1,175 @@
+groups:
+  - name: tier0_sota_24x5_paper_alerts
+    interval: 30s
+    rules:
+      - alert: Tier0DailyDrawdownBreakerTripped
+        expr: max(tier0_drawdown_breaker_latched) > 0 or min(tier0_paper_farm_drawdown_pct) <= -0.015
+        for: 1m
+        labels:
+          severity: critical
+          category: risk_ops
+          lane: paper
+        annotations:
+          summary: "Tier-0 -1.50% session-latched daily drawdown breaker tripped"
+          description: "A Paper Farm lane latched or breached the -1.50% daily drawdown fuse (K2)."
+
+      - alert: Tier0PaperTelemetryOrExecutionDown
+        expr: min(up{job="tier0_sota_telemetry", exported_job=""}) == 0 or absent(tier0_paper_farm_combined_equity_usd)
+        for: 2m
+        labels:
+          severity: critical
+          category: risk_ops
+          lane: paper
+        annotations:
+          summary: "Tier-0 paper telemetry exporter unreachable or equity heartbeat missing"
+          description: "OTel telemetry scrape is down or combined Paper Farm equity metric is absent for >2m (possible execution fault or stop)."
+
+      - alert: Tier0PaperTcaEnvelopeBreach
+        expr: max(tier0_paper_farm_combined_tca_mean_is_bps) > 8
+        for: 5m
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: paper
+        annotations:
+          summary: "Tier-0 Paper Farm TCA IS exceeds 8.0 bps (2x sim cost envelope)"
+          description: "Combined Paper Farm mean implementation shortfall exceeded the 8.0 bps 2x simulation cost calibration envelope."
+
+      - alert: Tier0ExtendedHoursProtectionDrop
+        expr: min(tier0_paper_farm_extended_hours_protected_ratio) < 1
+        for: 1m
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: paper
+        annotations:
+          summary: "Tier-0 24/5 extended-hours protective stop coverage dropped below 100%"
+          description: "At least one managed Paper Farm position lacks active extended-hours protective stop coverage."
+
+      - alert: Tier0AdoptedPositionUnprotected
+        expr: (max(tier0_paper_farm_adopted_external_positions_count) > 0 and max(tier0_paper_farm_active_trailed_positions) < max(tier0_paper_farm_adopted_external_positions_count)) or (max(tier0_paper_farm_adopted_external_positions_count) > 0 and min(tier0_paper_farm_extended_hours_protected_ratio) < 1)
+        for: 1m
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: paper
+        annotations:
+          summary: "Tier-0 adopted manual/TV position lacks active hosted lossless trailing protection"
+          description: "At least one adopted external Paper Farm position is not covered by an active trailed stop or extended-hours protection fell below 100%."
+
+      - alert: Tier0EarlyMoverCompoundingStale
+        expr: absent(tier0_scanner_ranked_count) or max(tier0_scanner_ranked_count) == 0
+        for: 15m
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: sim-paper
+        annotations:
+          summary: "Tier-0 early-mover scanner and compounding telemetry stale or empty"
+          description: "Whole-market early-mover scanner ranked count is absent or zero for >15m; inspect tier0-early-mover-compound.timer and scanner cadence."
+
+      - alert: Tier0TvHalfAutoAuditStale
+        expr: absent(tier0_tv_half_auto_duckdb_audit_rows) or max(tier0_tv_half_auto_duckdb_audit_rows) == 0 or absent(tier0_tv_engine_coordination_evaluated_count)
+        for: 15m
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: half-auto-tv
+        annotations:
+          summary: "Tier-0 TradingView Half-Auto DuckDB audit or coordination heartbeat stale"
+          description: "TradingView Half-Auto DuckDB audit row telemetry or engine coordination count has been absent or zero for >15m."
+
+  - name: tier0_sota_momentum_and_trailing_alerts
+    interval: 30s
+    rules:
+      - alert: Tier0PremarketMomentumIgnition
+        expr: (max(tier0_momentum_ignition_count) > 0) and on() (count(tier0_momentum_top_score{session="PRE_MARKET"}) > 0 unless on() count(tier0_momentum_top_score{session!="PRE_MARKET"}) > 0)
+        for: 30s
+        labels:
+          severity: info
+          category: momentum
+          lane: paper
+          session: PRE_MARKET
+        annotations:
+          summary: "Tier-0 PRE_MARKET early-mover momentum ignition detected ({{ $value }} active leaders)"
+          description: "Live calibrated early-mover scanner detected PREMARKET_CATALYST_LEADER / SUDDEN_VOLUME_IGNITION / DARKPOOL_ACCUMULATION_BREAKOUT momentum leaders strictly during PRE_MARKET (04:00-09:29 ET)."
+
+      - alert: Tier0DarkpoolAccumulationSurge
+        expr: (max by (symbol) (tier0_momentum_darkpool_trf_ratio) >= 0.45) * on(symbol) group_left(session, calibrated_category) (topk by (symbol) (1, max by (symbol, session, calibrated_category) (tier0_momentum_top_score)) * 0 + 1)
+        for: 30s
+        labels:
+          severity: info
+          category: momentum
+          lane: paper
+        annotations:
+          summary: "Tier-0 FINRA TRF darkpool surge on {{ $labels.symbol }} [{{ $labels.session }} / {{ $labels.calibrated_category }}] ({{ $value | humanizePercentage }})"
+          description: "Off-exchange FINRA TRF darkpool volume ratio crossed >= 45% on {{ $labels.symbol }} during {{ $labels.session }} (category={{ $labels.calibrated_category }}, severity={{ $labels.severity }}, TRF={{ $value | humanizePercentage }})."
+
+      - alert: Tier0ParabolicClimaxReversalArmed
+        expr: max(tier0_momentum_climax_reversal_count) > 0 or max(tier0_paper_farm_peak_reverse_armed_count) > 0
+        for: 30s
+        labels:
+          severity: warning
+          category: momentum
+          lane: paper
+        annotations:
+          summary: "Tier-0 parabolic climax reversal / flatten-first auto-reverse armed"
+          description: "Parabolic climax exhaustion or peak-confirmed reversal detected; flatten-first auto-reverse / inverse hedge protocol armed."
+
+      - alert: Tier0LosslessProfitLockTierUpgraded
+        expr: tier0_position_profit_lock_tier >= 1
+        for: 15s
+        labels:
+          severity: info
+          category: lossless_trailing
+          lane: paper
+        annotations:
+          summary: "Tier-0 lossless profit-lock tier {{ $value }} active on {{ $labels.symbol }} ({{ $labels.account }})"
+          description: "Managed 24/5 position {{ $labels.symbol }} on {{ $labels.account }} ({{ $labels.session }} / {{ $labels.order_mode }}) ratcheted to monotonic BE+fee / +R profit-lock tier {{ $value }}."
+
+      - alert: Tier0FastNonNoiseExitArmed
+        expr: tier0_position_fast_sell_armed == 1
+        for: 15s
+        labels:
+          severity: info
+          category: lossless_trailing
+          lane: paper
+        annotations:
+          summary: "Tier-0 fast non-noise reverse exit armed on {{ $labels.symbol }} ({{ $labels.account }})"
+          description: "Hosted ALPACA_PAPER_1000 / IBKR_PAPER_4002 supervisor armed calibrated non-noise fast reversal exit on {{ $labels.symbol }} ({{ $labels.account }})."
+
+      - alert: Tier0StaleStagedAlertDetected
+        expr: max(tier0_staged_alert_stale_count) > 0
+        for: 2m
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: half-auto-tv
+        annotations:
+          summary: "Tier-0 stale or cross-session staged TV alerts detected ({{ $value }})"
+          description: "Run `just tv-preset-setup` or `tv_console.sh preset-setup` to prune and archive expired/executed presets from staged_tv_presets.json."
+
+  - name: tier0_sota_workstation_alerts
+    interval: 30s
+    rules:
+      - alert: Tier0WorkstationHighCpuSustained
+        expr: 100 * sum(rate(system_cpu_time_seconds_total{state!="idle"}[5m])) / sum(rate(system_cpu_time_seconds_total[5m])) > 85
+        for: 10m
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: workstation
+        annotations:
+          summary: "Tier-0 WSL2 workstation CPU utilization exceeded 85% for 10m"
+          description: "Sustained host CPU saturation detected via OTel host_metrics; inspect active runs, IDE processes, or runaway workers."
+
+      - alert: Tier0WorkstationHighMemoryUsed
+        expr: 100 * system_memory_usage_bytes{state="used"} / sum(system_memory_usage_bytes) > 85
+        for: 10m
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: workstation
+        annotations:
+          summary: "Tier-0 WSL2 workstation used memory exceeded 85% for 10m"
+          description: "Sustained WSL2 RAM usage exceeded 85% of host capacity via OTel host_metrics."

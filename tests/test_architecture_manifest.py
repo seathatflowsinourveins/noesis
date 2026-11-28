@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -39,7 +41,24 @@ def test_architecture_manifest_schema_and_files_exist() -> None:
     manifest = _load_manifest()
     assert manifest["schema_version"] == "tier0.architecture-layer-manifest.v1"
     assert manifest["repo_name"] == "noesis"
-    assert manifest["branch"] == "main"
+    git = shutil.which("git")
+    assert git is not None
+    default_branch = subprocess.run(
+        [
+            git,
+            "-c",
+            f"safe.directory={REPO_ROOT.as_posix()}",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/HEAD",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    expected_branch = default_branch.stdout.strip().removeprefix("refs/remotes/origin/")
+    assert manifest["branch"] == (expected_branch or "main")
     assert manifest["standalone_repo"] is True
 
     safety = manifest["safety_invariants"]
@@ -111,7 +130,8 @@ def test_layers_l0_to_l10_and_spdx_firewall() -> None:
 
     ast_rules_text = (REPO_ROOT / "rules" / "zero_self_invention.yml").read_text(encoding="utf-8")
     rule_ids = re.findall(r"(?m)^id:\s*(\S+)", ast_rules_text)
-    assert len(rule_ids) == 21 and len(set(rule_ids)) == 21
+    assert len(rule_ids) == 22 and len(set(rule_ids)) == 22
+    assert "no-handbuilt-plotly-chart" in rule_ids
 
 
 def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
@@ -126,11 +146,14 @@ def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
     claude_cfg = json.loads((REPO_ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
     gemini_cfg = json.loads((REPO_ROOT / ".gemini/settings.json").read_text(encoding="utf-8"))
     opencode_cfg = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))
+    omp_cfg = json.loads((REPO_ROOT / ".omp/mcp.json").read_text(encoding="utf-8"))
     codex_cfg = tomllib.loads((REPO_ROOT / ".codex/config.toml").read_text(encoding="utf-8"))
 
     assert "hooks" not in claude_cfg
     assert "hooks" not in gemini_cfg
-    assert "hooks" not in codex_cfg.get("features", {})
+    assert "hooks" not in codex_cfg
+    assert codex_cfg.get("features", {}).get("hooks", False) is False
+    assert not list((REPO_ROOT / ".omp").glob("hooks*"))
 
     for name, section in (
         (".mcp.json", root_cfg["mcpServers"]),
@@ -138,6 +161,7 @@ def test_zero_hooks_and_native_uv_mcp_parity_across_5_configs() -> None:
         (".gemini/settings.json", gemini_cfg["mcpServers"]),
         ("opencode.json", opencode_cfg["mcp"]),
         (".codex/config.toml", codex_cfg["mcp_servers"]),
+        (".omp/mcp.json", omp_cfg["mcpServers"]),
     ):
         assert sorted(section.keys()) == EXPECTED_MCP_SERVERS, f"MCP mismatch in {name}"
         if name == "opencode.json":
@@ -234,22 +258,9 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     assert skills_lock["schema"] == "tier0.upstream-skills-lock.v1"
     assert skills_lock["skills_count"] == 46
     assert len(skills_lock["skills"]) == 46
-    for entry in skills_lock["skills"]:
-        skill_dir = REPO_ROOT / ".claude/skills" / entry["skill"]
-        skill_md = skill_dir / "SKILL.md"
-        assert skill_md.is_file(), f"Missing standalone skill {entry['skill']}"
-        assert hashlib.sha256(skill_md.read_bytes()).hexdigest() == entry["skill_sha256"]
-        dir_digest = hashlib.sha256()
-        for rel_posix, fpath in sorted(
-            (p.relative_to(skill_dir).as_posix(), p) for p in skill_dir.rglob("*") if p.is_file()
-        ):
-            file_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
-            dir_digest.update(f"{rel_posix}\0{file_sha}\n".encode())
-        assert dir_digest.hexdigest() == entry["dir_sha256"]
-    expected_lock_sha = hashlib.sha256(
-        json.dumps(skills_lock["skills"], sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    assert skills_lock["lock_sha256"] == expected_lock_sha
+    from scripts.sync_manifest import verify_skills_lock
+
+    verify_skills_lock(REPO_ROOT, skills_lock)
 
     starred = json.loads(
         (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
@@ -261,6 +272,30 @@ def test_standalone_skills_zero_yfinance_and_zero_legacy_refs() -> None:
     assert list(starred["earned_trigger_frontier_l11_to_l15"].keys()) == [
         f"L{idx}" for idx in range(11, 16)
     ]
+    frontier_slugs = {
+        str(cand["slug"])
+        for layer_doc in starred["earned_trigger_frontier_l11_to_l15"].values()
+        for cand in layer_doc.get("candidates", [])
+    }
+    assert "tradingview-mcp" not in frontier_slugs
+    rejected_frontier = {
+        str(entry["slug"]): entry for entry in starred.get("rejected_frontier_candidates", [])
+    }
+    assert "tradingview-mcp" in rejected_frontier
+    assert rejected_frontier["tradingview-mcp"]["decision"] == "pruned"
+    assert "9223" in rejected_frontier["tradingview-mcp"]["reason"]
+    l14_by_slug = {
+        str(c["slug"]): c
+        for c in starred["earned_trigger_frontier_l11_to_l15"]["L14"]["candidates"]
+    }
+    assert l14_by_slug["prometheus/alertmanager"]["status"] == "admitted_profile_gated"
+    assert l14_by_slug["prometheus/alertmanager"]["compose_profile"] == "alerting"
+    l15_by_slug = {
+        str(c["slug"]): c
+        for c in starred["earned_trigger_frontier_l11_to_l15"]["L15"]["candidates"]
+    }
+    assert l15_by_slug["snyk/agent-scan"]["status"] == "admitted_offline_cli"
+    assert l15_by_slug["snyk/agent-scan"]["telemetry_disabled"] is True
 
     required_files = {
         ".github/workflows/ci.yml",
@@ -364,7 +399,7 @@ def test_philosophy_and_llm_harness_manifests() -> None:
         "half-auto-tv",
         "live",
     }
-    assert llm["mcp_servers"]["parity_count"] == "5/5"
+    assert llm["mcp_servers"]["parity_count"] == "6/6"
     assert llm["live_hosted_portals_count"] == 15
     assert len(llm["live_hosted_portals"]) == 15
 
@@ -462,6 +497,44 @@ def test_sync_manifest_check_zero_drift() -> None:
     )
     assert proc.returncode == 0, f"sync_manifest.py --check failed:\n{proc.stderr}\n{proc.stdout}"
     assert "SYNC_MANIFEST_CHECK_OK=1" in proc.stdout
+
+
+def test_sync_manifest_branch_is_default_branch_on_any_checkout(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.sync_manifest import _detect_branch
+
+    git = shutil.which("git")
+    assert git is not None
+    for var in [name for name in os.environ if name.startswith("GIT_")]:
+        monkeypatch.delenv(var)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "manifest-test")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "manifest-test@example.invalid")
+
+    def run_git(cwd: pathlib.Path, *args: str) -> None:
+        subprocess.run([git, *args], cwd=cwd, capture_output=True, text=True, check=True)
+
+    # A default branch other than "main" proves the value comes from origin/HEAD, not a fallback.
+    run_git(tmp_path, "init", "--quiet", "--initial-branch=trunk", "origin")
+    run_git(tmp_path / "origin", "commit", "--quiet", "--allow-empty", "-m", "seed")
+    run_git(tmp_path, "clone", "--quiet", str(tmp_path / "origin"), "clone")
+    clone = tmp_path / "clone"
+
+    run_git(clone, "switch", "--quiet", "-c", "land/feature-branch")
+    assert _detect_branch(clone) == "trunk"
+
+    # A local branch named like the remote ref makes `symbolic-ref --short` ambiguous.
+    run_git(clone, "branch", "origin/trunk")
+    assert _detect_branch(clone) == "trunk"
+
+    run_git(clone, "switch", "--quiet", "--detach", "HEAD")
+    assert _detect_branch(clone) == "trunk"
+
+    run_git(clone, "remote", "set-head", "origin", "--delete")
+    assert _detect_branch(clone) == "main"
 
 
 def test_meta_convergence_and_zero_banned_caps_in_skills_and_readme() -> None:
@@ -670,6 +743,8 @@ def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
     assert rep["ok"] is True
     assert rep["zero_banned_in_uv_lock"] is True
     assert rep["zero_winner_overlap_with_rejected"] is True
+    assert rep["intra_layer_duplicate_winners"] == []
+    assert rep["cross_layer_duplicate_winners"] == []
     assert rep["zero_pre_commit_overlap"] is True
     assert rep["spdx_firewall_count"] == len(NON_OSI_REPOS)
     mapped_num, mapped_den = (int(x) for x in str(rep["src_files_mapped_ratio"]).split("/"))
@@ -682,3 +757,90 @@ def test_clean_sota_harness_zero_overlap_and_spdx_firewall() -> None:
 
     manifest = _load_manifest()
     assert manifest.get("clean_sota_harness") == rep
+
+
+def test_clean_sota_harness_rejects_cross_layer_duplicate_winners() -> None:
+    import copy
+
+    from scripts.sync_manifest import validate_clean_sota_harness
+
+    upstream_doc = tomllib.loads((REPO_ROOT / "upstream-map.toml").read_text(encoding="utf-8"))
+    dup_upstream = copy.deepcopy(upstream_doc)
+    dup_upstream["layers"]["L9"]["winners"] = [
+        *dup_upstream["layers"]["L9"]["winners"],
+        "edgartools",
+    ]
+    with pytest.raises(ValueError, match=r"Cross-layer duplicate winners.*edgartools:L1,L9"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=dup_upstream)
+
+    intra_dup_upstream = copy.deepcopy(upstream_doc)
+    intra_dup_upstream["layers"]["L1"]["winners"] = [
+        *intra_dup_upstream["layers"]["L1"]["winners"],
+        "polars",
+    ]
+    with pytest.raises(ValueError, match=r"Intra-layer duplicate winners.*polars:L1"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=intra_dup_upstream)
+
+    missing_layer_upstream = copy.deepcopy(upstream_doc)
+    del missing_layer_upstream["layers"]["L10"]
+    with pytest.raises(ValueError, match=r"missing required layer table \[layers\.L10\]"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=missing_layer_upstream)
+
+    empty_winners_upstream = copy.deepcopy(upstream_doc)
+    empty_winners_upstream["layers"]["L1"]["winners"] = []
+    with pytest.raises(ValueError, match=r"\[layers\.L1\] must declare a non-empty winners list"):
+        validate_clean_sota_harness(REPO_ROOT, upstream=empty_winners_upstream)
+
+
+def test_workstation_lazy_imports_and_thread_bounds_fitness(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify ADR-0026 thread-bounded DuckDB, GBDT bounds, lazy imports, and Dagster workspace."""
+    import os
+    import subprocess
+    import sys
+
+    from tier0_sota.discovery import _env_positive_int
+    from tier0_sota.live.paper_farm import duckdb_connect_config, open_bounded_duckdb
+
+    tmp_duck_dir = tmp_path / "duckdb-tmp"
+    monkeypatch.setenv("TIER0_DUCKDB_THREADS", "6")
+    monkeypatch.setenv("TIER0_DUCKDB_MEMORY_LIMIT", "1GB")
+    monkeypatch.setenv("DUCKDB_TEMP_DIRECTORY", str(tmp_duck_dir))
+
+    cfg = duckdb_connect_config(max_threads=4)
+    assert cfg["threads"] == "4"
+    assert cfg["memory_limit"] == "1GB"
+    assert cfg["temp_directory"] == str(tmp_duck_dir)
+
+    with open_bounded_duckdb(tmp_path / "bounded.duckdb", max_threads=2) as conn:
+        row = conn.execute("SELECT current_setting('threads')").fetchone()
+        assert row is not None and int(row[0]) <= 2
+
+    monkeypatch.setenv("TIER0_LGBM_THREADS", "5")
+    assert _env_positive_int("TIER0_LGBM_THREADS", 4) == 5
+    monkeypatch.setenv("TIER0_LGBM_THREADS", "invalid")
+    assert _env_positive_int("TIER0_LGBM_THREADS", 4) == 4
+
+    probe = (
+        "import json, sys; "
+        "import tier0_sota.discovery, tier0_sota.engine, "
+        "tier0_sota.research, tier0_sota.definitions; "
+        "heavy = ['lightgbm', 'catboost', 'shap', 'stumpy', 'mlflow', "
+        "'skfolio', 'dspy', 'inspect_ai', 'optuna']; "
+        "loaded = [m for m in heavy if m in sys.modules]; "
+        "print(json.dumps(loaded))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(REPO_ROOT),
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(proc.stdout.strip()) == []
+
+    ws_path = REPO_ROOT / "docker" / "workspace.yaml"
+    assert ws_path.is_file(), "Missing official Dagster gRPC docker/workspace.yaml"
+    assert "dagster-code-server" in ws_path.read_text(encoding="utf-8")

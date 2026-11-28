@@ -26,6 +26,11 @@ VENV_DIR="$(dirname "$BIN_DIR")"
 export VIRTUAL_ENV="$VENV_DIR"
 export UV_PROJECT_ENVIRONMENT="$VENV_DIR"
 
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/noesis"
+export RUFF_CACHE_DIR="${RUFF_CACHE_DIR:-$CACHE_ROOT/ruff}"
+export HYPOTHESIS_STORAGE_DIRECTORY="${HYPOTHESIS_STORAGE_DIRECTORY:-$CACHE_ROOT/hypothesis}"
+PYTEST_CACHE_DIR="${PYTEST_CACHE_DIR:-$CACHE_ROOT/pytest}"
+
 EXPECTED_RISK_SHA="ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
 ACTUAL_RISK_SHA="$(sha256sum "src/tier0_sota/risk.py" | awk '{print $1}')"
 if [[ "$ACTUAL_RISK_SHA" != "$EXPECTED_RISK_SHA" ]]; then
@@ -80,18 +85,49 @@ then
 fi
 echo "[OK] LEGACY_MATCHES=0"
 
-ruff format --check src tests scripts evals
-ruff check .
-ty check --python "$PY"
-deptry .
-ast-grep scan
+GATE_LOG_DIR="$(mktemp -d)"
+trap 'rm -rf "$GATE_LOG_DIR"' EXIT
 
-"$PY" evals/formal_risk_z3.py
-"$PY" scripts/nautilus_mcp_server.py --smoke >/dev/null
-pytest -q
+declare -a GATE_NAMES=()
+declare -a GATE_PIDS=()
 
+run_gate_bg() {
+  local name="$1"
+  shift
+  GATE_NAMES+=("$name")
+  "$@" >"$GATE_LOG_DIR/$name.log" 2>&1 &
+  GATE_PIDS+=("$!")
+}
+
+run_gate_bg "ruff-format" ruff format --check src tests scripts evals
+run_gate_bg "ruff-check" ruff check .
+run_gate_bg "ty-check" ty check --python "$PY"
+run_gate_bg "deptry" deptry .
+run_gate_bg "ast-grep" ast-grep scan --config sgconfig.yml
+run_gate_bg "manifest-check" "$PY" scripts/sync_manifest.py --check
+run_gate_bg "z3" "$PY" evals/formal_risk_z3.py
+run_gate_bg "mcp-smoke" "$PY" scripts/nautilus_mcp_server.py --smoke
 if command -v gitleaks >/dev/null 2>&1; then
-  gitleaks detect --no-git --source "$REPO_ROOT" --config "$REPO_ROOT/.gitleaks.toml" --no-banner
+  run_gate_bg "gitleaks" gitleaks detect --no-git --source "$REPO_ROOT" --config "$REPO_ROOT/.gitleaks.toml" --no-banner
 fi
+
+GATE_FAILED=0
+for i in "${!GATE_NAMES[@]}"; do
+  name="${GATE_NAMES[$i]}"
+  if ! wait "${GATE_PIDS[$i]}"; then
+    echo "=== FAILED GATE: $name ===" >&2
+    cat "$GATE_LOG_DIR/$name.log" >&2
+    GATE_FAILED=1
+  fi
+done
+if [[ "$GATE_FAILED" -ne 0 ]]; then
+  exit 1
+fi
+echo "[OK] parallel static/security/smoke gates (${#GATE_NAMES[@]}/${#GATE_NAMES[@]})"
+
+zensical build --clean --strict
+echo "[OK] zensical build --clean --strict"
+
+pytest -q -o "cache_dir=$PYTEST_CACHE_DIR"
 
 echo "[CHECK-SH VERDICT: PASS]"

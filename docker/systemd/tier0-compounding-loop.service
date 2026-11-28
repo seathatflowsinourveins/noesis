@@ -1,0 +1,21 @@
+[Unit]
+Description=Tier-0 SOTA Non-Stop Multi-Hours Compounding Loop (Paper-Only, WSL2 Native)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=sota
+WorkingDirectory=/mnt/z/noesis
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/mnt/z/noesis/src
+Environment=TIER0_DATA_ROOT=/mnt/z/sota-data
+Environment=TIER0_ALPACA_RPM=1000
+Environment=OMP_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+CPUQuota=400%
+MemoryHigh=4G
+MemoryMax=6G
+Nice=10
+IOSchedulingClass=best-effort
+TimeoutStartSec=3600
+ExecStart=/usr/bin/env bash -lc 'export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv" FNOX_AGE_KEY_FILE="$HOME/.config/fnox/age.txt" && test -z "$(ss -lntH | grep -E ":(4001|7496|8798|8796)\\b" || true)" && fnox exec --profile paper -- uv run --no-sync python scripts/run_nonstop_compounding_loop.py --once --manifest-dir /mnt/z/sota-data/manifests'

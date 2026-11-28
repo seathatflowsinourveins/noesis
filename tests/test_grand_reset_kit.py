@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -9,7 +10,9 @@ import shutil
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,7 +41,8 @@ def test_zero_self_invented_hooks_and_native_uv_mcps() -> None:
     assert "hooks" not in claude_cfg and "hooks" not in gemini_cfg
 
     codex_cfg = tomllib.loads((REPO_ROOT / ".codex" / "config.toml").read_text("utf-8"))
-    assert "hooks" not in codex_cfg.get("features", {})
+    assert "hooks" not in codex_cfg
+    assert codex_cfg.get("features", {}).get("hooks", False) is False
     for srv in ("nautilus-engine", "edgartools"):
         assert codex_cfg["mcp_servers"][srv]["command"] == "uv"
 
@@ -191,19 +195,57 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     assert services["tearsheets"]["image"] == "caddy:2.11.9-alpine"
     assert services["telemetry-exporter"]["image"] == "otel/opentelemetry-collector-contrib:0.166.0"
     assert services["prometheus"]["image"] == "prom/prometheus:v3.16.0"
-    assert services["grafana"]["image"] == "grafana/grafana:13.3.1"
+    assert services["grafana"]["image"] == "grafana/grafana:13.3.2"
+    assert (
+        "./prometheus_rules.yml:/etc/prometheus/prometheus_rules.yml:ro"
+        in services["prometheus"]["volumes"]
+    )
+
+    am_svc = services["alertmanager"]
+    assert am_svc["image"] == "prom/alertmanager:v0.28.1"
+    assert am_svc["profiles"] == ["alerting"]
+    assert am_svc["cpus"] == "0.25"
+    assert am_svc["mem_limit"] == "128m"
+    assert am_svc["ports"] == ["127.0.0.1:9093:9093"]
+    assert "GOMAXPROCS=1" in am_svc["environment"]
+    assert "./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" in am_svc["volumes"]
+    assert am_svc["restart"] == "unless-stopped"
 
     for rel in (
         "docker/Dockerfile.research",
         "docker/Dockerfile.sandbox",
         "docker/Dockerfile.xerj",
         "docker/prometheus.yml",
+        "docker/prometheus_rules.yml",
+        "docker/alertmanager.yml",
         "docker/dagster.yaml",
         "docker/grafana/dashboards/tier0-sota-observability.json",
         "docker/grafana/provisioning/datasources/prometheus.yml",
         "docker/grafana/provisioning/dashboards/provider.yml",
     ):
         assert (REPO_ROOT / rel).is_file(), f"Missing docker asset {rel}"
+
+    prom_cfg = yaml.safe_load((REPO_ROOT / "docker" / "prometheus.yml").read_text("utf-8"))
+    assert "/etc/prometheus/prometheus_rules.yml" in prom_cfg.get("rule_files", [])
+    assert prom_cfg["alerting"]["alertmanagers"][0]["static_configs"][0]["targets"] == [
+        "alertmanager:9093"
+    ]
+
+    rules_raw = (REPO_ROOT / "docker" / "prometheus_rules.yml").read_text("utf-8")
+    rules_doc = yaml.safe_load(rules_raw)
+    rule_names = {r["alert"] for grp in rules_doc.get("groups", []) for r in grp.get("rules", [])}
+    assert {
+        "Tier0DailyDrawdownBreakerTripped",
+        "Tier0PaperTelemetryOrExecutionDown",
+        "Tier0PaperTcaEnvelopeBreach",
+    }.issubset(rule_names)
+
+    am_raw = (REPO_ROOT / "docker" / "alertmanager.yml").read_text("utf-8")
+    for bad in ("sk-", "PK", "AKIA", "-----BEGIN", "hooks.slack.com", "https://"):
+        assert bad not in am_raw
+    am_doc = yaml.safe_load(am_raw)
+    assert am_doc["route"]["receiver"] == "tier0-local-null"
+    assert [r["name"] for r in am_doc["receivers"]] == ["tier0-local-null"]
 
 
 def test_grand_reset_scripts_ps1_ast_dryrun_and_wsl_safety() -> None:
@@ -287,7 +329,7 @@ def test_preflight_resume_kit_scripts_and_playbook() -> None:
         "tier0-openbb-docker-bridge",
         "otelcol_",
         "Caddy",
-        "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c",
+        "9fa037355c3942201e3c0813acaa7b01c590e6294cd5e85787ae1bdcef55a7b8",
         "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
         "seathatflowsinourveins/noesis",
         "workstation_preflight_resume_manifest.json",
@@ -332,7 +374,7 @@ def test_preflight_resume_kit_scripts_and_playbook() -> None:
         "tier0-openbb-docker-bridge",
         "otelcol_",
         "caddy",
-        "057933bbda0db411bbfbc189c72a3e7b59f1989650e110f8591cf64728555c1c",
+        "9fa037355c3942201e3c0813acaa7b01c590e6294cd5e85787ae1bdcef55a7b8",
         "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
         "seathatflowsinourveins/noesis",
         "workstation_preflight_resume_manifest.json",
@@ -523,5 +565,535 @@ def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
     assert ".gemini/config/skills.json" in wsl_sh
 
     just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
-    for token in ("fnox-check:", "scan", "paper-farm", "open-agy-wsl:"):
+    for token in (
+        "fnox-check:",
+        "scan",
+        "paper-farm",
+        "tv-confirm-paper",
+        "open-agy-wsl:",
+        "agent-scan:",
+        "SNYK_CFG_TELEMETRY",
+        "SNYK_DISABLE_ANALYTICS",
+        "SNYK_TOKEN",
+    ):
         assert token in just_txt, f"justfile missing {token!r}"
+
+
+def test_fnox_live_profile_physical_key_isolation_and_tv_confirm_paper_recipe() -> None:
+    """Enforce live key isolation (own age identity, no tracked ciphertext) and tv-confirm-paper."""
+    fnox_raw = (REPO_ROOT / "fnox.toml").read_text(encoding="utf-8")
+    assert "AGE-SECRET-KEY-" not in fnox_raw
+    assert not re.search(r"\b(?:PK|AK)[0-9A-Z]{16,28}\b", fnox_raw)
+    assert "api.alpaca.markets" not in fnox_raw.lower()
+
+    fnox_doc = tomllib.loads(fnox_raw)
+    default_age = fnox_doc["providers"]["age"]
+    assert default_age["type"] == "age"
+    assert default_age.get("key_file") != "~/.config/fnox/live-age.txt"
+
+    live_prof = fnox_doc["profiles"]["live"]
+    age_live = live_prof["providers"]["age_live"]
+    assert age_live["type"] == "age"
+    live_key_file = age_live["key_file"]
+    assert live_key_file == "~/.config/fnox/live-age.txt"
+    assert live_key_file != "~/.config/fnox/age.txt"
+    assert live_key_file != default_age.get("key_file")
+    # The live identity must be a different keypair, so the default key cannot decrypt live values.
+    assert age_live["recipients"], "age_live needs its own recipient"
+    assert not set(age_live["recipients"]) & set(default_age["recipients"])
+
+    live_secrets = live_prof["secrets"]
+    assert live_secrets["LIVE_EXECUTION_ENABLED"]["default"] == "false"
+    # Live key ciphertext lives in the user-level fnox config. A project-level declaration would
+    # shadow that value, and a tracked value would put ciphertext into git history.
+    for live_key_name in ("ALPACA_LIVE_API_KEY", "ALPACA_LIVE_SECRET_KEY"):
+        assert live_key_name not in live_secrets, (
+            f"{live_key_name} must not be declared in the tracked fnox.toml"
+        )
+        assert live_key_name not in fnox_doc.get("secrets", {})
+        assert live_key_name not in fnox_doc["profiles"]["paper"].get("secrets", {})
+
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    blocks = re.findall(
+        r"(?ms)^\[(unix|windows)\]\ntv-confirm-paper alert_id \*args:\n((?:    [^\n]*\n?)+)",
+        just_txt,
+    )
+    by_os = dict(blocks)
+    assert set(by_os.keys()) == {"unix", "windows"}, (
+        f"justfile must define [unix] and [windows] tv-confirm-paper recipes; got {sorted(by_os)}"
+    )
+    for os_name, body in by_os.items():
+        assert "fnox exec --profile paper --" in body, f"{os_name} recipe must use --profile paper"
+        assert "tier0_sota.live.runner" in body
+        assert "--confirm-tv-alert" in body
+        for forbidden in ("--profile live", "api.alpaca.markets", "live-age.txt", "9223"):
+            assert forbidden not in body, f"Forbidden {forbidden!r} in {os_name} tv-confirm-paper"
+    for live_port in ("4001", "7496", "8798", "8796"):
+        assert live_port in by_os["unix"], f"Unix tv-confirm-paper must guard live port {live_port}"
+    assert "ALPACA_LIVE_API_KEY" in just_txt and "ALPACA_LIVE_SECRET_KEY" in just_txt
+
+
+def test_caddyfile_loopback_binding_and_duckdb_csrf_posture() -> None:
+    """Pin loopback-only Caddy binding and anchored DuckDB Origin CSRF guard under host net."""
+    compose_raw = (REPO_ROOT / "docker" / "compose.sota.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(compose_raw)
+    ts = compose["services"]["tearsheets"]
+    assert ts["image"] == "caddy:2.11.9-alpine"
+    assert ts.get("network_mode") == "host"
+    assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in ts.get("volumes", [])
+    assert ts.get("command") == [
+        "caddy",
+        "run",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+    ]
+
+    caddy_path = REPO_ROOT / "docker" / "Caddyfile"
+    assert caddy_path.is_file(), "docker/Caddyfile must exist"
+    raw = caddy_path.read_text(encoding="utf-8")
+    active_lines = [
+        line.strip()
+        for line in raw.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    active_text = "\n".join(active_lines)
+
+    assert not re.search(r"\b0\.0\.0\.0\b", active_text), (
+        "Caddyfile must never bind wildcard all-interfaces IPv4"
+    )
+    assert "bind ::" not in active_text, "Caddyfile must never bind wildcard ::"
+    for bad_port in (*LIVE_PORTS, "9223"):
+        assert f":{bad_port}" not in active_text, f"Caddyfile must never reference port {bad_port}"
+
+    # Parse top-level blocks (global options + site blocks) by brace depth.
+    blocks: list[tuple[str, str]] = []
+    header = ""
+    buf: list[str] = []
+    depth = 0
+    for line in active_lines:
+        if depth == 0:
+            if line.endswith("{"):
+                header = line[:-1].strip()
+                buf = []
+                depth = 1
+            continue
+        depth += line.count("{") - line.count("}")
+        if depth == 0:
+            blocks.append((header, "\n".join(buf)))
+            header = ""
+            buf = []
+        else:
+            buf.append(line)
+
+    assert depth == 0, "Unbalanced braces in docker/Caddyfile"
+    global_blocks = [body for hdr, body in blocks if hdr == ""]
+    site_blocks = [(hdr, body) for hdr, body in blocks if hdr != ""]
+    assert global_blocks and "admin off" in global_blocks[0], "Caddy admin API must be disabled"
+    assert len(site_blocks) >= 2, f"Expected :8793 and :4213 site blocks, got {len(site_blocks)}"
+
+    by_port: dict[str, str] = {}
+    for hdr, body in site_blocks:
+        assert re.search(r"(?m)^bind 127\.0\.0\.1$", body), (
+            f"Site block {hdr!r} under network_mode=host must explicitly declare `bind 127.0.0.1`"
+        )
+        assert not re.search(r"(?m)^bind\s+(?!127\.0\.0\.1$)", body), (
+            f"Site block {hdr!r} has non-loopback bind directive"
+        )
+        if ":8793" in hdr:
+            by_port["8793"] = body
+        if ":4213" in hdr:
+            by_port["4213"] = body
+
+    assert set(by_port.keys()) == {"8793", "4213"}, f"Missing required ports: {sorted(by_port)}"
+    assert "file_server browse" in by_port["8793"]
+    assert "/mnt/z/sota-data/manifests" in by_port["8793"]
+
+    duck_body = by_port["4213"]
+    expected_origin_rx = r"^http://(127\.0\.0\.1|localhost):4213$"
+    assert f"@loopback_origin header_regexp Origin {expected_origin_rx}" in duck_body
+    assert "handle @loopback_origin {" in duck_body
+    assert "reverse_proxy 127.0.0.1:4214 {" in duck_body
+    assert "header_up Origin http://localhost:4214" in duck_body
+
+    # Fallback `handle` must NOT rewrite Origin so foreign/missing Origins still hit DuckDB 401.
+    fallback_match = re.search(r"(?ms)^handle \{(.*?)\n\}$", duck_body)
+    assert fallback_match is not None, "Missing fallback handle block for non-loopback Origins"
+    fallback_body = fallback_match.group(1)
+    assert "reverse_proxy 127.0.0.1:4214" in fallback_body
+    assert "header_up Origin" not in fallback_body
+
+    compiled = re.compile(expected_origin_rx)
+    for allowed in ("http://127.0.0.1:4213", "http://localhost:4213"):
+        assert compiled.match(allowed), f"Expected loopback origin allowed: {allowed}"
+    for blocked in (
+        "https://evil.example",
+        "http://127.0.0.1:4213.evil.example",
+        "http://localhost:42130",
+        "http://127.0.0.1:4213/extra",
+        "https://127.0.0.1:4213",
+        "null",
+        "",
+    ):
+        assert not compiled.match(blocked), f"Expected origin rejected: {blocked}"
+
+
+def _load_script_module(module_name: str, rel_path: str) -> Any:
+    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / rel_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_orca_account_failover_wsl2_safety_and_error_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failover = _load_script_module("orca_account_failover_test", "scripts/orca_account_failover.py")
+
+    # Never invoke subprocess when executable is refused or missing.
+    spawned: list[list[str]] = []
+
+    def _forbid_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        spawned.append(cmd)
+        raise AssertionError(f"subprocess.run must not be called for refused executable: {cmd}")
+
+    monkeypatch.setattr(failover.subprocess, "run", _forbid_run)
+
+    if os.name != "nt":
+        assert failover._is_forbidden_gnome_orca("/usr/bin/orca") is True
+        symlink_path = tmp_path / "orca-ide"
+        symlink_path.symlink_to("/usr/bin/orca")
+        assert failover._is_forbidden_gnome_orca(str(symlink_path)) is True
+
+        monkeypatch.setenv("ORCA_CLI_COMMAND", str(symlink_path))
+        with pytest.raises(FileNotFoundError, match="GNOME screen reader"):
+            failover._run_orca_json(["account", "list"])
+        assert spawned == []
+
+        # Default POSIX lookup must look for `orca-ide` (never bare `orca`).
+        monkeypatch.delenv("ORCA_CLI_COMMAND", raising=False)
+        looked_up: list[str] = []
+
+        def _fake_which(name: str) -> str | None:
+            looked_up.append(name)
+            return None
+
+        with monkeypatch.context() as mp:
+            mp.setattr(failover.shutil, "which", _fake_which)
+            with pytest.raises(FileNotFoundError, match="orca-ide"):
+                failover._resolve_orca_executable()
+            assert looked_up == ["orca-ide"]
+
+            # Even if `shutil.which("orca-ide")` resolves to `/usr/bin/orca`, refuse before spawn.
+            mp.setattr(failover.shutil, "which", lambda _name: "/usr/bin/orca")
+            with pytest.raises(FileNotFoundError, match="GNOME screen reader"):
+                failover._run_orca_json(["account", "list"])
+            assert spawned == []
+
+    # ORCA_CLI_COMMAND pointing to a safe executable resolves cleanly.
+    fake_cli = tmp_path / "fake-orca-ide"
+    fake_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    monkeypatch.setenv("ORCA_CLI_COMMAND", str(fake_cli))
+    assert failover._resolve_orca_executable() == str(fake_cli)
+
+    # Error redaction strips Bearer, sk- keys, JWTs, quoted JSON creds, token=..., and emails.
+    # Assemble synthetic tokens dynamically so static scanners (gitleaks) never flag fixtures.
+    fake_api_key = "-".join(["sk", "synthetic", "ABCDEF1234567890"])
+    fake_jwt = ".".join(["eyJ" + "A" * 12, "eyJ" + "B" * 12, "sig_" + "C" * 12])
+    quoted_tok = "_".join(["tok", "quoted", "xyz12345"])
+    quoted_api = "_".join(["quoted", "api", "val", "999"])
+    raw_err = (
+        f"auth failed for alice.smith@example.com with Bearer secret_tok_123 "
+        f"{fake_api_key} {fake_jwt} access_token=topsecret_value "
+        f'{{"access_token": "{quoted_tok}", "api_key": "{quoted_api}"}}'
+    )
+    redacted = failover._redact_sensitive_text(raw_err)
+    assert "alice.smith@example.com" not in redacted
+    assert "al***@example.com" in redacted
+    assert "secret_tok_123" not in redacted
+    assert fake_api_key not in redacted
+    assert fake_jwt not in redacted
+    assert "topsecret_value" not in redacted
+    assert quoted_tok not in redacted
+    assert quoted_api not in redacted
+    assert "[REDACTED]" in redacted
+
+    def _failing_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=1,
+            stdout="",
+            stderr="token=my_secret_xyz for bob.jones@example.com",
+        )
+
+    monkeypatch.setattr(failover.subprocess, "run", _failing_run)
+    with pytest.raises(RuntimeError) as exc_info:
+        failover._run_orca_json(["account", "list"])
+    err_msg = str(exc_info.value)
+    assert "my_secret_xyz" not in err_msg
+    assert "bob.jones@example.com" not in err_msg
+    assert "bo***@example.com" in err_msg
+    assert "[REDACTED]" in err_msg
+
+    # Structured JSON error responses must emit only allowlisted metadata + exit code.
+    json_not_ok = json.dumps(
+        {
+            "ok": False,
+            "error": "rate_limited",
+            "code": 429,
+            "message": f'failed for carol.test@example.com {{"refresh_token": "{quoted_tok}"}}',
+            "access_token": quoted_tok,
+            "raw_payload_dump": "SENSITIVE_EXTRA_BLOB_42",
+        }
+    )
+
+    def _json_not_ok_run(
+        cmd: list[str], *args: Any, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=json_not_ok, stderr="")
+
+    monkeypatch.setattr(failover.subprocess, "run", _json_not_ok_run)
+    with pytest.raises(RuntimeError) as json_exc:
+        failover._run_orca_json(["account", "list"])
+    json_err_msg = str(json_exc.value)
+    assert "exit=0" in json_err_msg
+    assert "error=rate_limited" in json_err_msg
+    assert "code=429" in json_err_msg
+    assert "ca***@example.com" in json_err_msg
+    assert "carol.test@example.com" not in json_err_msg
+    assert quoted_tok not in json_err_msg
+    assert "SENSITIVE_EXTRA_BLOB_42" not in json_err_msg
+    assert '"access_token"' not in json_err_msg
+
+
+def test_multi_runtime_configs_and_5x5_mcp_parity(tmp_path: Path) -> None:
+    codex_cfg = tomllib.loads((REPO_ROOT / ".codex" / "config.toml").read_text("utf-8"))
+    assert "hooks" not in codex_cfg
+    features = codex_cfg.get("features", {})
+    assert features.get("fast_mode") is True
+    assert features.get("multi_agent_v2") is True
+    assert features.get("memories") is True
+    assert features.get("goals") is True
+    assert "multi_agent" not in features
+    assert features.get("hooks", False) is False
+
+    claude_cfg = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text("utf-8"))
+    ask_rules = claude_cfg.get("permissions", {}).get("ask", [])
+    assert "Edit(src/tier0_sota/risk.py)" in ask_rules
+    assert "Edit(/src/tier0_sota/risk.py)" not in ask_rules
+
+    mise_cfg = tomllib.loads((REPO_ROOT / "mise.toml").read_text("utf-8"))
+    assert mise_cfg["tools"]["node"] == "24"
+
+    # Verify scripts/preflight_resume.sh has unique # 1..# 13 gate headers (no duplicate # 12.).
+    preflight_text = (REPO_ROOT / "scripts" / "preflight_resume.sh").read_text("utf-8")
+    gate_nums = [int(m) for m in re.findall(r"(?m)^# (\d+)\.\s+", preflight_text)]
+    assert gate_nums == list(range(1, 14)), f"Unexpected preflight gate numbering: {gate_nums}"
+
+    sync_mod = _load_script_module("sync_manifest_test", "scripts/sync_manifest.py")
+    root_mcp = json.loads((REPO_ROOT / ".mcp.json").read_text("utf-8"))
+    gemini_cfg = json.loads((REPO_ROOT / ".gemini" / "settings.json").read_text("utf-8"))
+    opencode_cfg = json.loads((REPO_ROOT / "opencode.json").read_text("utf-8"))
+    omp_mcp = json.loads((REPO_ROOT / ".omp" / "mcp.json").read_text("utf-8"))
+
+    parity = sync_mod._verify_mcp_config_parity(
+        root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg, omp_mcp
+    )
+    assert len(parity) == 6
+    assert ".omp/mcp.json" in parity
+
+    # Mutating args or env in any runtime config must fail parity verification.
+    drifted_codex = tomllib.loads((REPO_ROOT / ".codex" / "config.toml").read_text("utf-8"))
+    drifted_codex["mcp_servers"]["xerj"]["args"] = ["--drifted"]
+    with pytest.raises(ValueError, match=r"\.codex/config\.toml"):
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, drifted_codex, gemini_cfg, opencode_cfg, omp_mcp
+        )
+
+    drifted_opencode = json.loads((REPO_ROOT / "opencode.json").read_text("utf-8"))
+    env_sentinel = "_".join(["SUPER", "SECRET", "ENV", "VAL", "98765"])
+    drifted_opencode["mcp"]["edgartools"]["environment"] = {"DRIFT_KEY": env_sentinel}
+    with pytest.raises(ValueError, match=r"opencode\.json") as env_exc:
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, codex_cfg, gemini_cfg, drifted_opencode, omp_mcp
+        )
+    env_err = str(env_exc.value)
+    assert "edgartools" in env_err
+    assert "DRIFT_KEY" in env_err
+    assert env_sentinel not in env_err
+
+    drifted_omp = json.loads((REPO_ROOT / ".omp" / "mcp.json").read_text("utf-8"))
+    drifted_omp["mcpServers"]["xerj"]["args"] = ["--drifted"]
+    with pytest.raises(ValueError, match=r"\.omp/mcp\.json"):
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg, drifted_omp
+        )
+
+    # Disabled server (`enabled: False`) and non-stdio/non-local transport must fail closed.
+    disabled_oc = json.loads((REPO_ROOT / "opencode.json").read_text("utf-8"))
+    disabled_oc["mcp"]["xerj"]["enabled"] = False
+    with pytest.raises(ValueError, match="disabled"):
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, codex_cfg, gemini_cfg, disabled_oc, omp_mcp
+        )
+
+    http_omp = json.loads((REPO_ROOT / ".omp" / "mcp.json").read_text("utf-8"))
+    http_omp["mcpServers"]["xerj"]["type"] = "http"
+    with pytest.raises(ValueError, match="stdio/local transport"):
+        sync_mod._verify_mcp_config_parity(
+            root_mcp, claude_cfg, codex_cfg, gemini_cfg, opencode_cfg, http_omp
+        )
+
+    # _check_zero_hooks allows explicit `[features] hooks = false` in .codex/config.toml,
+    # guards non-dict `features`, and rejects truthy hooks, [hooks], or `.omp/hooks*`.
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    (codex_dir / "config.toml").write_text("[features]\nhooks = false\n", encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is True
+    (codex_dir / "config.toml").write_text('features = "not-a-table"\n', encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is True
+    (codex_dir / "config.toml").write_text("[features]\nhooks = true\n", encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is False
+    (codex_dir / "config.toml").write_text('[hooks]\nrun = "x"\n', encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is False
+    (codex_dir / "config.toml").write_text("[features]\nhooks = false\n", encoding="utf-8")
+    omp_dir = tmp_path / ".omp"
+    omp_dir.mkdir(parents=True, exist_ok=True)
+    (omp_dir / "hooks.json").write_text("{}", encoding="utf-8")
+    assert sync_mod._check_zero_hooks(tmp_path) is False
+
+    llm_doc = sync_mod.build_llm_harness_manifest(REPO_ROOT)
+    assert llm_doc["live_hosted_portals_count"] == 15
+    assert llm_doc["extended_portals_count"] == 3
+    assert llm_doc["total_live_portals_count"] == 18
+    assert llm_doc["mcp_servers"]["parity_count"] == "6/6"
+    assert llm_doc["mcp_servers"]["parity_fields_verified"] == ["command", "args", "env"]
+    cmds = set(llm_doc["upstream_verification_commands"].values())
+    for expected_cmd in (
+        "just adr-check",
+        "just security",
+        "just fnox-check",
+        "just crosshair",
+        "just test-report",
+        "just mutate-risk",
+        "just reflect",
+    ):
+        assert expected_cmd in cmds, f"Missing recipe in LLM_HARNESS_MANIFEST: {expected_cmd}"
+
+
+def test_7role_multi_runtime_worker_parity_and_read_only_gatekeeper(tmp_path: Path) -> None:
+    expected_roles = sorted(p.stem for p in (REPO_ROOT / ".claude" / "agents").glob("*.md"))
+    assert len(expected_roles) == 7
+    assert "paper-gatekeeper" in expected_roles
+
+    # 1. All 7 Codex project-level worker definitions parse cleanly and enforce sandbox boundaries.
+    codex_agents_dir = REPO_ROOT / ".codex" / "agents"
+    codex_files = sorted(codex_agents_dir.glob("*.toml"))
+    assert [p.stem for p in codex_files] == expected_roles
+    for path in codex_files:
+        raw = path.read_text(encoding="utf-8")
+        doc = tomllib.loads(raw)
+        assert doc["name"] == path.stem
+        assert doc["description"].strip()
+        assert doc["model"] == "gpt-6.2-astra"
+        assert doc["model_reasoning_effort"] == "xhigh"
+        assert "AGENTS.md" in doc["developer_instructions"]
+        assert not bool(doc.get("hooks"))
+        assert not bool(doc.get("features", {}).get("hooks"))
+        assert "api.alpaca.markets" not in raw
+        if path.stem == "paper-gatekeeper":
+            assert doc["sandbox_mode"] == "read-only"
+            assert (
+                "stage_semi_auto_order_preset"
+                in doc["mcp_servers"]["nautilus-engine"]["disabled_tools"]
+            )
+            assert "xerj_memory_store" in doc["mcp_servers"]["xerj"]["disabled_tools"]
+        else:
+            assert doc["sandbox_mode"] == "workspace-write"
+
+    # 2. OpenCode defines the exact same 7 roles with paper-gatekeeper strictly read-only.
+    opencode_cfg = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))
+    assert opencode_cfg.get("plugin") == []
+    oc_agents = opencode_cfg.get("agent")
+    assert isinstance(oc_agents, dict)
+    assert sorted(oc_agents.keys()) == expected_roles
+    gk_perm = oc_agents["paper-gatekeeper"].get("permission")
+    assert isinstance(gk_perm, dict)
+    assert gk_perm.get("edit") == "deny"
+    assert gk_perm.get("shell") == "deny"
+    assert gk_perm.get("subagent") == "deny"
+    assert gk_perm.get("nautilus-engine_stage_semi_auto_order_preset") == "deny"
+    assert gk_perm.get("xerj_xerj_memory_store") == "deny"
+
+    # 3. OMP (.omp/agents/*.md) defines all 7 roles with paper-gatekeeper strictly read-only.
+    sync_mod = _load_script_module("sync_manifest_worker_parity", "scripts/sync_manifest.py")
+    omp_agents_dir = REPO_ROOT / ".omp" / "agents"
+    omp_files = sorted(omp_agents_dir.glob("*.md"))
+    assert [p.stem for p in omp_files] == expected_roles
+    for path in omp_files:
+        fm = sync_mod._parse_markdown_frontmatter(path)
+        assert fm["name"] == path.stem
+        assert str(fm["description"]).strip()
+        assert not bool(fm.get("hooks"))
+        if path.stem != "tier0-grand-central":
+            assert not fm.get("spawns")
+        if path.stem == "paper-gatekeeper":
+            tools = fm["tools"]
+            assert tools == ["read", "find", "grep", "glob", "ast_grep"]
+            assert set(tools).issubset(sync_mod._OMP_GATEKEEPER_PURE_INSPECTION_TOOLS)
+
+    # 4. sync_manifest emits 4-runtime 7/7 worker parity + honest enforcement breakdown.
+    llm_doc = sync_mod.build_llm_harness_manifest(REPO_ROOT)
+    parity = llm_doc["runtime_worker_parity"]
+    assert parity["canonical_roles"] == expected_roles
+    assert parity["claude_agents"] == "7/7"
+    assert parity["codex_agents"] == "7/7"
+    assert parity["opencode_agents"] == "7/7"
+    assert parity["omp_agents"] == "7/7"
+    assert parity["paper_gatekeeper_read_only_enforced"] is True
+    assert set(parity["paper_gatekeeper_enforcement"].keys()) == {
+        "claude",
+        "codex",
+        "opencode",
+        "omp",
+    }
+
+    # Weakening OpenCode paper-gatekeeper (including shell=deny + bash=allow) must fail closed.
+    weakened_oc = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))
+    weakened_oc["agent"]["paper-gatekeeper"]["permission"] = {}
+    with pytest.raises(ValueError, match="paper-gatekeeper"):
+        sync_mod._verify_runtime_worker_parity(REPO_ROOT, expected_roles, weakened_oc)
+
+    bash_allow_oc = json.loads((REPO_ROOT / "opencode.json").read_text(encoding="utf-8"))
+    bash_allow_oc["agent"]["paper-gatekeeper"]["permission"]["bash"] = "allow"
+    with pytest.raises(ValueError, match="paper-gatekeeper"):
+        sync_mod._verify_runtime_worker_parity(REPO_ROOT, expected_roles, bash_allow_oc)
+
+    # Strict Claude frontmatter bypass test: removing Bash from disallowedTools while leaving
+    # the word 'Bash' in the markdown prose body MUST fail closed.
+    for rel_dir in (".claude/agents", ".codex/agents", ".omp/agents"):
+        shutil.copytree(REPO_ROOT / rel_dir, tmp_path / rel_dir)
+    shutil.copy2(REPO_ROOT / "upstream-map.toml", tmp_path / "upstream-map.toml")
+
+    claude_gk = tmp_path / ".claude" / "agents" / "paper-gatekeeper.md"
+    orig_claude_gk = claude_gk.read_text(encoding="utf-8")
+    bypassed_claude_gk = (
+        orig_claude_gk.replace(", Bash,", ",") + "\nNote: Bash mentioned in prose.\n"
+    )
+    claude_gk.write_text(bypassed_claude_gk, encoding="utf-8")
+    with pytest.raises(ValueError, match="frontmatter read-only violation"):
+        sync_mod._verify_runtime_worker_parity(tmp_path, expected_roles, opencode_cfg)
+    claude_gk.write_text(orig_claude_gk, encoding="utf-8")
+
+    # OMP pure-inspection allowlist test: `lsp` AND stateful `memory_edit` MUST fail closed.
+    omp_gk = tmp_path / ".omp" / "agents" / "paper-gatekeeper.md"
+    orig_omp_gk = omp_gk.read_text(encoding="utf-8")
+    for bad_tool in ("lsp", "memory_edit"):
+        omp_gk.write_text(
+            orig_omp_gk.replace("- ast_grep", f"- ast_grep\n  - {bad_tool}"),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="READ_ONLY_TOOL_NAMES"):
+            sync_mod._verify_runtime_worker_parity(tmp_path, expected_roles, opencode_cfg)

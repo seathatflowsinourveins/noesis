@@ -50,13 +50,13 @@ repos:
         files: ^(src|scripts)/.*\.(html?|[cm]?[jt]sx?)$
       - id: ty
         name: ty type check
-        entry: bash -c 'if [ -x .venv/Scripts/ty.exe ]; then exec .venv/Scripts/ty.exe check --python .venv/Scripts/python.exe src tests scripts evals; elif [ -x "$HOME/noesis/.venv/bin/ty" ]; then exec "$HOME/noesis/.venv/bin/ty" check --python "$HOME/noesis/.venv/bin/python" src tests scripts evals; elif [ -x .venv/bin/ty ]; then exec .venv/bin/ty check --python .venv/bin/python src tests scripts evals; else exec uv run --no-sync ty check src tests scripts evals; fi'
+        entry: bash -c 'if [ "$(uname -s)" = "Linux" ] && [ -x "$HOME/noesis/.venv/bin/ty" ]; then exec "$HOME/noesis/.venv/bin/ty" check --python "$HOME/noesis/.venv/bin/python" src tests scripts evals; elif [ "$(uname -s)" = "Linux" ] && [ -x .venv/bin/ty ]; then exec .venv/bin/ty check --python .venv/bin/python src tests scripts evals; elif [ -x .venv/Scripts/ty.exe ]; then exec .venv/Scripts/ty.exe check --python .venv/Scripts/python.exe src tests scripts evals; else exec uv run --no-sync ty check src tests scripts evals; fi'
         language: system
         pass_filenames: false
         always_run: true
       - id: ast-grep
         name: ast-grep structural rules
-        entry: bash -c 'if [ -x .venv/Scripts/ast-grep.exe ]; then exec .venv/Scripts/ast-grep.exe scan; elif [ -x .venv/bin/ast-grep ]; then exec .venv/bin/ast-grep.exe scan 2>/dev/null || exec .venv/bin/ast-grep scan; else exec uv run --no-sync ast-grep scan; fi'
+        entry: bash -c 'if [ "$(uname -s)" = "Linux" ] && [ -x "$HOME/noesis/.venv/bin/ast-grep" ]; then exec "$HOME/noesis/.venv/bin/ast-grep" scan --config sgconfig.yml; elif [ "$(uname -s)" = "Linux" ] && [ -x .venv/bin/ast-grep ]; then exec .venv/bin/ast-grep scan --config sgconfig.yml; elif [ -x .venv/Scripts/ast-grep.exe ]; then exec .venv/Scripts/ast-grep.exe scan --config sgconfig.yml; else exec uv run --no-sync ast-grep scan --config sgconfig.yml; fi'
         language: system
         pass_filenames: false
         always_run: true

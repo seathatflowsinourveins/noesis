@@ -59,6 +59,28 @@ def test_fastmcp_registry_all_10_tools_and_dispatch() -> None:
     assert structured["prior_xnys_session"] == "2026-10-14"
 
 
+def test_tool_annotations_match_side_effects() -> None:
+    """MCP ToolAnnotations: nine local read-only tools, one local staged-ticket writer."""
+    tools = {t.name: t.annotations for t in asyncio.run(mcp_srv.mcp.list_tools())}
+    assert len(tools) == 10
+    writer = tools.pop("stage_semi_auto_order_preset")
+    assert writer is not None
+    assert (
+        writer.readOnlyHint,
+        writer.destructiveHint,
+        writer.idempotentHint,
+        writer.openWorldHint,
+    ) == (False, True, False, False)
+    for name, ann in tools.items():
+        assert ann is not None, name
+        assert (ann.readOnlyHint, ann.destructiveHint, ann.idempotentHint, ann.openWorldHint) == (
+            True,
+            False,
+            True,
+            False,
+        ), name
+
+
 def test_engine_backbone_and_venue_live_refusals() -> None:
     for venue in ("IBKR_PAPER_4002", "ALPACA_PAPER_200"):
         st = mcp_srv.get_engine_backbone_status(venue)
@@ -195,3 +217,109 @@ def test_mcp_server_smoke_cli(
     )
     sub = json.loads(proc.stdout)
     assert sub["ok"] is True and sub["tools_count"] == 10
+
+
+def test_mcp_stage_preset_24x5_session_parity_and_watchlist_tv_sync(tmp_path: Path) -> None:
+    staged_p = tmp_path / "tv_sota_pack" / "staged_tv_presets.json"
+    staged_p.parent.mkdir(parents=True)
+    res = mcp_srv.stage_semi_auto_order_preset(
+        payload={
+            "symbol": "DRAM",
+            "side": "BUY",
+            "session": "PRE_MARKET",
+            "trigger_price": 37.24,
+            "natr_pct": 0.012,
+            "rvol": 2.8,
+            "darkpool_trf_ratio": 0.41,
+            "technical_alignment_score": 74.5,
+            "calibrated_category": "SUDDEN_VOLUME_IGNITION",
+        },
+        venue="ALPACA",
+        venue_profile="ALPACA_PAPER_1000",
+        staged_path=str(staged_p),
+    )
+    assert res["ok"] is True
+    assert res["qty"] == 1
+    assert res["semi_auto_confirmed"] is False
+    assert res["live_execution_enabled"] is False
+    assert res["paper_only"] is True
+    assert res["venue_profile"] == "ALPACA_PAPER_1000"
+    assert res["min_trailing_pct"] > 0.0
+    assert res["auto_reverse_policy"] == "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE"
+    sop = res["session_order_presets"]
+    assert sorted(sop.keys()) == ["AFTER_HOURS", "OVERNIGHT", "PRE_MARKET", "RTH"]
+    assert sop["RTH"]["order_mode"] == "STOP_MARKET"
+    assert sop["RTH"]["alpaca_order_request"] == "TrailingStopOrderRequest"
+    assert sop["RTH"]["nautilus_order_type"] == "TrailingStopMarketOrder"
+    assert sop["PRE_MARKET"]["order_mode"] == "STOP_LIMIT"
+    assert sop["PRE_MARKET"]["collar_bps"] == 35.0
+    assert sop["PRE_MARKET"]["alpaca_entry_modify_rpm_budget"] == 900
+    assert sop["PRE_MARKET"]["alpaca_exit_reserve_rpm"] == 100
+    assert sop["OVERNIGHT"]["collar_bps"] == 50.0
+    assert sop["OVERNIGHT"]["ibkr_max_rpm"] == 3000
+    assert sop["OVERNIGHT"]["ibkr_exit_reserve_rpm"] == 300
+    assert set(res["r_lock_levels"].keys()) >= {
+        "be_plus_fee_price",
+        "lock_at_1r",
+        "lock_at_2r",
+        "lock_at_3r",
+        "fast_sell_non_noise_reverse_trigger",
+    }
+    assert res["momentum_trigger_reason"]["calibrated_category"] == "SUDDEN_VOLUME_IGNITION"
+    assert res["momentum_trigger_reason"]["rvol"] == pytest.approx(2.8)
+    assert res["momentum_trigger_reason"]["darkpool_trf_ratio"] == pytest.approx(0.41)
+
+    # Verify get_live_watchlist_manifest exposes sibling staged_tv_presets & tv_order_presets.
+    (staged_p.parent / "tv_order_presets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-order-presets.v1",
+                "venue_profile": "ALPACA_PAPER_1000",
+                "symbol_order_cards": [{"symbol": "DRAM"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (staged_p.parent / "tv_watchlist_sync_payload.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.tv-watchlist-sync-payload.v1",
+                "watchlists": {
+                    "active": {"symbol_count": 5},
+                    "alert_bound": {"symbol_count": 3},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    movers_p = tmp_path / "live_whole_market_movers_manifest.json"
+    movers_p.write_text(
+        json.dumps(
+            {
+                "schema_version": "tier0.whole-market-movers.v2",
+                "entries": [{"symbol": "DRAM"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    wl_res = mcp_srv.get_live_watchlist_manifest(str(movers_p))
+    assert wl_res["ok"] is True
+    tv_sync = wl_res["tv_sync"]
+    assert tv_sync["staged_tv_presets_count"] == 1
+    assert tv_sync["staged_tv_presets"][0]["symbol"] == "DRAM"
+    assert tv_sync["staged_tv_presets"][0]["sessions_covered"] == [
+        "AFTER_HOURS",
+        "OVERNIGHT",
+        "PRE_MARKET",
+        "RTH",
+    ]
+    assert tv_sync["tv_order_presets_count"] == 1
+    assert tv_sync["tv_order_presets_venue_profile"] == "ALPACA_PAPER_1000"
+    assert tv_sync["watchlist_sync_payload_counts"] == {"active": 5, "alert_bound": 3}
+
+    # Direct read of tv_order_presets.json and staged_tv_presets.json also admitted fail-closed.
+    assert mcp_srv.get_live_watchlist_manifest(str(staged_p))["ok"] is True
+    assert (
+        mcp_srv.get_live_watchlist_manifest(str(staged_p.parent / "tv_order_presets.json"))["ok"]
+        is True
+    )

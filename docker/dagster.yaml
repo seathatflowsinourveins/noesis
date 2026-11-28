@@ -1,12 +1,20 @@
 telemetry:
   enabled: false
 
+auto_materialize:
+  enabled: false
+
+freshness:
+  enabled: false
+
 run_coordinator:
   module: dagster.core.run_coordinator
   class: QueuedRunCoordinator
   config:
     max_concurrent_runs: 1
+    dequeue_interval_seconds: 30
 
 run_monitoring:
   enabled: true
   max_runtime_seconds: 1800
+  poll_interval_seconds: 300

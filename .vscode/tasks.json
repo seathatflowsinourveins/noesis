@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Noesis 24/5 SOTA Cockpit (tmux)",
+      "type": "shell",
+      "command": "tmux attach -t noesis-lanes || tmux attach -t noesis-24x5 || tmux new -s noesis-lanes",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "command": "wsl.exe -d Noesis-SOTA -- tmux attach -t noesis-lanes || wsl.exe -d Noesis-SOTA -- tmux attach -t noesis-24x5 || wsl.exe -d Noesis-SOTA -- tmux new -s noesis-lanes"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": false
+      },
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

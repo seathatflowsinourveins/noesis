@@ -16,25 +16,17 @@ from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-import mlflow
 import numpy as np
-import optuna
 import polars as pl
-from inspect_ai import eval as inspect_eval
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from evals.dspy_self_reflect import (  # noqa: E402
-    run_live_dspy_reflection,
-    verify_dspy_reflection_module,
-)
-from evals.tier0_inspect_eval import tier0_safety_eval, verify_inspect_safety_suite  # noqa: E402
-
 from tier0_sota.discovery import (  # noqa: E402
     BAR_DURATION_NS,
     DISCOVERY_WALL_ISO,
+    DISCOVERY_WALL_UTC_NS,
     assert_pre_wall_date,
     generate_upstream_reversal_signals,
     load_minute_bars_day,
@@ -177,10 +169,19 @@ def _build_offline_prewall_dataset(
 def _load_lake_prewall_dataset(
     lake_root: Path,
     *,
-    preferred_symbols: tuple[str, ...] = ("NVDA", "SOXL", "TSLA", "SPY", "QQQ"),
+    preferred_symbols: tuple[str, ...] = (
+        "SMCI",
+        "ASTS",
+        "ROKU",
+        "MU",
+        "PLTR",
+        "META",
+        "GTLB",
+        "MDB",
+    ),
     max_days: int = 3,
 ) -> tuple[pl.DataFrame, dict[int, int], pl.DataFrame, pl.DataFrame, dict[str, Any]] | None:
-    """Load real pre-wall Parquet 1-min bars and L1 quotes/trades strictly <= DISCOVERY_WALL."""
+    """Load real pre-wall Parquet 1-min bars and matched real L1 quotes/trades (zero synthetic)."""
     bars_root = lake_root / "alpaca-sip" / "raw" / "bars-1min"
     if not bars_root.is_dir():
         return None
@@ -199,7 +200,49 @@ def _load_lake_prewall_dataset(
     chosen_days = valid_days[-max_days:]
     chosen_sym: str | None = None
     sym_frames: list[pl.DataFrame] = []
+    quotes_df: pl.DataFrame | None = None
+    trades_df: pl.DataFrame | None = None
+    l1_file_name: str | None = None
+
     for cand in preferred_symbols:
+        q_dir = lake_root / "published-orb" / "quotes" / cand
+        t_dir = lake_root / "published-orb" / "trades" / cand
+        if not (q_dir.is_dir() and t_dir.is_dir()):
+            continue
+        common_l1 = sorted(
+            {p.name for p in q_dir.glob("*.parquet")} & {p.name for p in t_dir.glob("*.parquet")}
+        )
+        if not common_l1:
+            continue
+        cand_q: pl.DataFrame | None = None
+        cand_t: pl.DataFrame | None = None
+        cand_l1_name: str | None = None
+        for fname in reversed(common_l1):
+            day_prefix = fname[:10]
+            try:
+                assert_pre_wall_date(day_prefix)
+            except ValueError:
+                continue
+            q_cand = (
+                pl.scan_parquet(q_dir / fname)
+                .select(["t_ns", "bp", "bs", "ap", "as"])
+                .filter(pl.col("t_ns") <= DISCOVERY_WALL_UTC_NS)
+                .head(5000)
+                .collect()
+            )
+            t_cand = (
+                pl.scan_parquet(t_dir / fname)
+                .select(["t_ns", "p", "s"])
+                .filter(pl.col("t_ns") <= DISCOVERY_WALL_UTC_NS)
+                .head(2000)
+                .collect()
+            )
+            if q_cand.height >= 10 and t_cand.height >= 5:
+                cand_q, cand_t, cand_l1_name = q_cand, t_cand, fname
+                break
+        if cand_q is None or cand_t is None or cand_l1_name is None:
+            continue
+
         frames: list[pl.DataFrame] = []
         for day_iso in chosen_days:
             try:
@@ -213,9 +256,10 @@ def _load_lake_prewall_dataset(
             if combined.height >= 200:
                 chosen_sym = cand
                 sym_frames = [combined]
+                quotes_df, trades_df, l1_file_name = cand_q, cand_t, cand_l1_name
                 break
 
-    if chosen_sym is None or not sym_frames:
+    if chosen_sym is None or not sym_frames or quotes_df is None or trades_df is None:
         return None
 
     bars_df = sym_frames[0].sort("t_ns")
@@ -240,30 +284,13 @@ def _load_lake_prewall_dataset(
             elif ret5 <= -0.0025 and idx % 6 == 3:
                 signals_by_ts[ts_c] = -1
 
-    # Load matching pre-wall L1 quotes/trades if available in published-orb
-    quotes_df: pl.DataFrame | None = None
-    trades_df: pl.DataFrame | None = None
-    q_dir = lake_root / "published-orb" / "quotes" / chosen_sym
-    t_dir = lake_root / "published-orb" / "trades" / chosen_sym
-    if q_dir.is_dir() and t_dir.is_dir():
-        q_files = sorted(q_dir.glob("*.parquet"))
-        for qf in q_files:
-            tf = t_dir / qf.name
-            if tf.is_file():
-                q_cand = pl.read_parquet(qf).select(["t_ns", "bp", "bs", "ap", "as"]).head(500)
-                t_cand = pl.read_parquet(tf).select(["t_ns", "p", "s"]).head(250)
-                if q_cand.height >= 10 and t_cand.height >= 5:
-                    quotes_df, trades_df = q_cand, t_cand
-                    break
-
-    if quotes_df is None or trades_df is None:
-        _, _, quotes_df, trades_df, _ = _build_offline_prewall_dataset(n_bars=80)
-
     meta = {
         "data_source": "prewall_lake_parquet",
         "symbol": chosen_sym,
         "days_loaded": chosen_days,
         "bars_count": bars_df.height,
+        "l1_source": "published_orb_real_l1",
+        "l1_file": l1_file_name,
         "prewall_cutoff_iso": DISCOVERY_WALL_ISO,
         "lake_root": str(lake_root),
     }
@@ -351,6 +378,113 @@ def _split_signals_by_leg(signals_by_ts: dict[int, int]) -> dict[str, dict[int, 
     }
 
 
+def _read_json_optional(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _collect_tv_compounding_summary(
+    target_manifest_dir: Path, paper_doc: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge Paper Farm TV telemetry, tv_compounding_manifest.json & movers scanner stats."""
+    perf_tv = (
+        dict(paper_doc["tv_half_auto"]) if isinstance(paper_doc.get("tv_half_auto"), dict) else {}
+    )
+    pack_dir = target_manifest_dir / "tv_sota_pack"
+    comp_doc = _read_json_optional(pack_dir / "tv_compounding_manifest.json")
+    tickets_doc = _read_json_optional(pack_dir / "live_half_auto_tickets.json")
+    movers_doc = _read_json_optional(target_manifest_dir / "live_whole_market_movers_manifest.json")
+
+    m_entries = [e for e in (movers_doc.get("entries") or ()) if isinstance(e, dict)]
+    t_list = [t for t in (tickets_doc.get("tickets") or ()) if isinstance(t, dict)]
+    s_list = [s for s in (tickets_doc.get("standby_presets") or ()) if isinstance(s, dict)]
+
+    tickets_count = int(
+        comp_doc.get("tickets_count") or perf_tv.get("tickets_count") or len(t_list)
+    )
+    ready_count = int(
+        comp_doc.get("ready_tickets_count")
+        or perf_tv.get("ready_tickets_count")
+        or sum(1 for t in t_list if str(t.get("action_gate") or "").startswith("READY_HALF_AUTO"))
+    )
+    standby_count = int(
+        comp_doc.get("standby_presets_count") or perf_tv.get("standby_presets_count") or len(s_list)
+    )
+    staged_total = int(perf_tv.get("staged_presets_total") or comp_doc.get("staged_count") or 0)
+    audit_rows = int(comp_doc.get("duckdb_audit_rows") or perf_tv.get("duckdb_audit_rows") or 0)
+    uv_count = max(
+        int(comp_doc.get("unusual_vol_count") or 0)
+        + int(comp_doc.get("standby_unusual_vol_count") or 0),
+        int(perf_tv.get("unusual_vol_count") or 0),
+        sum(1 for e in m_entries if e.get("unusual_volume_buildup") is True),
+    )
+    dp_hits = max(
+        int(comp_doc.get("darkpool_hits_count") or 0)
+        + int(comp_doc.get("standby_darkpool_hits_count") or 0),
+        int(perf_tv.get("darkpool_hits_count") or 0),
+        sum(
+            1
+            for e in m_entries
+            if isinstance(e.get("darkpool_trf_ratio"), (int, float))
+            and float(e["darkpool_trf_ratio"]) >= 0.35
+        ),
+    )
+    dp_covered = max(
+        int(comp_doc.get("darkpool_trf_covered_count") or 0),
+        int(perf_tv.get("darkpool_trf_covered_count") or 0),
+        sum(1 for e in m_entries if isinstance(e.get("darkpool_trf_ratio"), (int, float))),
+    )
+    pine_shas = (
+        dict(comp_doc["pine_shas"])
+        if isinstance(comp_doc.get("pine_shas"), dict)
+        else (dict(perf_tv["pine_shas"]) if isinstance(perf_tv.get("pine_shas"), dict) else {})
+    )
+    pine_omni_sha = comp_doc.get("pine_omni_sha256") or perf_tv.get("pine_omni_sha256")
+    if pine_omni_sha and "tier0_omni_sota_24x5.pine" not in pine_shas:
+        pine_shas["tier0_omni_sota_24x5.pine"] = str(pine_omni_sha)
+    macro = (
+        movers_doc.get("macro_regime")
+        or comp_doc.get("macro_regime")
+        or tickets_doc.get("macro_regime")
+        or {}
+    )
+    return {
+        "semi_auto_confirmed": False,
+        "live_execution_enabled": False,
+        "qty": 1,
+        "active_session": str(
+            comp_doc.get("active_session")
+            or perf_tv.get("active_session")
+            or tickets_doc.get("active_session")
+            or "CLOSED"
+        ),
+        "tickets_count": tickets_count,
+        "ready_tickets_count": ready_count,
+        "standby_presets_count": standby_count,
+        "staged_presets_total": staged_total,
+        "duckdb_audit_rows": audit_rows,
+        "unusual_vol_count": uv_count,
+        "darkpool_hits_count": dp_hits,
+        "darkpool_trf_covered_count": dp_covered,
+        "scanner_ranked_count": len(m_entries) or int(perf_tv.get("scanner_ranked_count") or 0),
+        "scanner_extreme_eligible_count": sum(
+            1 for e in m_entries if e.get("extreme_mover_eligible") is True
+        )
+        or int(perf_tv.get("scanner_extreme_eligible_count") or 0),
+        "macro_regime": int(macro.get("regime", 0)) if isinstance(macro, dict) else 0,
+        "macro_regime_label": (
+            str(macro.get("regime_label") or "NEUTRAL") if isinstance(macro, dict) else "NEUTRAL"
+        ),
+        "pine_omni_sha256": pine_omni_sha,
+        "pine_shas": pine_shas,
+    }
+
+
 def _summarize_six_gate_report(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "verdict": report["verdict"],
@@ -399,16 +533,20 @@ def run_compounding_reflection(
     resolved_inspect_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_lake = lake_root if lake_root is not None else (data_root / "prewall-lake")
-    loaded_lake = None if resolved_mode == "offline" else _load_lake_prewall_dataset(resolved_lake)
-    if loaded_lake is not None:
-        bars_df, signals_by_ts, quotes_df, trades_df, data_meta = loaded_lake
-    else:
+    if resolved_mode == "offline":
         bars_df, signals_by_ts, quotes_df, trades_df, data_meta = _build_offline_prewall_dataset()
-        if resolved_mode == "lake":
-            data_meta["fallback_reason"] = f"prewall-lake unavailable at {resolved_lake}"
+    else:
+        loaded_lake = _load_lake_prewall_dataset(resolved_lake)
+        if loaded_lake is None:
+            raise FileNotFoundError(
+                f"Pre-wall lake dataset unavailable at {resolved_lake}; "
+                "refused silent offline fixture fallback (pass --offline explicitly)."
+            )
+        bars_df, signals_by_ts, quotes_df, trades_df, data_meta = loaded_lake
 
     sym = str(data_meta["symbol"])
     hft_markout = evaluate_hftbacktest_queue_markout(quotes_df, trades_df, symbol=sym, side="BUY")
+    hft_markout_by_side: dict[str, dict[str, Any]] = {"BUY": hft_markout}
 
     leg_signals = _split_signals_by_leg(signals_by_ts)
     profile_names = list(STRATEGY_PROFILES.keys())
@@ -416,14 +554,16 @@ def run_compounding_reflection(
     # Pre-collect empirical per-profile return matrices for every leg so PBO is 100% empirical
     trial_returns_by_leg: dict[str, list[np.ndarray]] = {"LONG": [], "SHORT": [], "COMBINED": []}
     profile_combined_returns: dict[str, np.ndarray] = {}
-    cached_bt_combined: dict[str, Any] = {}
+    cached_bt_1x: dict[tuple[str, str], Any] = {}
+    cached_bt_2x_combined: dict[str, Any] = {}
+    cached_six_gate_combined: dict[str, dict[str, Any]] = {}
 
     for pname in profile_names:
         cfg = STRATEGY_PROFILES[pname]
         bt_comb = run_nautilus_signal_backtest(
             bars_df, leg_signals["COMBINED"], cost_bps_per_side=Decimal("4.0"), **cfg
         )
-        cached_bt_combined[pname] = bt_comb
+        cached_bt_1x[(pname, "COMBINED")] = bt_comb
         comb_arr = np.asarray(bt_comb.trade_returns, dtype=float)
         profile_combined_returns[pname] = comb_arr
         trial_returns_by_leg["COMBINED"].append(comb_arr)
@@ -433,7 +573,10 @@ def run_compounding_reflection(
             bt_leg = run_nautilus_signal_backtest(
                 bars_df, leg_signals[leg], cost_bps_per_side=Decimal("4.0"), **single_leg_cfg
             )
+            cached_bt_1x[(pname, leg)] = bt_leg
             trial_returns_by_leg[leg].append(np.asarray(bt_leg.trade_returns, dtype=float))
+
+    import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     storage_url = f"sqlite:///{resolved_optuna_db.as_posix()}"
@@ -461,7 +604,11 @@ def run_compounding_reflection(
                 l1_side="BUY",
                 backtest_kwargs=cfg,
                 trial_returns=trial_returns_by_leg["COMBINED"],
+                precomputed_bt_1x=cached_bt_1x.get((profile_name, "COMBINED")),
+                precomputed_l1_markout=hft_markout_by_side["BUY"],
             )
+            cached_bt_2x_combined[profile_name] = six_gate["bt_2x"]
+            cached_six_gate_combined[profile_name] = six_gate
             bt_res = six_gate["bt_1x"]
             f1 = six_gate["falsification_1x"]
             mean_bps = float(f1.get("mean_bps", 0.0))
@@ -507,39 +654,76 @@ def run_compounding_reflection(
     finally:
         storage.engine.dispose()
 
-    # Independent cross-leg 6-gate falsification (LONG, SHORT, COMBINED) for best profile
+    # Independent cross-leg 6-gate falsification (LONG, SHORT, COMBINED) with cumulative trial count
+    effective_trials = max(len(profile_names), trials_total)
     best_cfg = STRATEGY_PROFILES.get(best_profile, STRATEGY_PROFILES[profile_names[0]])
     cross_leg_falsification: dict[str, dict[str, Any]] = {}
     for leg in ("LONG", "SHORT", "COMBINED"):
+        if (
+            leg == "COMBINED"
+            and effective_trials == len(profile_names)
+            and best_profile in cached_six_gate_combined
+        ):
+            cross_leg_falsification[leg] = _summarize_six_gate_report(
+                cached_six_gate_combined[best_profile]
+            )
+            continue
         leg_cfg = best_cfg if leg == "COMBINED" else {**best_cfg, "auto_reverse": False}
+        l1_side: Literal["BUY", "SELL"] = "SELL" if leg == "SHORT" else "BUY"
+        if l1_side not in hft_markout_by_side:
+            hft_markout_by_side[l1_side] = evaluate_hftbacktest_queue_markout(
+                quotes_df, trades_df, symbol=sym, side=l1_side
+            )
         leg_rep = evaluate_six_gate_falsification(
             bars_df=bars_df,
             signals_by_ts=leg_signals[leg],
-            n_trials_total=len(profile_names),
+            n_trials_total=effective_trials,
             l1_quotes_df=quotes_df,
             l1_trades_df=trades_df,
-            l1_side="SELL" if leg == "SHORT" else "BUY",
+            l1_side=l1_side,
             backtest_kwargs=leg_cfg,
             trial_returns=trial_returns_by_leg[leg],
+            precomputed_bt_1x=cached_bt_1x.get((best_profile, leg)),
+            precomputed_bt_2x=(
+                cached_bt_2x_combined.get(best_profile) if leg == "COMBINED" else None
+            ),
+            precomputed_l1_markout=hft_markout_by_side[l1_side],
         )
         cross_leg_falsification[leg] = _summarize_six_gate_report(leg_rep)
 
-    # Upstream skfolio + Clarabel.rs portfolio sleeve weights across strategies
+    # Strictly out-of-sample upstream skfolio + Clarabel.rs portfolio sleeve weights
     eligible_sleeves = {
-        name: arr for name, arr in profile_combined_returns.items() if arr.size >= 4
+        name: arr for name, arr in profile_combined_returns.items() if arr.size >= 6
     }
     skfolio_portfolio: dict[str, Any]
     if len(eligible_sleeves) >= 2:
         min_len = min(arr.size for arr in eligible_sleeves.values())
         sleeve_names = sorted(eligible_sleeves.keys())
         ret_mat = np.column_stack([eligible_sleeves[n][:min_len] for n in sleeve_names])
-        skfolio_portfolio = compute_skfolio_portfolio_weights(
-            ret_mat, asset_names=sleeve_names, method="mean_risk_clarabel"
+        split_idx = max(3, min(min_len - 2, int(min_len * 0.60)))
+        fitted = compute_skfolio_portfolio_weights(
+            ret_mat[:split_idx], asset_names=sleeve_names, method="mean_risk_clarabel"
         )
+        w_vec = np.asarray([fitted["weights"][n] for n in sleeve_names], dtype=float)
+        oos_slice = ret_mat[split_idx:]
+        oos_rets = oos_slice @ w_vec
+        skfolio_portfolio = {
+            **fitted,
+            "oos_strictly_out_of_sample": True,
+            "in_sample_observations": int(split_idx),
+            "oos_observations": int(oos_slice.shape[0]),
+            "oos_mean_bps": round(float(np.mean(oos_rets)) * 1e4, 4),
+        }
     else:
         skfolio_portfolio = {"solver": "clarabel", "skipped": "insufficient_sleeve_returns"}
 
-    inspect_suite = verify_inspect_safety_suite()
+    from evals.dspy_self_reflect import (
+        run_live_dspy_reflection,
+        verify_dspy_reflection_module,
+    )
+    from evals.tier0_inspect_eval import tier0_safety_eval, verify_inspect_safety_suite
+    from inspect_ai import eval as inspect_eval
+
     inspect_logs = inspect_eval(
         tier0_safety_eval(),
         model="mockllm/model",
@@ -548,6 +732,7 @@ def run_compounding_reflection(
     )
     inspect_accuracy = 0.0
     inspect_log_file = ""
+    inspect_checks: dict[str, str] = {}
     if inspect_logs:
         first_log = inspect_logs[0]
         inspect_log_file = str(getattr(first_log, "location", ""))
@@ -556,6 +741,21 @@ def run_compounding_reflection(
             metric_obj = metrics.get("mean") or metrics.get("accuracy")
             if metric_obj is not None:
                 inspect_accuracy = float(metric_obj.value)
+        for sample in getattr(first_log, "samples", None) or []:
+            sample_id = getattr(sample, "id", None)
+            output = getattr(sample, "output", None)
+            completion = getattr(output, "completion", None) if output is not None else None
+            if sample_id is not None and completion is not None:
+                inspect_checks[str(sample_id)] = str(completion)
+
+    if inspect_checks:
+        inspect_suite: dict[str, Any] = {
+            "ok": all(v == "PASS" for v in inspect_checks.values()),
+            "checks": inspect_checks,
+            "samples_count": len(inspect_checks),
+        }
+    else:
+        inspect_suite = verify_inspect_safety_suite()
 
     dspy_status = verify_dspy_reflection_module()
     omniroute_reachable = (
@@ -563,6 +763,7 @@ def run_compounding_reflection(
     )
 
     paper_manifest_path = target_manifest_dir / "paper_farm_live_performance_manifest.json"
+    paper_doc: dict[str, Any] = {}
     if paper_manifest_path.is_file():
         paper_doc = json.loads(paper_manifest_path.read_text(encoding="utf-8"))
         summary = paper_doc.get("summary") or {}
@@ -586,6 +787,61 @@ def run_compounding_reflection(
         }
     else:
         paper_summary = {"present": False, "paper_only": True, "live_execution_enabled": False}
+    tv_half_auto_summary = _collect_tv_compounding_summary(target_manifest_dir, paper_doc)
+    starred_doc = _read_json_optional(
+        target_manifest_dir / "starred_frontier_landscape_manifest.json"
+    )
+    l15_doc = _read_json_optional(target_manifest_dir / "l15_supply_chain_and_formal_audit.json")
+
+    def _sub_dict(doc: dict[str, Any], key: str) -> dict[str, Any]:
+        val = doc.get(key)
+        return val if isinstance(val, dict) else {}
+
+    l15_am = _sub_dict(l15_doc, "alertmanager")
+    alertmanager_9093_healthy = (
+        bool(l15_doc.get("alertmanager_9093_healthy", l15_am.get("healthy_9093", False)))
+        if is_offline
+        else _http_reachable("http://127.0.0.1:9093/-/healthy")
+    )
+    starred_summary_block = _sub_dict(starred_doc, "summary")
+    starred_versions = _sub_dict(starred_doc, "versions")
+    starred_engines = _sub_dict(starred_doc, "engines") or _sub_dict(starred_doc, "capabilities")
+    starred_all_ok = bool(
+        starred_summary_block.get("all_engines_pass")
+        or starred_doc.get("all_ok")
+        or starred_doc.get("ok")
+        or (
+            bool(starred_engines)
+            and all(
+                (v.get("status") == "VERIFIED_PASS" if isinstance(v, dict) else bool(v))
+                for v in starred_engines.values()
+            )
+        )
+    )
+    starred_frontier_summary: dict[str, Any] = {
+        "present": bool(starred_doc),
+        "schema_version": starred_doc.get("schema_version"),
+        "generated_at_utc": starred_doc.get("generated_at_utc"),
+        "all_engines_ok": starred_all_ok,
+        "engines_verified_pass": int(
+            starred_summary_block.get("engines_verified_pass") or len(starred_engines)
+        ),
+        "engines_total": int(starred_summary_block.get("engines_total") or len(starred_engines)),
+        "graduated_packages": list(
+            starred_doc.get("graduated_packages") or sorted(starred_versions)
+        ),
+    }
+    l15_ch = _sub_dict(l15_doc, "crosshair")
+    l15_z3 = _sub_dict(l15_doc, "z3_formal_proofs")
+    l15_audit_summary: dict[str, Any] = {
+        "present": bool(l15_doc),
+        "schema_version": l15_doc.get("schema_version"),
+        "generated_at_utc": l15_doc.get("generated_at_utc"),
+        "overall_ok": bool(l15_doc.get("overall_ok", False)),
+        "z3_all_unsat": bool(l15_z3.get("all_unsat", False)),
+        "crosshair_ok": bool(l15_ch.get("ok", False)),
+        "alertmanager_9093_healthy": alertmanager_9093_healthy,
+    }
 
     live_dspy_reflection = run_live_dspy_reflection(
         {
@@ -594,7 +850,7 @@ def run_compounding_reflection(
                 "best_value": best_value,
                 "cross_leg": cross_leg_falsification,
             },
-            "paper_farm": paper_summary,
+            "paper_farm": {**paper_summary, "tv_half_auto": tv_half_auto_summary},
             "inspect": {
                 "accuracy": inspect_accuracy,
                 "samples_count": inspect_suite.get("samples_count"),
@@ -609,6 +865,8 @@ def run_compounding_reflection(
     mlflow_status: dict[str, Any] = {"uri": resolved_mlflow_uri, "logged": False}
     if not is_offline and _http_reachable(f"{resolved_mlflow_uri.rstrip('/')}/health"):
         try:
+            import mlflow
+
             mlflow.set_tracking_uri(resolved_mlflow_uri)
             mlflow.set_experiment("tier0-sota-compounding-reflection")
             with mlflow.start_run(run_name="dual-flywheel-reflection") as run:
@@ -619,6 +877,12 @@ def run_compounding_reflection(
                         "pooled_schedules": ",".join(sorted(POOLED_TRAILING_SCHEDULES.keys())),
                         "inspect_samples": int(inspect_suite["samples_count"]),
                         "skfolio_solver": str(skfolio_portfolio.get("solver", "clarabel")),
+                        "tv_active_session": str(
+                            tv_half_auto_summary.get("active_session") or "CLOSED"
+                        ),
+                        "tv_pine_omni_sha256": str(
+                            tv_half_auto_summary.get("pine_omni_sha256") or "none"
+                        )[:16],
                     }
                 )
                 metrics_to_log: dict[str, float] = {
@@ -636,6 +900,44 @@ def run_compounding_reflection(
                         metrics_to_log[f"leg_{leg.lower()}_empirical_pbo"] = float(f1_leg["pbo"])
                 for s_name, w_val in (skfolio_portfolio.get("weights") or {}).items():
                     metrics_to_log[f"sleeve_weight_{s_name}"] = float(w_val)
+                if isinstance(skfolio_portfolio.get("oos_mean_bps"), (int, float)):
+                    metrics_to_log["skfolio_oos_mean_bps"] = float(
+                        skfolio_portfolio["oos_mean_bps"]
+                    )
+                metrics_to_log["tv_half_auto_tickets_count"] = float(
+                    tv_half_auto_summary.get("tickets_count") or 0
+                )
+                metrics_to_log["tv_half_auto_ready_tickets_count"] = float(
+                    tv_half_auto_summary.get("ready_tickets_count") or 0
+                )
+                metrics_to_log["tv_half_auto_standby_presets_count"] = float(
+                    tv_half_auto_summary.get("standby_presets_count") or 0
+                )
+                metrics_to_log["tv_half_auto_staged_presets_total"] = float(
+                    tv_half_auto_summary.get("staged_presets_total") or 0
+                )
+                metrics_to_log["tv_half_auto_duckdb_audit_rows"] = float(
+                    tv_half_auto_summary.get("duckdb_audit_rows") or 0
+                )
+                metrics_to_log["tv_half_auto_unusual_vol_count"] = float(
+                    tv_half_auto_summary.get("unusual_vol_count") or 0
+                )
+                metrics_to_log["tv_half_auto_darkpool_hits_count"] = float(
+                    tv_half_auto_summary.get("darkpool_hits_count") or 0
+                )
+                metrics_to_log["tv_half_auto_darkpool_trf_covered_count"] = float(
+                    tv_half_auto_summary.get("darkpool_trf_covered_count") or 0
+                )
+                metrics_to_log["scanner_ranked_count"] = float(
+                    tv_half_auto_summary.get("scanner_ranked_count") or 0
+                )
+                metrics_to_log["alertmanager_9093_healthy"] = (
+                    1.0 if alertmanager_9093_healthy else 0.0
+                )
+                metrics_to_log["l15_formal_audit_ok"] = (
+                    1.0 if l15_audit_summary.get("overall_ok") else 0.0
+                )
+                metrics_to_log["starred_frontier_engines_ok"] = 1.0 if starred_all_ok else 0.0
                 mlflow.log_metrics(metrics_to_log)
                 mlflow_status = {
                     "uri": resolved_mlflow_uri,
@@ -666,6 +968,18 @@ def run_compounding_reflection(
         "dspy_executed_live": live_dspy_reflection["executed_live"],
         "dspy_metric_score": live_dspy_reflection["metric_score"],
         "risk_sha256_match": risk_digest == EXPECTED_RISK_SHA256,
+        "tv_half_auto": {
+            "active_session": tv_half_auto_summary.get("active_session"),
+            "tickets_count": tv_half_auto_summary.get("tickets_count"),
+            "ready_tickets_count": tv_half_auto_summary.get("ready_tickets_count"),
+            "standby_presets_count": tv_half_auto_summary.get("standby_presets_count"),
+            "staged_presets_total": tv_half_auto_summary.get("staged_presets_total"),
+            "duckdb_audit_rows": tv_half_auto_summary.get("duckdb_audit_rows"),
+            "unusual_vol_count": tv_half_auto_summary.get("unusual_vol_count"),
+            "darkpool_hits_count": tv_half_auto_summary.get("darkpool_hits_count"),
+            "darkpool_trf_covered_count": tv_half_auto_summary.get("darkpool_trf_covered_count"),
+            "semi_auto_confirmed": False,
+        },
     }
     xerj_status: dict[str, Any] = {"url": resolved_xerj_url, "pushed": False}
     if not is_offline and _http_reachable(resolved_xerj_url):
@@ -713,6 +1027,10 @@ def run_compounding_reflection(
         },
         "mlflow": mlflow_status,
         "paper_farm": paper_summary,
+        "tv_half_auto": tv_half_auto_summary,
+        "alertmanager_9093_healthy": alertmanager_9093_healthy,
+        "starred_frontier_landscape": starred_frontier_summary,
+        "l15_formal_supply_chain_audit": l15_audit_summary,
         "xerj": xerj_status,
     }
 

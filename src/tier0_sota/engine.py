@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from functools import lru_cache
-from typing import Any, Literal, Self
+from types import MappingProxyType
+from typing import Any, Literal, NamedTuple, Self, overload
 from zoneinfo import ZoneInfo
 
 import polars as pl
-from exchange_calendars.errors import DateOutOfBounds
 from nautilus_trader import config as _nc
 from nautilus_trader import indicators as _ni
 from nautilus_trader import model as nm
@@ -24,11 +25,11 @@ from nautilus_trader.trading import Strategy, StrategyConfig
 
 from tier0_sota import risk as _rk
 from tier0_sota.discovery import (
-    _XNYS,
     MarketRegimeActor,
     MarketRegimeActorConfig,
     assert_pre_wall_ns,
     df_to_equity_and_bars,
+    get_xnys_calendar,
     step_rth_5m_bar,
 )
 from tier0_sota.risk import Side
@@ -48,22 +49,27 @@ __all__ = [
     "SignalBacktestResult",
     "SignalExecutionConfig",
     "SignalExecutionStrategy",
+    "UsEquitySessionBoundsET",
     "build_ibkr_paper_connection_spec",
     "build_sandbox_live_node",
     "build_venue_live_node_config",
+    "build_venue_order_handle_spec",
     "build_venue_risk_engine_config",
     "classify_et_hm",
     "classify_us_equity_session_et",
     "compute_collared_entry_limit_price",
     "compute_collared_limit_price",
     "compute_dynamic_trailing_stop",
+    "compute_non_noise_min_trail_spec",
     "compute_progressive_trailing_stop",
     "get_session_protection_profile",
     "inspect_venue_capability",
     "is_sip_dark_boats_overnight_window_et",
     "run_nautilus_signal_backtest",
     "select_pooled_trailing_schedule",
+    "session_calendar_consistency",
     "step_rth_5m_bar",
+    "us_equity_session_bounds_et",
     "validate_trailing_offset_type",
     "validate_venue_order_capability",
 ]
@@ -82,6 +88,7 @@ SessionOrClosed = MarketSession24x5 | Literal["CLOSED"]
 VenueProfileId = Literal[
     "IBKR_PAPER_4002",
     "ALPACA_PAPER_200",
+    "ALPACA_PAPER_1000",
     "IBKR_LIVE_3000",
     "ALPACA_LIVE_PRO_LINE_1000",
     "ALPACA_LIVE_ELITE_SMART_ROUTER",
@@ -122,6 +129,15 @@ _AB = ExecutionVenueProfile(
     False,
     False,
 )
+_AP1000 = replace(
+    _AB,
+    venue_id="ALPACA_PAPER_1000",
+    environment="PAPER",
+    routing_tier="ALPACA_PAPER_PRO_LINE_1000",
+    max_rpm=1000,
+    max_rps=25,
+    max_concurrent_trailed_positions=10,
+)
 _AP = replace(
     _AB,
     venue_id="ALPACA_LIVE_PRO_LINE_1000",
@@ -143,7 +159,7 @@ _AE = replace(
 )
 _IL = replace(_IB, venue_id="IBKR_LIVE_3000", environment="LIVE")
 EXECUTION_VENUE_PROFILES: dict[str, ExecutionVenueProfile] = {
-    p.venue_id: p for p in (_IB, _AB, _IL, _AP, _AE)
+    p.venue_id: p for p in (_IB, _AB, _AP1000, _IL, _AP, _AE)
 }
 
 
@@ -362,6 +378,65 @@ def get_session_protection_profile(
     raise ValueError(f"Unknown 24/5 market session: {session!r}")
 
 
+def build_venue_order_handle_spec(
+    venue_id: str = "IBKR_PAPER_4002",
+    session: SessionOrClosed | str = "RTH",
+    trailing_schedule: str = "baseline",
+) -> dict[str, Any]:
+    """Build deterministic SOTA venue order-handle budget & 24/5 session execution spec."""
+    prof = _resolve_venue(venue_id)
+    sched_key = str(trailing_schedule).strip().lower()
+    if sched_key not in POOLED_TRAILING_SCHEDULES:
+        raise ValueError(f"Unknown trailing_schedule: {trailing_schedule!r}")
+    sess_prof = get_session_protection_profile(session, POOLED_TRAILING_SCHEDULES[sched_key])
+    re_cfg = build_venue_risk_engine_config(prof.venue_id)
+    exit_reserve_rpm = _rk.ProtectiveExitRateBudget(
+        prof.max_rpm, prof.min_exit_reserve_fraction
+    ).exit_reserve_rpm
+    entry_modify_rpm_budget = prof.max_rpm - exit_reserve_rpm
+    cadence_secs = round(
+        max(
+            1.0,
+            (60.0 * prof.max_concurrent_trailed_positions)
+            / max(1.0, entry_modify_rpm_budget * 0.5),
+        ),
+        2,
+    )
+    return {
+        "schema_version": "tier0.venue-order-handle.v1",
+        "venue_profile": prof.venue_id,
+        "broker": prof.broker,
+        "environment": prof.environment,
+        "routing_tier": prof.routing_tier,
+        "max_rpm": prof.max_rpm,
+        "max_rps": prof.max_rps,
+        "entry_modify_rpm_budget": entry_modify_rpm_budget,
+        "exit_reserve_rpm": exit_reserve_rpm,
+        "min_exit_reserve_fraction": float(prof.min_exit_reserve_fraction),
+        "max_concurrent_trailed_positions": prof.max_concurrent_trailed_positions,
+        "trailing_modify_cadence_secs": cadence_secs,
+        "session": sess_prof.session,
+        "trailing_schedule": sched_key,
+        "session_order_mode": sess_prof.order_mode,
+        "limit_collar_bps": float(sess_prof.limit_collar_bps),
+        "initial_max_loss_pct": float(sess_prof.initial_max_loss_pct),
+        "max_notional_scale": float(sess_prof.max_notional_scale),
+        "outside_rth": sess_prof.outside_rth,
+        "supports_native_trailing": prof.supports_native_trailing,
+        "supports_extended_overnight_24x5": prof.supports_extended_overnight_24x5,
+        "supports_dma": prof.supports_dma,
+        "supports_twap": prof.supports_twap,
+        "supports_vwap": prof.supports_vwap,
+        "order_flow_classification": prof.order_flow_classification,
+        "reg_nms_covered": prof.reg_nms_covered,
+        "nautilus_submit_rate": str(re_cfg.max_order_submit_rate),
+        "nautilus_modify_rate": str(re_cfg.max_order_modify_rate),
+        "paper_only": prof.environment == "PAPER",
+        "live_execution_enabled": prof.live_execution_enabled,
+        "executable_now": prof.environment == "PAPER" and not prof.live_execution_enabled,
+    }
+
+
 def _et_dt(ts_utc_ns: int) -> datetime:
     if isinstance(ts_utc_ns, bool) or not isinstance(ts_utc_ns, int) or ts_utc_ns < 0:
         raise ValueError(f"ts_utc_ns must be non-negative int, got {ts_utc_ns!r}")
@@ -369,41 +444,274 @@ def _et_dt(ts_utc_ns: int) -> datetime:
     return datetime.fromtimestamp(sec, tz=UTC).replace(microsecond=rem // 1000).astimezone(_NY_TZ)
 
 
+# US equity session clock. Every intraday boundary of a trading day comes from an upstream calendar:
+#   exchange_calendars XNYS (discovery.get_xnys_calendar, the calendar the PIT and backtest lanes
+#     already use) is the authority for "is this day a session" and for the regular open and close;
+#   pandas_market_calendars NYSE supplies the pre-market open ("pre") and the post-market close
+#     ("post"), which exchange_calendars does not model. On a 13:00 early close its special_post
+#     rule ends the extended session at 17:00 ET instead of 20:00.
+# Neither library models the overnight session, so "20:00 ET on a night before an XNYS session"
+# stays derived from the XNYS session list. The minute constants below are that overnight open and
+# the pre-upstream bounds, which apply only to a day whose upstream bounds cannot be used: outside
+# the XNYS range, pandas_market_calendars unavailable, its row for the day unreadable, or the two
+# calendars disagreeing. session_calendar_consistency(day) reports which, so the supervisor can log
+# it; "fallback" on a day inside the XNYS range is the state to alert on.
+# A failed pandas_market_calendars load is not remembered. The classifier asks again when a day is
+# first looked up (one attempt per ET day, so a failing upstream is never hit once per call) and
+# session_calendar_consistency asks again on every call; a day already answered keeps its fallback
+# until one of the two succeeds. A loaded table is never rebuilt, and loading it drops the per-day
+# records made while it was missing, so every day gets its upstream bounds back. An unreadable row
+# stays unreadable for the life of the process.
+type _HmBounds = tuple[int, int, int, int]  # pre open, regular open, regular close, post close
+
+_OVERNIGHT_OPEN_HM = 1200
+_FALLBACK_BOUNDS_HM: _HmBounds = (240, 570, 960, 1200)
+_NYSE_LOAD_FAILED = "pandas_market_calendars_unavailable"
+_NYSE_ROW_INVALID = "pandas_market_calendars_row_invalid"
+
+
 @lru_cache(maxsize=2048)
 def _xnys_info(ny_day: date) -> tuple[bool, int] | None:
+    from exchange_calendars.errors import DateOutOfBounds
+
+    xnys = get_xnys_calendar()
     try:
-        if not (_XNYS.first_session.date() <= ny_day <= _XNYS.last_session.date()):
+        if not (xnys.first_session.date() <= ny_day <= xnys.last_session.date()):
             return None
-        if not _XNYS.is_session(iso := ny_day.isoformat()):
+        if not xnys.is_session(iso := ny_day.isoformat()):
             return (False, 960)
-        c = _XNYS.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
+        c = xnys.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
         return (True, c.hour * 60 + c.minute)
     except DateOutOfBounds:
         return None
 
 
-def classify_et_hm(hm: int, rth_close_hm: int = 960) -> MarketSession24x5:
-    """Classify ET minute-of-day into a US equity 24/5 session label."""
-    if 240 <= hm < 570:
+@lru_cache(maxsize=1)
+def _nyse_extended_hours_rows() -> Mapping[date, _HmBounds | str]:
+    """pandas_market_calendars NYSE (pre, open, close, post) ET minutes per session day.
+
+    One schedule() call over the XNYS range, because days outside it use the fallback anyway. A row
+    that cannot be read is kept as its error text, so it costs that day only. Raises when the
+    calendar cannot be loaded at all: lru_cache keeps only a returned value, so a failed load is
+    tried again by the next caller and a loaded table is never rebuilt.
+    """
+    import pandas_market_calendars as mcal
+
+    xnys = get_xnys_calendar()
+    sched: Any = mcal.get_calendar("NYSE").schedule(
+        start_date=xnys.first_session.date().isoformat(),
+        end_date=xnys.last_session.date().isoformat(),
+        start="pre",
+        end="post",
+        tz=_NY_TZ.key,
+    )
+    table: dict[date, _HmBounds | str] = {}
+    columns = (sched[name] for name in ("pre", "market_open", "market_close", "post"))
+    for session, *marks in zip(sched.index, *columns, strict=True):
+        day = session.date()
+        try:
+            # Wall-clock minutes from the session's ET midnight: a mark on another date falls
+            # outside 0..1200 and fails the ordering check in _session_day.
+            pre, opn, cls, post = (
+                int((m.date() - day).days * 1440 + m.hour * 60 + m.minute) for m in marks
+            )
+        except Exception as exc:  # an unreadable row (NaT, wrong type) costs that day only
+            table[day] = f"{type(exc).__name__}: {exc}"
+        else:
+            table[day] = (pre, opn, cls, post)
+    _session_day.cache_clear()  # per-day records made while the load was failing are stale now
+    return MappingProxyType(table)
+
+
+def _nyse_extended_hours_table() -> tuple[Mapping[date, _HmBounds | str], str | None]:
+    """The pandas_market_calendars table and its load error. Never raises.
+
+    An upstream failure gives an empty table and its text for session_calendar_consistency. The
+    failure is not kept here: _session_day keeps the day's fallback record, which bounds the
+    attempts, and the next day or the next consistency check tries the load again.
+    """
+    try:
+        return _nyse_extended_hours_rows(), None
+    except Exception as exc:  # any upstream import or schedule failure means fallback, not a raise
+        return MappingProxyType({}), f"{type(exc).__name__}: {exc}"
+
+
+class _SessionDay(NamedTuple):
+    """One ET day as the session clock sees it, with what each upstream calendar reported."""
+
+    bounds_hm: _HmBounds | None  # (pre, open, close, post) in use; None = closed
+    reason: str  # "ok" = both calendars cover the day and agree; otherwise why the fallback applies
+    xnys_in_range: bool
+    xnys_hm: tuple[int, int] | None  # XNYS regular (open, close); None = not an XNYS session
+    nyse_hm: _HmBounds | None  # pandas_market_calendars row; None = not a session, or unreadable
+    nyse_error: str | None  # the load error, or the error of this day's unreadable row
+
+
+@lru_cache(maxsize=2048)
+def _session_day(ny_day: date) -> _SessionDay:
+    inf = _xnys_info(ny_day)
+    if inf is None:  # outside the XNYS range: weekday rule with the pre-upstream bounds
+        bounds = _FALLBACK_BOUNDS_HM if ny_day.weekday() < 5 else None
+        return _SessionDay(bounds, "exchange_calendars_out_of_range", False, None, None, None)
+    xnys_hm: tuple[int, int] | None = None
+    fallback: _HmBounds | None = None
+    if inf[0]:
+        xnys_open = get_xnys_calendar().session_open(ny_day.isoformat())
+        opn = xnys_open.to_pydatetime().astimezone(_NY_TZ)
+        xnys_hm = (opn.hour * 60 + opn.minute, inf[1])
+        fallback = (_FALLBACK_BOUNDS_HM[0], _FALLBACK_BOUNDS_HM[1], inf[1], _FALLBACK_BOUNDS_HM[3])
+    table, error = _nyse_extended_hours_table()
+    row = table.get(ny_day)
+    nyse_hm = None if isinstance(row, str) else row
+    if error is not None:
+        reason = _NYSE_LOAD_FAILED
+    elif isinstance(row, str):
+        reason, error = _NYSE_ROW_INVALID, row
+    elif (xnys_hm is None) != (nyse_hm is None):
+        reason = "session_mismatch"
+    elif xnys_hm is None or nyse_hm is None:  # both agree: not a session
+        return _SessionDay(None, "ok", True, None, None, None)
+    elif xnys_hm[1] != nyse_hm[2]:
+        reason = "regular_close_mismatch"
+    elif xnys_hm[0] != nyse_hm[1]:
+        reason = "regular_open_mismatch"
+    elif not (0 <= nyse_hm[0] < nyse_hm[1] < nyse_hm[2] <= nyse_hm[3] <= _OVERNIGHT_OPEN_HM):
+        reason = "extended_bounds_out_of_order"
+    else:
+        bounds = (nyse_hm[0], xnys_hm[0], xnys_hm[1], nyse_hm[3])
+        return _SessionDay(bounds, "ok", True, xnys_hm, nyse_hm, None)
+    return _SessionDay(fallback, reason, True, xnys_hm, nyse_hm, error)
+
+
+@overload
+def classify_et_hm(hm: int, rth_close_hm: int = ...) -> MarketSession24x5: ...
+
+
+@overload
+def classify_et_hm(
+    hm: int,
+    rth_close_hm: int = ...,
+    *,
+    pre_open_hm: int = ...,
+    rth_open_hm: int = ...,
+    post_close_hm: int = ...,
+) -> SessionOrClosed: ...
+
+
+def classify_et_hm(
+    hm: int,
+    rth_close_hm: int = 960,
+    *,
+    pre_open_hm: int = _FALLBACK_BOUNDS_HM[0],
+    rth_open_hm: int = _FALLBACK_BOUNDS_HM[1],
+    post_close_hm: int = _FALLBACK_BOUNDS_HM[3],
+) -> SessionOrClosed:
+    """Classify ET minute-of-day into a US equity 24/5 session label.
+
+    The keyword bounds default to a regular day, for which the result is never CLOSED. A
+    post_close_hm before 20:00 (early-close day) makes the gap up to the overnight open CLOSED.
+    """
+    if pre_open_hm <= hm < rth_open_hm:
         return "PRE_MARKET"
-    if 570 <= hm < rth_close_hm:
+    if rth_open_hm <= hm < rth_close_hm:
         return "RTH"
-    if rth_close_hm <= hm < 1200:
+    if rth_close_hm <= hm < post_close_hm:
         return "AFTER_HOURS"
+    if post_close_hm <= hm < _OVERNIGHT_OPEN_HM:
+        return "CLOSED"
     return "OVERNIGHT"
 
 
 def classify_us_equity_session_et(ts_utc_ns: int) -> SessionOrClosed:
-    """Classify UTC ns timestamp into US 24/5 ET session or CLOSED via XNYS calendar."""
+    """Classify UTC ns timestamp into US 24/5 ET session or CLOSED via the upstream calendars."""
     dt_et = _et_dt(ts_utc_ns)
     ny_day, hm = dt_et.date(), dt_et.hour * 60 + dt_et.minute
-    is_open = lambda d: d.weekday() < 5 if (inf := _xnys_info(d)) is None else inf[0]  # noqa: E731
-    if hm >= 1200:
-        return "OVERNIGHT" if is_open(ny_day + timedelta(days=1)) else "CLOSED"
-    if not is_open(ny_day):
+    if hm >= _OVERNIGHT_OPEN_HM:
+        next_is_session = _session_day(ny_day + timedelta(days=1)).bounds_hm is not None
+        return "OVERNIGHT" if next_is_session else "CLOSED"
+    bounds = _session_day(ny_day).bounds_hm
+    if bounds is None:
         return "CLOSED"
-    inf = _xnys_info(ny_day)
-    return classify_et_hm(hm, inf[1] if inf else 960)
+    pre, opn, cls, post = bounds
+    return classify_et_hm(hm, cls, pre_open_hm=pre, rth_open_hm=opn, post_close_hm=post)
+
+
+@dataclass(frozen=True, slots=True)
+class UsEquitySessionBoundsET:
+    """Session boundaries of one trading day as America/New_York datetimes."""
+
+    pre_open: datetime
+    regular_open: datetime
+    regular_close: datetime
+    post_close: datetime
+    source: Literal["upstream", "fallback"]
+
+
+def _ny_date(day: date) -> date:
+    if isinstance(day, datetime):
+        return (day.astimezone(_NY_TZ) if day.tzinfo else day).date()
+    return day
+
+
+def us_equity_session_bounds_et(day: date) -> UsEquitySessionBoundsET | None:
+    """Return the session boundaries the classifier uses for `day`, or None for a non-session day.
+
+    Pure (no broker call, no I/O), so the supervisor can compare it with the broker's calendar.
+    `source` is "fallback" when the upstream bounds could not be used for the day;
+    session_calendar_consistency(day) gives the reason.
+    """
+    ny_day = _ny_date(day)
+    rec = _session_day(ny_day)
+    if rec.bounds_hm is None:
+        return None
+    pre, opn, cls, post = (
+        datetime(ny_day.year, ny_day.month, ny_day.day, hm // 60, hm % 60, tzinfo=_NY_TZ)
+        for hm in rec.bounds_hm
+    )
+    return UsEquitySessionBoundsET(
+        pre, opn, cls, post, "upstream" if rec.reason == "ok" else "fallback"
+    )
+
+
+def session_calendar_consistency(day: date) -> dict[str, Any]:
+    """Report how the two upstream calendars compare for `day`; for the supervisor to log.
+
+    `consistent` is True when both calendars cover the day and agree on session, regular open and
+    regular close. Otherwise the classifier uses the pre-upstream bounds and `reason` says why;
+    `source == "fallback"` with `exchange_calendars_xnys.in_range` True is the state to alert on.
+    No broker call, no I/O, no logging. When the last pandas_market_calendars load failed, this
+    check tries the load again (one attempt per call), and a load that now works gives every day
+    its upstream bounds back.
+    """
+    ny_day = _ny_date(day)
+    rec = _session_day(ny_day)
+    if rec.reason == _NYSE_LOAD_FAILED:
+        rec = _session_day.__wrapped__(ny_day)  # bypass the day's remembered failure
+    xnys, nyse = rec.xnys_hm, rec.nyse_hm
+    nyse_known = rec.xnys_in_range and rec.nyse_error is None
+    return {
+        "schema_version": "tier0.session-calendar-consistency.v1",
+        "day": ny_day.isoformat(),
+        "consistent": rec.reason == "ok",
+        "reason": rec.reason,
+        "source": "upstream" if rec.reason == "ok" else "fallback",
+        "is_session": rec.bounds_hm is not None,
+        "bounds_hm": list(rec.bounds_hm) if rec.bounds_hm is not None else None,
+        "exchange_calendars_xnys": {
+            "in_range": rec.xnys_in_range,
+            "is_session": (xnys is not None) if rec.xnys_in_range else None,
+            "regular_open_hm": xnys[0] if xnys else None,
+            "regular_close_hm": xnys[1] if xnys else None,
+        },
+        "pandas_market_calendars_nyse": {
+            "is_session": (nyse is not None) if nyse_known else None,
+            "pre_open_hm": nyse[0] if nyse else None,
+            "regular_open_hm": nyse[1] if nyse else None,
+            "regular_close_hm": nyse[2] if nyse else None,
+            "post_close_hm": nyse[3] if nyse else None,
+            "error": rec.nyse_error,
+        },
+    }
 
 
 SIP_23X5_CUTOVER_DATE: date = date(2026, 12, 6)
@@ -478,8 +786,9 @@ def compute_progressive_trailing_stop(
     cost_bps_per_side: Decimal = Decimal("4.0"),
     natr_pct: Decimal = _ZERO,
     initial_stop: Decimal | None = None,
+    breakeven_trigger_override: Decimal | None = None,
 ) -> tuple[Decimal, int, Decimal]:
-    """4-tier progressive lossless trailing (Tier 1 BE+fee, Tier 2 +1R, Tier 3 +2R, Tier 4 +3R)."""
+    """4-tier progressive lossless trailing (Tier 1 BE+fee/+0.5R, +1R, +2R, +3R)."""
     prof = profile or (get_session_protection_profile(session) if session is not None else None)
     if prof is None or side not in ("LONG", "SHORT"):
         raise ValueError(f"Invalid profile={prof!r} or side={side!r}")
@@ -496,7 +805,12 @@ def compute_progressive_trailing_stop(
     base_trail = min(cap, max(prof.min_trail_pct, natr * prof.natr_trail_mult))
     eff_trail, tier = base_trail, 0
     fav_gain = (fav_ - entry) if is_l else (entry - fav_)
-    if fav_gain / entry >= prof.breakeven_trigger_pct:
+    eff_be_trigger = (
+        min(prof.breakeven_trigger_pct, max(_ZERO, Decimal(str(breakeven_trigger_override))))
+        if breakeven_trigger_override is not None
+        else prof.breakeven_trigger_pct
+    )
+    if fav_gain / entry >= eff_be_trigger:
         tier = 1
         fee_buf = (cost_bps * Decimal("2") + Decimal("2")) / _BPS_DIV
         raw_be = max(_rk.TICK_SUB_DOLLAR, entry * (_ONE + fee_buf if is_l else _ONE - fee_buf))
@@ -505,6 +819,12 @@ def compute_progressive_trailing_stop(
         init_s = Decimal(str(initial_stop)) if initial_stop else hard
         leg_risk = max(_rk.tick_size_for(entry), abs(entry - init_s))
         r_mult = fav_gain / leg_risk
+        if breakeven_trigger_override is not None and r_mult >= Decimal("0.5"):
+            lk05 = (
+                entry + Decimal("0.20") * leg_risk if is_l else entry - Decimal("0.20") * leg_risk
+            )
+            if behind(lk05_s := q_stop(max(_rk.TICK_SUB_DOLLAR, lk05)), fav_):
+                cand = better(cand, lk05_s)
         for r_thr, lock_k, mult, flr in (
             (Decimal("3"), Decimal("2.35"), Decimal("0.25"), Decimal("0.0010")),
             (Decimal("2"), Decimal("1.35"), Decimal("0.40"), Decimal("0.0012")),
@@ -526,6 +846,190 @@ def compute_progressive_trailing_stop(
 def compute_dynamic_trailing_stop(**kw: Any) -> Decimal:
     """Monotonic Rule-612 trailing stop returning the new stop price."""
     return compute_progressive_trailing_stop(**kw)[0]
+
+
+_PCT_Q6 = Decimal("0.000001")
+_ARCHETYPE_TRAIL_MULTS: dict[str, Decimal] = {
+    "PARABOLIC_TOP": Decimal("0.20"),
+    "PARABOLIC_PEAK_REVERSAL": Decimal("0.20"),
+    "PEAK_REVERSAL": Decimal("0.20"),
+    "LOSSLESS_TIGHT_SCALP": Decimal("0.20"),
+    "CRASH_ALIGNMENT": Decimal("0.22"),
+    "CRASH_INVERSE_HEDGE": Decimal("0.22"),
+    "CRASH_HEDGE_INVERSE": Decimal("0.22"),
+    "EXTREME_REVERSAL": Decimal("0.22"),
+    "EXHAUSTION_HAMMER": Decimal("0.25"),
+    "VCP_COIL": Decimal("0.25"),
+    "PREMARKET_EARLY_IGNITION": Decimal("0.28"),
+    "TECHNICAL_BREAKOUT_LEADER": Decimal("0.28"),
+    "EARLY_EP_MOMENTUM_BURST": Decimal("0.30"),
+    "EP_MOMENTUM_BURST": Decimal("0.30"),
+    "SUDDEN_VOLUME_SURGE": Decimal("0.30"),
+    "EXTREME_MOVER_WATCH": Decimal("0.30"),
+    "HIDDEN_VOL_ACCUM": Decimal("0.32"),
+    "DARKPOOL_ACCUMULATION": Decimal("0.32"),
+    "VCP_BREAKOUT": Decimal("0.35"),
+    "VCP_STAGE2_BREAKOUT": Decimal("0.35"),
+    "PEAD_DRIFT": Decimal("0.35"),
+}
+_SESSION_NOISE_BPS: dict[SessionOrClosed, Decimal] = {
+    "RTH": Decimal("0"),
+    "PRE_MARKET": Decimal("5"),
+    "AFTER_HOURS": Decimal("5"),
+    "OVERNIGHT": Decimal("10"),
+    "CLOSED": Decimal("10"),
+}
+_SESSION_EXECUTION_MECHANISM: dict[SessionOrClosed, tuple[str, str]] = {
+    "RTH": ("NATIVE_BROKER_STOP_MARKET_RATCHET", "STOP_MARKET_REPLACE_RATCHET"),
+    "PRE_MARKET": ("SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT", "LIMIT_EXTENDED_HOURS_COLLARED"),
+    "AFTER_HOURS": ("SYNTHETIC_TICK_SUPERVISED_COLLARED_LIMIT", "LIMIT_EXTENDED_HOURS_COLLARED"),
+    "OVERNIGHT": ("SYNTHETIC_BOATS_COLLARED_LIMIT", "LIMIT_OVERNIGHT_COLLARED"),
+    "CLOSED": ("SESSION_CLOSED_HOLD_GTC_STOP", "HOLD_RESTING_GTC_STOP"),
+}
+
+
+def _dec_nonneg(
+    value: Decimal | int | float | str, name: str, *, strict_pos: bool = False
+) -> Decimal:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric, got bool {value!r}")
+    dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    if not dec.is_finite() or (dec <= _ZERO if strict_pos else dec < _ZERO):
+        op = "> 0" if strict_pos else ">= 0"
+        raise ValueError(f"{name} must be finite and {op}, got {value!r}")
+    return dec
+
+
+def compute_non_noise_min_trail_spec(
+    *,
+    symbol: str,
+    entry_price: Decimal | int | float | str,
+    side: Side,
+    session: SessionOrClosed | str,
+    natr_pct: Decimal | int | float | str,
+    spread_bps: Decimal | int | float | str = Decimal("5"),
+    archetype: str = "EARLY_EP_MOMENTUM_BURST",
+    venue_profile: str = "ALPACA_PAPER_1000",
+    cost_bps_per_side: Decimal | int | float | str = Decimal("4.0"),
+    profile_override: SessionProtectionProfile | None = None,
+) -> dict[str, Any]:
+    """Compute exact Decimal per-symbol, per-situation 24/5 non-noise lossless trailing spec."""
+    sym = str(symbol).strip().upper()
+    if not sym:
+        raise ValueError("symbol must be non-empty")
+    if side not in ("LONG", "SHORT"):
+        raise ValueError(f"Unsupported side: {side!r}")
+    entry_d = _dec_nonneg(entry_price, "entry_price", strict_pos=True)
+    natr_d = _dec_nonneg(natr_pct, "natr_pct")
+    spread_d = _dec_nonneg(spread_bps, "spread_bps")
+    cost_d = _dec_nonneg(cost_bps_per_side, "cost_bps_per_side")
+
+    sched_key, sp_map = select_pooled_trailing_schedule(natr_d)
+    prof = (
+        profile_override
+        if profile_override is not None
+        else get_session_protection_profile(session, sp_map)
+    )
+    venue_prof = _resolve_venue(venue_profile)
+    venue_handle = build_venue_order_handle_spec(
+        venue_prof.venue_id, session=prof.session, trailing_schedule=sched_key
+    )
+    cap, initial_stop = _hard_stop(entry_d, side, prof)
+    raw_risk_pct = abs(entry_d - initial_stop) / entry_d
+    initial_risk_pct = raw_risk_pct.quantize(_PCT_Q6, rounding=ROUND_CEILING)
+
+    rule612_tick = _rk.tick_size_for(entry_d)
+    raw_tick_pct = rule612_tick / entry_d
+    rule612_tick_pct = raw_tick_pct.quantize(_PCT_Q6, rounding=ROUND_CEILING)
+    two_tick_pct = Decimal("2") * raw_tick_pct
+
+    session_noise_bps = _SESSION_NOISE_BPS[prof.session]
+    fee_and_spread_noise_floor = (
+        (cost_d * Decimal("2") + Decimal("2") + spread_d * Decimal("1.5") + session_noise_bps)
+        / _BPS_DIV
+    ).quantize(_PCT_Q6, rounding=ROUND_CEILING)
+    arch_key = str(archetype).strip().upper() or "EARLY_EP_MOMENTUM_BURST"
+    situation_mult = _ARCHETYPE_TRAIL_MULTS.get(arch_key, Decimal("0.30"))
+    raw_trail = max(fee_and_spread_noise_floor, situation_mult * natr_d, two_tick_pct)
+    non_noise_min_trail_pct = min(cap, raw_trail.quantize(_PCT_Q6, rounding=ROUND_CEILING))
+    fast_sell_non_noise_reversal_pct = non_noise_min_trail_pct
+    ultra_liquid_tier = (
+        entry_d >= Decimal("10") and spread_d <= Decimal("6") and natr_d <= Decimal("0.015")
+    )
+    be_fee_buf = (cost_d * Decimal("2") + Decimal("2")) / _BPS_DIV
+    adaptive_be_raw = max(
+        be_fee_buf + two_tick_pct, non_noise_min_trail_pct, Decimal("2.5") * natr_d
+    )
+    adaptive_breakeven_trigger_pct = min(
+        prof.breakeven_trigger_pct,
+        adaptive_be_raw.quantize(_PCT_Q6, rounding=ROUND_CEILING),
+    )
+
+    peak_climax_r_mult = Decimal("2.5")
+    peak_climax_reverse_trigger_pct = (peak_climax_r_mult * raw_risk_pct).quantize(
+        _PCT_Q6, rounding=ROUND_CEILING
+    )
+    reverse_side: Side = "SHORT" if side == "LONG" else "LONG"
+    if side == "LONG":
+        reverse_leg_routing = (
+            "INVERSE_HEDGE_SOXS_SQQQ"
+            if prof.session == "OVERNIGHT" and venue_prof.broker == "ALPACA"
+            else "DIRECT_SHORT_ETB_OR_INVERSE_HEDGE_SOXS_SQQQ"
+        )
+    else:
+        reverse_leg_routing = "DIRECT_LONG_REVERSAL"
+
+    execution_mechanism, broker_exit_order = _SESSION_EXECUTION_MECHANISM[prof.session]
+    overnight_routing_venue = "IBKR_PAPER_4002" if side == "SHORT" else "ALPACA_PAPER_1000"
+    rapid_reentry_policy: dict[str, Any] = {
+        "reentry_cooldown_secs": 60,
+        "rpm_budget_available": int(venue_handle["entry_modify_rpm_budget"]),
+        "max_rpm": int(venue_handle["max_rpm"]),
+        "exit_reserve_rpm": int(venue_handle["exit_reserve_rpm"]),
+        "trailing_modify_cadence_secs": float(venue_handle["trailing_modify_cadence_secs"]),
+        "reentry_max_attempts_per_session": 3,
+        "exit_reserve_protected": True,
+    }
+    return {
+        "schema_version": "tier0.non-noise-min-trail.v1",
+        "symbol": sym,
+        "side": side,
+        "entry_price": entry_d,
+        "session": prof.session,
+        "archetype": arch_key,
+        "venue_profile": venue_prof.venue_id,
+        "trailing_schedule": sched_key,
+        "natr_pct": natr_d,
+        "spread_bps": spread_d,
+        "initial_max_loss_pct": cap,
+        "initial_stop_price": initial_stop,
+        "initial_risk_pct": initial_risk_pct,
+        "fee_and_spread_noise_floor": fee_and_spread_noise_floor,
+        "rule612_tick_pct": rule612_tick_pct,
+        "situation_mult": situation_mult,
+        "non_noise_min_trail_pct": non_noise_min_trail_pct,
+        "fast_sell_non_noise_reversal_pct": fast_sell_non_noise_reversal_pct,
+        "ultra_liquid_tier": ultra_liquid_tier,
+        "adaptive_breakeven_trigger_pct": adaptive_breakeven_trigger_pct,
+        "gain_protect_step_pct": non_noise_min_trail_pct,
+        "peak_climax_r_multiple": peak_climax_r_mult,
+        "peak_climax_reverse_trigger_pct": peak_climax_reverse_trigger_pct,
+        "peak_climax_pullback_trigger_pct": non_noise_min_trail_pct,
+        "auto_reverse_policy": "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE",
+        "reverse_side": reverse_side,
+        "reverse_leg_routing": reverse_leg_routing,
+        "execution_mechanism": execution_mechanism,
+        "order_type": prof.order_mode,
+        "broker_exit_order": broker_exit_order,
+        "collar_bps": prof.limit_collar_bps,
+        "limit_collar_pct": prof.limit_collar_pct,
+        "extended_hours": bool(prof.outside_rth),
+        "overnight_routing_venue": overnight_routing_venue,
+        "rapid_reentry_policy": rapid_reentry_policy,
+        "paper_only": venue_prof.environment == "PAPER",
+        "live_execution_enabled": venue_prof.live_execution_enabled,
+        "executable_now": bool(venue_handle["executable_now"]),
+    }
 
 
 def _to_increment(px: Decimal, inc: Decimal, *, up: bool) -> Decimal:
@@ -585,6 +1089,8 @@ class SignalExecutionConfig(StrategyConfig):
         reentry_cooldown_secs: int = 60,
         max_reentries: int | None = None,
         fixed_qty: int | None = None,
+        enable_adaptive_lossless_be: bool = True,
+        spread_bps: Decimal = Decimal("5.0"),
     ) -> None:
         del strategy_id, order_id_tag
         super().__init__()
@@ -604,6 +1110,8 @@ class SignalExecutionConfig(StrategyConfig):
             None if max_reentries is None else _chk_n(max_reentries, "max_reentries", 0)
         )
         self.fixed_qty = None if fixed_qty is None else _chk_n(fixed_qty, "fixed_qty", 1)
+        self.enable_adaptive_lossless_be = bool(enable_adaptive_lossless_be)
+        self.spread_bps = _dec_nonneg(spread_bps, "spread_bps")
 
 
 class SignalExecutionStrategy(Strategy):
@@ -752,6 +1260,27 @@ class SignalExecutionStrategy(Strategy):
         self.submit_order(ord_)
         return True
 
+    def _adaptive_trail_spec(
+        self,
+        iid: nm.InstrumentId,
+        entry: Decimal,
+        side: Side,
+        sess: SessionOrClosed,
+        natr: Decimal,
+        prof: SessionProtectionProfile,
+    ) -> dict[str, Any]:
+        return compute_non_noise_min_trail_spec(
+            symbol=str(iid.symbol),
+            entry_price=entry,
+            side=side,
+            session=sess,
+            natr_pct=natr,
+            spread_bps=self.cfg.spread_bps,
+            venue_profile=self.cfg.venue_profile,
+            cost_bps_per_side=self.cfg.cost_bps_per_side,
+            profile_override=prof,
+        )
+
     def _replace_stop(self, pos: Any, sess: SessionOrClosed, ts_ns: int, *, trailing: bool) -> None:
         if self._closing:
             return
@@ -768,6 +1297,14 @@ class SignalExecutionStrategy(Strategy):
         atr_dec = Decimal(str(self._atr.value)) if self._atr.initialized else _ZERO
         natr = max(_ZERO, atr_dec / ref_px)
         if trailing and self._fav_ext is not None:
+            tspec = (
+                self._adaptive_trail_spec(iid, entry, side, sess, natr, prof)
+                if self.cfg.enable_adaptive_lossless_be
+                else None
+            )
+            eff_be_ovr: Decimal | None = (
+                tspec["adaptive_breakeven_trigger_pct"] if tspec is not None else None
+            )
             spx, tier, _ = compute_progressive_trailing_stop(
                 entry_price=entry,
                 side=side,
@@ -777,6 +1314,7 @@ class SignalExecutionStrategy(Strategy):
                 cost_bps_per_side=self.cfg.cost_bps_per_side,
                 natr_pct=natr,
                 initial_stop=self._init_stop_px,
+                breakeven_trigger_override=eff_be_ovr,
             )
             self.max_lock_tier = max(self.max_lock_tier, tier)
         spx = _to_increment(spx, self.price_increment, up=is_l)
@@ -907,7 +1445,11 @@ class SignalExecutionStrategy(Strategy):
             dt = _et_dt(int(bar.ts_event))
             vw = float(self._vwap.value) if self._vwap.initialized else float(bar.close)
             cs = (float(x) for x in (bar.open, bar.high, bar.low, bar.close))
-            step_rth_5m_bar(self._rth5, dt.date(), dt.hour * 60 + dt.minute, *cs, vw)
+            inf = _xnys_info(dt.date())
+            rth_close = (inf[1] if inf[0] else 0) if inf is not None else 960
+            step_rth_5m_bar(
+                self._rth5, dt.date(), dt.hour * 60 + dt.minute, *cs, vw, rth_close_hm=rth_close
+            )
             return
         if bt != self.bar_type:
             return
@@ -938,8 +1480,17 @@ class SignalExecutionStrategy(Strategy):
         is_l, entry = pos.is_long, Decimal(str(pos.avg_px_open))
         ex_px = Decimal(str(bar.high)) if is_l else Decimal(str(bar.low))
         fav = self._fav_ext = (max if is_l else min)(self._fav_ext or entry, ex_px)
-        be_hit = ((fav - entry) if is_l else (entry - fav)) / entry >= prof.breakeven_trigger_pct
-        if (sess != "CLOSED" and self._stop_session not in (None, sess)) or (be_hit and stops):
+        eff_be_trig = prof.breakeven_trigger_pct
+        if self.cfg.enable_adaptive_lossless_be and sess != "CLOSED":
+            atr_dec = Decimal(str(self._atr.value)) if self._atr.initialized else _ZERO
+            natr_bar = max(_ZERO, atr_dec / cl)
+            eff_be_trig = self._adaptive_trail_spec(
+                iid, entry, "LONG" if is_l else "SHORT", sess, natr_bar, prof
+            )["adaptive_breakeven_trigger_pct"]
+        be_hit = ((fav - entry) if is_l else (entry - fav)) / entry >= eff_be_trig
+        if sess == "CLOSED":
+            return
+        if self._stop_session not in (None, sess) or (be_hit and stops):
             if self._stop_session not in (None, sess):
                 self.session_transitions += 1
             self._replace_stop(pos, sess, ts, trailing=be_hit)
@@ -956,6 +1507,21 @@ class SignalExecutionStrategy(Strategy):
             prof = get_session_protection_profile(sess, self.session_protection)
             sd: Side = "LONG" if pos.is_long else "SHORT"
             _, self._init_stop_px = _hard_stop(self._fav_ext, sd, prof)
+            self._replace_stop(pos, sess, ts, trailing=False)
+
+    def on_position_changed(self, event: nm.PositionChanged) -> None:
+        ts = int(event.ts_event)
+        if self._halt_triggered or self._closing:
+            self._flatten(event.instrument_id, self._sess_prof(ts)[0])
+            return
+        self._sync_session(ts, event.instrument_id)
+        if pos := self._open_pos(event.instrument_id):
+            sess = self._sess_prof(ts)[0]
+            prof = get_session_protection_profile(sess, self.session_protection)
+            entry = Decimal(str(pos.avg_px_open))
+            sd: Side = "LONG" if pos.is_long else "SHORT"
+            self._fav_ext = (max if pos.is_long else min)(self._fav_ext or entry, entry)
+            _, self._init_stop_px = _hard_stop(entry, sd, prof)
             self._replace_stop(pos, sess, ts, trailing=False)
 
     def on_position_closed(self, event: nm.PositionClosed) -> None:
@@ -1050,6 +1616,7 @@ def run_nautilus_signal_backtest(
             engine.add_actor(MarketRegimeActor(MarketRegimeActorConfig(bar_types=ex_bt)))
         opt_keys = (
             "enable_24x5_trailing",
+            "session_protection_24x5",
             "reentry_cooldown_secs",
             "max_reentries",
             "auto_reverse",
@@ -1058,6 +1625,8 @@ def run_nautilus_signal_backtest(
             "semi_auto_confirmed",
             "shortable",
             "enable_native_5m_bars",
+            "enable_adaptive_lossless_be",
+            "spread_bps",
         )
         skw = {k: o[k] for k in opt_keys if k in o}
         cfg = SignalExecutionConfig(

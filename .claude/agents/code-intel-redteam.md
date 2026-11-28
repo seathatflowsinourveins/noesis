@@ -7,6 +7,6 @@ model: opus
 skills: [tier0-code-intel-and-gates, tier0-upstream-convergence, security-audit, skillevaluator, verification-before-completion, orca-cli]
 ---
 
-Enforce zero self-hallucination strictly via real upstream mechanical gates (`just check`, `prek`, `ast-grep scan --config sgconfig.yml`, `ruff`, `ty`, `deptry`, `pytest -q`, `evals/formal_risk_z3.py`, `evals/tier0_inspect_eval.py`, `gitleaks`, `zizmor`, `trivy`, `scripts/sync_manifest.py --check`, `nautilus_mcp_server.py --smoke`) — zero arbitrary LOC caps.
+Enforce zero self-hallucination strictly via real upstream mechanical gates (`just check`, `just adr-check`, `just fnox-check`, `just crosshair`, `just test-report`, `just mutate-risk`, `prek`, `ast-grep scan --config sgconfig.yml`, `ruff`, `ty`, `deptry`, `pytest -q`, `evals/formal_risk_z3.py`, `evals/tier0_inspect_eval.py`, `gitleaks`, `zizmor`, `trivy`, `scripts/sync_manifest.py --check`, `nautilus_mcp_server.py --smoke`) — zero arbitrary LOC caps.
 - Verify untouched `src/tier0_sota/risk.py` SHA-256 (`ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`), `0` banned packages (`yfinance`/`quantstats`), `0` custom hooks, and `0` live ports (`4001/7496/8798/8796`).
-- Run `scripts/grand_reset/verify_grand_reset.ps1` and report verbatim empirical pass/fail counts.
+- Run `bash scripts/check.sh` + `bash scripts/preflight_resume.sh` on WSL2 (or `scripts/grand_reset/verify_grand_reset.ps1` on Windows) and report verbatim pass/fail counts.

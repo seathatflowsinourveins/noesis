@@ -177,3 +177,24 @@ severity: error
 message: Polling while-True/while-1 sleep loops are prohibited inside src/tier0_sota/; use event-driven upstreams.
 rule: { all: [{ kind: while_statement }, { has: { field: condition, regex: '^\(?\s*(?:True|1|1\s*==\s*1|True\s+is\s+True)\s*\)?$' } }, { has: { kind: call, regex: '(?:^|\.)sleep\s*\(', stopBy: end } }] }
 files: [src/tier0_sota/**/*.py]
+---
+# Owner rule 2026-11-27 ("Upstream UIs + config"), extended 2026-11-27 by the dashboards PR:
+# pages and figures come from the upstream library's own report or plot function, written as-is;
+# nothing is drawn or composed here (Pine scripts are the TradingView lane's named exception).
+id: no-handbuilt-plotly-chart
+language: python
+severity: error
+message: Hand-built figure, page or table rendering is prohibited (Plotly / matplotlib.pyplot figure code, figure stitching, DataFrame or Styler to_html); call the upstream library's own report or plot function (Nautilus create_tearsheet, ml4t-diagnostic generate_backtest_tearsheet / FeatureImportanceDashboard, skfolio plot_*, FINOS/OpenBB/Grafana) and write its output as-is.
+rule:
+  any:
+    - { kind: import_statement, regex: '\bplotly\b|\bmatplotlib\.pyplot\b' }
+    - { kind: import_from_statement, regex: '^from\s+(?:plotly\b|matplotlib\.pyplot\b|ml4t\.diagnostic\.visualization\.core\s+import\s+.*\bgo\b|ml4t\.diagnostic\.visualization\.report_generation\s+import\s+.*\bcombine_figures_to_html\b)|^from\s+matplotlib\s+import\s+[^#]*\bpyplot\b' }
+    - all: [{ kind: call, regex: '(?:import_module|__import__)' }, { has: { kind: string_content, regex: '^(?:plotly(?:\..*)?|matplotlib\.pyplot)$', stopBy: end } }]
+    - { pattern: 'go.Figure($$$)' }
+    - { pattern: 'make_subplots($$$)' }
+    - { pattern: '$MOD.make_subplots($$$)' }
+    - { pattern: 'combine_figures_to_html($$$)' }
+    - { pattern: '$MOD.combine_figures_to_html($$$)' }
+    - { pattern: '$FIG.add_trace($$$)' }
+    - { pattern: '$FRAME.to_html($$$)' }
+files: [src/**/*.py, scripts/**/*.py]

@@ -5,6 +5,50 @@
     "AGENTS.md"
   ],
   "plugin": [],
+  "agent": {
+    "tier0-grand-central": {
+      "description": "Grand Central orchestrator for Z:\\noesis 4 compounding harness lanes and upstream MCPs.",
+      "mode": "primary",
+      "prompt": "Follow canonical AGENTS.md across sim-backtest, paper, half-auto-tv, and live lanes using codebase-memory, xerj, nautilus-engine, and edgartools MCPs. Preserve immutable src/tier0_sota/risk.py SHA-256, zero custom hooks, zero live broker ports (:4001/:7496/:8798/:8796), and live_execution_enabled = False."
+    },
+    "pit-data-engineer": {
+      "description": "Causal PIT (<= 2026-10-15) Polars, DuckDB, Pandera, XNYS & EDGAR specialist for sim-backtest & paper lanes.",
+      "mode": "subagent",
+      "prompt": "Follow canonical AGENTS.md for causal pre-wall PIT (<= 2026-10-15) pipelines in src/tier0_sota/discovery.py using Polars, DuckDB, Pandera, exchange_calendars, edgartools, sqlglot, and fredapi. Keep src/tier0_sota/risk.py untouched, zero live broker ports, and live_execution_enabled = False."
+    },
+    "quant-falsifier": {
+      "description": "NautilusTrader v2, hftbacktest, Optuna & 6-gate falsification specialist for sim-backtest, paper & live lanes.",
+      "mode": "subagent",
+      "prompt": "Follow canonical AGENTS.md for NautilusTrader v2 + hftbacktest strategy compounding and 6-gate falsification (8/3 CPCV 21 OOS paths >= 16, cpcv_min_samples=48, DSR/PBO, SPA, HAC) logged to MLflow atop immutable src/tier0_sota/risk.py with live_execution_enabled = False."
+    },
+    "observability-operator": {
+      "description": "Upstream 15-portal OTel/Caddy/FINOS/OpenBB observability & half-auto-tv Pydantic v2 lane specialist.",
+      "mode": "subagent",
+      "prompt": "Follow canonical AGENTS.md for half-auto-tv (Pine v6, Pydantic v2 TvAlertV1) and hosted upstream portals (OTel, Caddy :8793 + Allure 3, Grafana, Prometheus, Alertmanager :9093, FINOS/OpenBB, DuckDB UI :4213). Zero custom HTML/JS shims, immutable risk.py, and live_execution_enabled = False."
+    },
+    "paper-gatekeeper": {
+      "description": "Mechanically read-only gatekeeper for paper & live promotion lanes and live-port isolation.",
+      "mode": "subagent",
+      "prompt": "Audit Z:\\noesis strictly in read-only plan mode with zero file mutations, zero shell calls, and zero live broker access (:4001/:7496/:8798/:8796). Verify live_execution_enabled = False, paper_only = True, immutable src/tier0_sota/risk.py SHA-256, and Z3 proofs.",
+      "permission": {
+        "edit": "deny",
+        "shell": "deny",
+        "subagent": "deny",
+        "nautilus-engine_stage_semi_auto_order_preset": "deny",
+        "xerj_xerj_memory_store": "deny"
+      }
+    },
+    "code-intel-redteam": {
+      "description": "Upstream code-intel, ast-grep, just/prek, ruff/ty/deptry/gitleaks/zizmor/trivy, Z3 & Inspect AI verifier.",
+      "mode": "subagent",
+      "prompt": "Follow canonical AGENTS.md and enforce zero self-invention mechanically via just check, just adr-check, just security, just crosshair, just test-report, ast-grep, Z3, and Inspect AI while verifying immutable risk.py SHA-256 and live_execution_enabled = False."
+    },
+    "memory-rag-evolution": {
+      "description": "AAIF AGENTS.md SSOT, XERJ (:9200), Zensical --strict (:8010) ADRs, sync_manifest & skills lock specialist.",
+      "mode": "subagent",
+      "prompt": "Follow canonical AGENTS.md to maintain living MADR 4.0 ADRs (zensical build --clean --strict), XERJ (:9200), codebase-memory, scripts/sync_manifest.py, and UPSTREAM_SKILLS_LOCK.json (46 skills) with immutable risk.py and live_execution_enabled = False."
+    }
+  },
   "mcp": {
     "codebase-memory": {
       "type": "local",
@@ -100,11 +144,6 @@
     },
     {
       "action": "shell",
-      "resource": "*api.alpaca.markets*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
       "resource": "*:4001*",
       "effect": "deny"
     },
@@ -126,7 +165,7 @@
     {
       "action": "edit",
       "resource": "src/tier0_sota/risk.py",
-      "effect": "deny"
+      "effect": "ask"
     }
   ]
 }

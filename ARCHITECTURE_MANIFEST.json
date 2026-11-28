@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 147,
+    "repository_files_count": 212,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -81,6 +81,7 @@
     ],
     "allowed_paper_venues": [
       "IBKR_PAPER_4002",
+      "ALPACA_PAPER_1000",
       "ALPACA_PAPER_200"
     ]
   },
@@ -97,7 +98,8 @@
       ".claude/settings.json",
       ".codex/config.toml",
       ".gemini/settings.json",
-      "opencode.json"
+      "opencode.json",
+      ".omp/mcp.json"
     ],
     "mcp_lanes": {
       "gate": ".claude/mcp-lanes/gate.mcp.json",
@@ -170,9 +172,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 25,
+    "total_adrs": 28,
     "counts_by_status": {
-      "accepted": 21,
+      "accepted": 24,
       "superseded": 4
     },
     "supersession_edges": [
@@ -208,13 +210,18 @@
         "ADR-0017",
         "ADR-0022",
         "ADR-0023",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026"
       ],
       "L1": [
         "ADR-0001",
         "ADR-0003",
         "ADR-0010",
-        "ADR-0013"
+        "ADR-0013",
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L10": [
         "ADR-0001",
@@ -222,38 +229,55 @@
         "ADR-0010",
         "ADR-0011",
         "ADR-0017",
-        "ADR-0021"
+        "ADR-0021",
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L11": [
+        "ADR-0001",
         "ADR-0013",
-        "ADR-0018"
+        "ADR-0018",
+        "ADR-0028"
       ],
       "L12": [
+        "ADR-0001",
         "ADR-0014",
         "ADR-0015",
-        "ADR-0018"
+        "ADR-0018",
+        "ADR-0028"
       ],
       "L13": [
+        "ADR-0001",
         "ADR-0015",
         "ADR-0016",
-        "ADR-0018"
+        "ADR-0018",
+        "ADR-0028"
       ],
       "L14": [
+        "ADR-0001",
         "ADR-0017",
         "ADR-0018",
         "ADR-0020",
-        "ADR-0021"
+        "ADR-0021",
+        "ADR-0028"
       ],
       "L15": [
+        "ADR-0001",
+        "ADR-0005",
         "ADR-0016",
         "ADR-0018",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L2": [
         "ADR-0001",
         "ADR-0008",
         "ADR-0014",
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0028"
       ],
       "L3": [
         "ADR-0001",
@@ -263,7 +287,8 @@
         "ADR-0007",
         "ADR-0016",
         "ADR-0019",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0027"
       ],
       "L4": [
         "ADR-0001",
@@ -273,7 +298,8 @@
         "ADR-0013",
         "ADR-0014",
         "ADR-0019",
-        "ADR-0020"
+        "ADR-0020",
+        "ADR-0027"
       ],
       "L5": [
         "ADR-0001",
@@ -283,7 +309,9 @@
         "ADR-0016",
         "ADR-0019",
         "ADR-0020",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0028"
       ],
       "L6": [
         "ADR-0001",
@@ -294,7 +322,11 @@
         "ADR-0019",
         "ADR-0020",
         "ADR-0021",
-        "ADR-0024"
+        "ADR-0024",
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0027",
+        "ADR-0028"
       ],
       "L7": [
         "ADR-0001",
@@ -305,7 +337,9 @@
         "ADR-0020",
         "ADR-0023",
         "ADR-0024",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0028"
       ],
       "L8": [
         "ADR-0001",
@@ -322,24 +356,28 @@
         "ADR-0022",
         "ADR-0023",
         "ADR-0024",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0026",
+        "ADR-0027"
       ]
     },
-    "fitness_bound_accepted_ratio": "21/21",
+    "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "23f61ef5e5166690eb48c5bbfdb7f5e96159b34043955b199776c368f6e4c58f"
+    "corpus_sha256": "99a0b92ceb8b94be6d1963d4bc1a94ea130d36c9dd33476759f34f9b6bcad448"
   },
   "clean_sota_harness": {
     "ok": true,
     "zero_banned_in_uv_lock": true,
     "zero_winner_overlap_with_rejected": true,
+    "intra_layer_duplicate_winners": [],
+    "cross_layer_duplicate_winners": [],
     "zero_pre_commit_overlap": true,
     "spdx_firewall_count": 7,
-    "src_files_mapped_ratio": "13/13",
+    "src_files_mapped_ratio": "16/16",
     "zero_paper_winners_audit": {
       "ok": true,
-      "checked_default_packages": 45,
-      "imported_packages_count": 35,
+      "checked_default_packages": 50,
+      "imported_packages_count": 40,
       "cli_mcp_portal_mapped": [
         "ast-grep-cli",
         "dagster-webserver",
@@ -396,8 +434,10 @@
         "pandera",
         "pydantic",
         "exchange_calendars",
+        "pandas_market_calendars",
         "edgartools",
-        "fredapi"
+        "fredapi",
+        "sqlglot"
       ],
       "rejected_overlaps": [
         "pandas-datareader",
@@ -419,7 +459,9 @@
         "stumpy-dev/stumpy",
         "lightgbm",
         "catboost",
-        "shap"
+        "shap",
+        "skchange",
+        "shapiq"
       ],
       "rejected_overlaps": [
         "ta-lib",
@@ -451,7 +493,9 @@
         "src/tier0_sota/engine.py",
         "src/tier0_sota/risk.py",
         "pine/tier0_omni_sota_24x5.pine",
-        "pine/tier0_market_regime.pine"
+        "pine/tier0_sota_strategy_24x5.pine",
+        "pine/tier0_market_regime.pine",
+        "pine/tier0_darkpool_uv_buildup.pine"
       ]
     },
     "L4": {
@@ -463,7 +507,16 @@
       "rejected_overlaps": [
         "custom-rest-polling-loops",
         "raw-unfiltered-alpaca-mcp-server",
-        "nautilus-alpaca"
+        "alpaca-trade-api-legacy",
+        "pylivetrader",
+        "alpaca-backtrader-api",
+        "nautilus-alpaca",
+        "tradingview-screener",
+        "tvdatafeed",
+        "tradingview-scraper",
+        "tradingview-api",
+        "tradingview-pine-seeds",
+        "proprietary-tv-webhook-relays"
       ],
       "repo_artifacts": [
         "src/tier0_sota/live/scanner.py",
@@ -473,7 +526,8 @@
         "src/tier0_sota/tv/bridge.py",
         "src/tier0_sota/tv/tickets.py",
         "src/tier0_sota/tv/schema_v1.json",
-        "scripts/tv_console.ps1"
+        "scripts/tv_console.ps1",
+        "scripts/tv_console.sh"
       ]
     },
     "L5": {
@@ -483,7 +537,8 @@
         "ml4t-diagnostic",
         "arch",
         "statsmodels",
-        "clarabel"
+        "clarabel",
+        "mapie"
       ],
       "rejected_overlaps": [
         "pyportfolioopt",
@@ -507,11 +562,13 @@
         "zensical",
         "prometheus",
         "prometheus-client",
+        "alertmanager",
         "opentelemetry-sdk",
         "opentelemetry-exporter-otlp",
         "otel-collector-contrib",
         "grafana",
-        "caddy"
+        "caddy",
+        "allure-report"
       ],
       "rejected_overlaps": [
         "mkdocs",
@@ -520,7 +577,9 @@
         "clearml",
         "neptune",
         "prefect",
-        "custom-fastapi-html"
+        "custom-fastapi-html",
+        "reportportal",
+        "pytest-html"
       ],
       "repo_artifacts": [
         "src/tier0_sota/definitions.py",
@@ -534,10 +593,16 @@
         "docs/ARCHITECTURE_LAYER_MANIFEST.md",
         "docs/GRAND_RESET_DISK_Z_WSL_RUNBOOK.md",
         "docs/POST_RESTART_RESUME_PLAYBOOK.md",
+        "docs/TV_AUTOMATION_PLAYBOOK.md",
         "docker/compose.sota.yml",
         "docker/otel-collector-config.yaml",
         "docker/prometheus.yml",
+        "docker/prometheus_rules.yml",
+        "docker/alertmanager.yml",
         "docker/dagster.yaml",
+        "docker/workspace.yaml",
+        "docker/grafana/dashboards/tier0-workstation-telemetry.json",
+        "docker/grafana/dashboards/tier0-order-presets-momentum.json",
         "docs/adr/ADR-0001.md",
         "docs/adr/ADR-0002.md",
         "docs/adr/ADR-0003.md",
@@ -562,7 +627,10 @@
         "docs/adr/ADR-0022.md",
         "docs/adr/ADR-0023.md",
         "docs/adr/ADR-0024.md",
-        "docs/adr/ADR-0025.md"
+        "docs/adr/ADR-0025.md",
+        "docs/adr/ADR-0026.md",
+        "docs/adr/ADR-0027.md",
+        "docs/adr/ADR-0028.md"
       ]
     },
     "L7": {
@@ -576,13 +644,16 @@
         "pytest",
         "prek",
         "z3-solver",
+        "crosshair",
+        "mutmut",
         "deptry",
         "trivy",
         "syft",
         "shellcheck",
         "zizmor",
         "codeql",
-        "dependabot"
+        "dependabot",
+        "snyk/agent-scan"
       ],
       "rejected_overlaps": [
         "black",
@@ -593,7 +664,8 @@
         "pyright",
         "osv-scanner",
         "pre-commit",
-        "semgrep"
+        "semgrep",
+        "cosmic-ray"
       ],
       "repo_artifacts": [
         ".github/workflows/ci.yml",
@@ -610,6 +682,7 @@
         ".gitleaks.toml",
         ".pre-commit-config.yaml",
         "evals/formal_risk_z3.py",
+        "evals/symbolic_risk_crosshair.py",
         "scripts/sync_manifest.py",
         "scripts/check.ps1",
         "scripts/check.sh",
@@ -621,7 +694,10 @@
         "tests/test_architecture_manifest.py",
         "tests/test_grand_reset_kit.py",
         "tests/test_formal_and_evals.py",
-        "scripts/run_compounding_reflection.py"
+        "tests/test_starred_frontier_landscape.py",
+        "tests/test_stage4_drills.py",
+        "scripts/run_compounding_reflection.py",
+        "scripts/run_stage4_drills.py"
       ]
     },
     "L8": {
@@ -653,12 +729,15 @@
         "codebase-memory-mcp",
         "xerj",
         "mcp",
-        "edgartools"
+        "oh-my-pi",
+        "pi"
       ],
       "rejected_overlaps": [
         "third-party-agent-wrappers",
         "custom-mcp-launchers",
-        "self-built-agent-buses"
+        "self-built-agent-buses",
+        "cdp-tradingview-mcp",
+        "revanthpobala/pinescript-vscode-extension"
       ],
       "repo_artifacts": [
         "AGENTS.md",
@@ -699,6 +778,7 @@
       "name": "Institutional UI & Visual Analytics",
       "winners": [
         "finos-workspace",
+        "finos-workspace-plugins",
         "OpenBB",
         "perspective",
         "lightweight-charts",
@@ -715,7 +795,9 @@
         "dash",
         "gradio",
         "nicegui",
-        "custom-react-blotter"
+        "custom-react-blotter",
+        "tradingview/charting_library",
+        "louisnw01/lightweight-charts-python"
       ],
       "repo_artifacts": [
         "src/tier0_sota/live/performance.py",
@@ -744,9 +826,12 @@
     "lane_launcher": "scripts/launch_clean_lanes.ps1",
     "paper_farm": "scripts/run_live_paper_farm.ps1",
     "tv_console": "scripts/tv_console.ps1",
+    "tv_console_sh": "scripts/tv_console.sh",
     "mcp_server": "scripts/nautilus_mcp_server.py",
     "orca_account_failover": "scripts/orca_account_failover.py",
     "formal_risk_z3": "evals/formal_risk_z3.py",
+    "symbolic_risk_crosshair": "evals/symbolic_risk_crosshair.py",
+    "stage4_drills": "scripts/run_stage4_drills.py",
     "inspect_safety_eval": "evals/tier0_inspect_eval.py",
     "grand_reset_00": "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
     "grand_reset_01": "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
@@ -780,6 +865,13 @@
     ".claude/mcp-lanes/sim.mcp.json",
     ".claude/mcp-lanes/tv.mcp.json",
     ".claude/settings.json",
+    ".codex/agents/code-intel-redteam.toml",
+    ".codex/agents/memory-rag-evolution.toml",
+    ".codex/agents/observability-operator.toml",
+    ".codex/agents/paper-gatekeeper.toml",
+    ".codex/agents/pit-data-engineer.toml",
+    ".codex/agents/quant-falsifier.toml",
+    ".codex/agents/tier0-grand-central.toml",
     ".codex/config.toml",
     ".editorconfig",
     ".env.example",
@@ -788,6 +880,8 @@
     ".github/CODEOWNERS",
     ".github/dependabot.yml",
     ".github/pull_request_template.md",
+    ".github/trivy-license-fs.yaml",
+    ".github/trivy-license-rootfs.yaml",
     ".github/workflows/ci.yml",
     ".github/workflows/docs.yml",
     ".github/workflows/multi-model-sota.yml",
@@ -796,9 +890,18 @@
     ".gitignore",
     ".gitleaks.toml",
     ".mcp.json",
+    ".omp/agents/code-intel-redteam.md",
+    ".omp/agents/memory-rag-evolution.md",
+    ".omp/agents/observability-operator.md",
+    ".omp/agents/paper-gatekeeper.md",
+    ".omp/agents/pit-data-engineer.md",
+    ".omp/agents/quant-falsifier.md",
+    ".omp/agents/tier0-grand-central.md",
+    ".omp/mcp.json",
     ".opencode/commands/verify-tier0.md",
     ".pre-commit-config.yaml",
     ".python-version",
+    ".vscode/tasks.json",
     "AGENTS.md",
     "ARCHITECTURE_MANIFEST.json",
     "CLAUDE.md",
@@ -807,16 +910,30 @@
     "README.md",
     "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
     "UPSTREAM_SKILLS_LOCK.json",
+    "docker/Caddyfile",
     "docker/Dockerfile.research",
     "docker/Dockerfile.sandbox",
     "docker/Dockerfile.xerj",
+    "docker/alertmanager.yml",
+    "docker/compose.ibkr-paper.yml",
     "docker/compose.sota.yml",
     "docker/dagster.yaml",
+    "docker/duckdb-ui/paper-farm.conf",
+    "docker/grafana/dashboards/tier0-order-presets-momentum.json",
+    "docker/grafana/dashboards/tier0-sim-backtest-control-center.json",
     "docker/grafana/dashboards/tier0-sota-observability.json",
+    "docker/grafana/dashboards/tier0-workstation-telemetry.json",
     "docker/grafana/provisioning/dashboards/provider.yml",
     "docker/grafana/provisioning/datasources/prometheus.yml",
     "docker/otel-collector-config.yaml",
     "docker/prometheus.yml",
+    "docker/prometheus_rules.yml",
+    "docker/systemd/tier0-compounding-loop.service",
+    "docker/systemd/tier0-compounding-loop.timer",
+    "docker/systemd/tier0-paper-farm-execution.service",
+    "docker/systemd/tier0-workstation-sota-guard.service",
+    "docker/systemd/tier0-workstation-sota-guard.timer",
+    "docker/workspace.yaml",
     "docs/ARCHITECTURE_LAYER_MANIFEST.md",
     "docs/CLEAN_ECOSYSTEM_MANIFEST.md",
     "docs/COMPOUNDING_SELF_REFLECTION_LOOP.md",
@@ -848,25 +965,34 @@
     "docs/adr/ADR-0023.md",
     "docs/adr/ADR-0024.md",
     "docs/adr/ADR-0025.md",
+    "docs/adr/ADR-0026.md",
+    "docs/adr/ADR-0027.md",
+    "docs/adr/ADR-0028.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
     "evals/dspy_self_reflect.py",
     "evals/formal_risk_z3.py",
+    "evals/prewall_h109_multifeed_prereg.json",
+    "evals/symbolic_risk_crosshair.py",
     "evals/tier0_inspect_eval.py",
     "fnox.toml",
     "justfile",
     "mise.toml",
     "opencode.json",
     "orca.yaml",
+    "pine/tier0_darkpool_uv_buildup.pine",
     "pine/tier0_market_regime.pine",
     "pine/tier0_omni_sota_24x5.pine",
+    "pine/tier0_sota_strategy_24x5.pine",
     "pyproject.toml",
     "rules/zero_self_invention.yml",
     "scripts/bootstrap_env.ps1",
     "scripts/bootstrap_env.sh",
     "scripts/check.ps1",
     "scripts/check.sh",
+    "scripts/configure_paper_farm_ui.sh",
+    "scripts/generate_ml4t_and_shap_tearsheets.py",
     "scripts/grand_reset/00_clean_disk_z_and_agy_reset.ps1",
     "scripts/grand_reset/01_disk_z_and_wsl_setup.ps1",
     "scripts/grand_reset/01_wsl_bootstrap.sh",
@@ -876,21 +1002,31 @@
     "scripts/launch_clean_lanes.ps1",
     "scripts/nautilus_mcp_server.py",
     "scripts/orca_account_failover.py",
+    "scripts/paper_farm_loop_hidden.pyw",
     "scripts/preflight_resume.ps1",
     "scripts/preflight_resume.sh",
     "scripts/run_compounding_reflection.py",
+    "scripts/run_early_mover_compounding.py",
+    "scripts/run_h109_prewall_study.py",
     "scripts/run_live_paper_farm.ps1",
+    "scripts/run_nonstop_compounding_loop.py",
+    "scripts/run_sim_backtest_tearsheet_suite.py",
+    "scripts/run_stage4_drills.py",
     "scripts/setup_clean_ecosystem.ps1",
     "scripts/sync_manifest.py",
     "scripts/tv_console.ps1",
+    "scripts/tv_console.sh",
     "sgconfig.yml",
     "src/tier0_sota/__init__.py",
     "src/tier0_sota/definitions.py",
     "src/tier0_sota/discovery.py",
     "src/tier0_sota/engine.py",
     "src/tier0_sota/live/__init__.py",
+    "src/tier0_sota/live/execution.py",
+    "src/tier0_sota/live/merit.py",
     "src/tier0_sota/live/paper_farm.py",
     "src/tier0_sota/live/performance.py",
+    "src/tier0_sota/live/runner.py",
     "src/tier0_sota/live/scanner.py",
     "src/tier0_sota/research.py",
     "src/tier0_sota/risk.py",
@@ -898,13 +1034,27 @@
     "src/tier0_sota/tv/bridge.py",
     "src/tier0_sota/tv/schema_v1.json",
     "src/tier0_sota/tv/tickets.py",
+    "tests/alpaca_sim.py",
+    "tests/conftest.py",
+    "tests/test_alpaca_sim.py",
     "tests/test_architecture_manifest.py",
+    "tests/test_ast_grep_no_handbuilt_plotly_chart.py",
     "tests/test_core_engine.py",
     "tests/test_definitions.py",
+    "tests/test_early_mover_compounding.py",
+    "tests/test_extreme_mover_calibration.py",
     "tests/test_formal_and_evals.py",
     "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",
+    "tests/test_live_merit.py",
     "tests/test_mcp_server.py",
+    "tests/test_ml4t_shap_tearsheets.py",
+    "tests/test_nonstop_compounding_loop.py",
+    "tests/test_prewall_h109.py",
+    "tests/test_session_calendar.py",
+    "tests/test_sim_backtest_suite.py",
+    "tests/test_stage4_drills.py",
+    "tests/test_starred_frontier_landscape.py",
     "tests/test_tv_automation.py",
     "upstream-map.toml",
     "uv.lock",

@@ -32,7 +32,7 @@
 ### Upstream Infrastructure, Packaging & 4-Runtime MCP Parity
 
 - **PEP 735 Dependency Groups (`pyproject.toml` + `uv.lock`):** Core runtime dependencies (including `pydantic>=2.10.0`, `skfolio`, `clarabel` `Clarabel.rs`) separated cleanly from `[dependency-groups]` (`dev`, `research`, `evals` incl. `dspy`/`gepa`/`inspect-ai`, `portals`, `observability` incl. `prometheus-client`/`opentelemetry-exporter-otlp`, plus optional `data-versioning` for `dvc` excluded from `default-groups`); `0` `yfinance`, `0` `quantstats`, `0` `pre-commit` in `uv.lock`; 7-repo SPDX OSI firewall; `deptry .` reports `0` issues (`0` `DEP003`, `<= 3` optional-LLM `DEP002` ignores).
-- **Official Upstream Telemetry & Static Serving (Docker/WSL2):** Inline Python shims eliminated — `src/tier0_sota/live/performance.py` emits real `prometheus_client` and `opentelemetry-exporter-otlp` metrics to `otel/opentelemetry-collector-contrib:0.166.0` (`docker/otel-collector-config.yaml`, `:9464/metrics` & `:13133`), `prom/prometheus:v3.16.0`, `grafana/grafana:13.3.1`, and official upstream `caddy:2.11.9-alpine` serves tearsheets on `:8793` (zero `python -m http.server`).
+- **Official Upstream Telemetry & Static Serving (Docker/WSL2):** Inline Python shims eliminated — `src/tier0_sota/live/performance.py` emits real `prometheus_client` and `opentelemetry-exporter-otlp` metrics to `otel/opentelemetry-collector-contrib:0.166.0` (`docker/otel-collector-config.yaml`, `:9464/metrics` & `:13133`), `prom/prometheus:v3.16.0`, `grafana/grafana:13.3.2`, and official upstream `caddy:2.11.9-alpine` serves tearsheets on `:8793` (zero `python -m http.server`).
 - **4-Runtime Native `uv` MCP Parity (`hooks_zero = True`, [ADR-0025](adr/ADR-0025.md)):** All 5 repo configs (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`, `.gemini/settings.json`, `opencode.json`) wire the exact 4 vetted native `uv` MCP servers (`codebase-memory`, `xerj`, `nautilus-engine`, `edgartools`) with scoped `.claude/mcp-lanes/{sim,paper,tv,gate}.mcp.json` and `46/46` SHA-locked standalone skills in `.claude/skills/` (zero-copy AGY discovery via `.agents/skills.json` and `~/.gemini/config/skills.json` per [ADR-0022](adr/ADR-0022.md)).
 
 ---
@@ -50,7 +50,7 @@
 | 5 | Optuna Dashboard | `http://127.0.0.1:8080/` | `optuna-dashboard` (`tier0-sota-research`) |
 | 6 | Inspect AI View | `http://127.0.0.1:7575/` | `inspect view` (`tier0-sota-research`, 7/7 checks) |
 | 7 | Prometheus | `http://127.0.0.1:9090/` | `prom/prometheus:v3.16.0` |
-| 8 | Grafana | `http://127.0.0.1:3001/` | `grafana/grafana:13.3.1` |
+| 8 | Grafana | `http://127.0.0.1:3001/` | `grafana/grafana:13.3.2` |
 | 9 | OTel Collector Metrics | `http://127.0.0.1:9464/metrics` | `otel/opentelemetry-collector-contrib:0.166.0` |
 | 10 | Official Tearsheets | `http://127.0.0.1:8793/` | `caddy:2.11.9-alpine` file-server |
 | 11 | FINOS Workspace | `http://127.0.0.1:1420/` | `workspace-local` |

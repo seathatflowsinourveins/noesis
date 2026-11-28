@@ -12,6 +12,8 @@ banned_libraries = [
   "vollib",
   "abides",
   "tradingview_ta",
+  "tradingview_screener",
+  "tvdatafeed",
   "pandas_datareader",
   "talib",
 ]
@@ -27,6 +29,9 @@ banned_packages = [
   "py-vollib",
   "vollib",
   "tradingview-ta",
+  "tradingview-screener",
+  "tvdatafeed",
+  "tradingview-scraper",
   "pandas-datareader",
   "pyportfolioopt",
   "riskfolio-lib",
@@ -61,9 +66,23 @@ spdx_license_firewall = [
   { repo = "peernagy/LOBS5", license = "NOASSERTION", reason = "No root OSI LICENSE (all-rights-reserved) and commercial LOBSTER data dependency (use microsoft/MarS MIT)" },
   { repo = "PriorLabs/TabPFN", license = "Non-Commercial-Weights", reason = "Apache-2.0 code but non-commercial pretrained weights v2.5/v3 (use soda-inria/tabicl TabICLv2 BSD-3-Clause)" },
 ]
+tv_ecosystem_firewall = [
+  { repo = "tradingview/charting_library", license = "Proprietary-Commercial", reason = "Proprietary TradingView Advanced Charts license (non-OSI; examples repo MIT glue only); use tradingview/lightweight-charts Apache-2.0" },
+  { repo = "revanthpobala/pinescript-vscode-extension", license = "Modified-MIT-Non-OSI", reason = "Non-standard Modified MIT attribution license fails strict SPDX OSI gate; use official https://mcp.tradingview.com/mcp, strict MIT paulieb89/pinescript-mcp, or reference-only trugurpala/pinescriptv6" },
+  { repo = "folknor/pine-tools", license = "NOASSERTION", reason = "GitHub reports NOASSERTION license (fails strict SPDX OSI firewall) and unpublished on PyPI/npm; use official https://mcp.tradingview.com/mcp or strict MIT paulieb89/pinescript-mcp" },
+  { repo = "tradingview-pine-seeds/docs", license = "Platform-ToU-Deprecated", reason = "Suspended by TradingView for new repos and EOD daily-only; unsuitable for 24/5 intraday extreme movers" },
+  { repo = "brian-the-dev/python-tradingview-ta", license = "MIT", reason = "Unofficial TradingView scanner scraping violating ToU; use alpacahq/alpaca-py" },
+  { repo = "shner-elmo/TradingView-Screener", license = "MIT", reason = "Unofficial TradingView scanner API scraping violating ToU; use alpacahq/alpaca-py" },
+  { repo = "rongardF/tvdatafeed", license = "MIT", reason = "Unofficial TradingView WebSocket scraping violating ToU; use alpacahq/alpaca-py" },
+  { repo = "Mathieu2301/TradingView-API", license = "ISC", reason = "Undocumented TradingView WebSocket/page scraping violating ToU" },
+  { repo = "mnwato/tradingview-scraper", license = "MIT", reason = "Undocumented TradingView web scraping violating ToU" },
+  { repo = "atilaahmettaner/tradingview-mcp", license = "MIT", reason = "Unofficial TradingView MCP relying on banned CDP (:9223) or undocumented scraping" },
+  { repo = "louisnw01/lightweight-charts-python", license = "MIT", reason = "Desktop WebView/PyQt wrapper overlapping hosted L10 FINOS/OpenBB + tradingview/lightweight-charts v5" },
+  { repo = "proprietary-tv-webhook-relays", license = "Proprietary-SaaS", reason = "External cloud relays (TradersPost/3Commas/CrossTrade/PickMyTrade/Autoview) violate SPDX OSI, loopback-only & semi_auto_confirmed=false" },
+]
 forbidden_live_ports = [4001, 7496, 8798, 8796]
 forbidden_live_hosts = ["api.alpaca.markets"]
-allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_200"]
+allowed_paper_venues = ["IBKR_PAPER_4002", "ALPACA_PAPER_1000", "ALPACA_PAPER_200"]
 # Zero Self-Invention is strictly enforced via real upstream gates only:
 # ast-grep rules, uv.lock single-winner + banned-package & SPDX OSI firewalls,
 # deptry, ruff, ty, prek, zizmor, trivy, gitleaks, Z3 SMT proofs, exact risk.py SHA-256,
@@ -103,12 +122,12 @@ rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools", "custom-env-shell
 
 [layers.L1]
 name = "Data, Schema Validation, Calendars & Causal PIT"
-winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "edgartools", "fredapi"]
+winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "pandas_market_calendars", "edgartools", "fredapi", "sqlglot"]
 rejected_overlaps = ["pandas-datareader", "yfinance", "clickhouse-local-server"]
 
 [layers.L2]
 name = "Features, Streaming Drift, Regime Change, Explainability & ML"
-winners = ["ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap"]
+winners = ["ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap", "skchange", "shapiq"]
 rejected_overlaps = ["ta-lib", "sktime", "fingpt", "finrl", "rd-agent"]
 
 [layers.L3]
@@ -119,22 +138,22 @@ rejected_overlaps = ["backtrader", "backtesting", "zipline-reloaded", "vectorbt"
 [layers.L4]
 name = "Paper Broker Adapters & Market Data Feeds"
 winners = ["alpaca-py", "tradermonty/claude-trading-skills"]
-rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "nautilus-alpaca"]
+rejected_overlaps = ["custom-rest-polling-loops", "raw-unfiltered-alpaca-mcp-server", "alpaca-trade-api-legacy", "pylivetrader", "alpaca-backtrader-api", "nautilus-alpaca", "tradingview-screener", "tvdatafeed", "tradingview-scraper", "tradingview-api", "tradingview-pine-seeds", "proprietary-tv-webhook-relays"]
 
 [layers.L5]
 name = "Statistical Falsification & Portfolio Construction"
-winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "clarabel"]
+winners = ["skfolio", "ml4t-diagnostic", "arch", "statsmodels", "clarabel", "mapie"]
 rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "mlfinlab", "quantstats"]
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy"]
-rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "alertmanager", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy", "allure-report"]
+rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html", "reportportal", "pytest-html"]
 
 [layers.L7]
 name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
-rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner", "pre-commit", "semgrep"]
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "crosshair", "mutmut", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot", "snyk/agent-scan"]
+rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner", "pre-commit", "semgrep", "cosmic-ray"]
 
 [layers.L8]
 name = "Agent Evals, Sandboxes & Prompt Optimization"
@@ -143,14 +162,16 @@ rejected_overlaps = ["deepeval"]
 
 [layers.L9]
 name = "Multi-Model Harness, Code Graph, OmniRoute & Upstream MCPs"
-winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp", "edgartools"]
-rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses"]
+# Non-overlapping roles: oh-my-pi (v19.2.1, MIT, can1357/oh-my-pi) = Rust+TS Pi-family declarative worker harness replacing broken OMX/OMC/Codex plugin hooks; pi (v1.6.1, MIT, earendil-works/pi) = minimalist headless/RPC Pi core.
+winners = ["orca", "omniroute", "codebase-memory-mcp", "xerj", "mcp", "oh-my-pi", "pi"]
+cross_layer_references = ["edgartools-mcp (canonical library edgartools owned in L1)"]
+rejected_overlaps = ["third-party-agent-wrappers", "custom-mcp-launchers", "self-built-agent-buses", "cdp-tradingview-mcp", "revanthpobala/pinescript-vscode-extension"]
 
 [layers.L10]
 name = "Institutional UI & Visual Analytics"
-winners = ["finos-workspace", "OpenBB", "perspective", "lightweight-charts", "ag-grid-community"]
+winners = ["finos-workspace", "finos-workspace-plugins", "OpenBB", "perspective", "lightweight-charts", "ag-grid-community"]
 watches = ["rerun", "mosaic", "FDC3", "evidence"]
-rejected_overlaps = ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter"]
+rejected_overlaps = ["streamlit", "dash", "gradio", "nicegui", "custom-react-blotter", "tradingview/charting_library", "louisnw01/lightweight-charts-python"]
 
 [files."src/tier0_sota/__init__.py"]
 how = "install"
@@ -167,29 +188,30 @@ why = "Immutable pure Decimal Rule-612 risk kernel (SHA-256 & Z3 UNSAT verified)
 [files."src/tier0_sota/engine.py"]
 how = "integrate"
 upstream = "nautilus_trader"
-secondary_upstreams = ["hftbacktest", "polars", "exchange_calendars"]
-feature = "NautilusTrader v2 24/5 session protection, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse & venue rate pacing"
+secondary_upstreams = ["hftbacktest", "polars", "exchange_calendars", "pandas_market_calendars"]
+feature = "NautilusTrader v2 24/5 session protection, per-symbol non-noise min-trail & synthetic off-hours order-type SSOT, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse & 1000rpm/3000rpm venue order-handle pacing"
 why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity directly to NautilusTrader v2"
 
 [files."src/tier0_sota/discovery.py"]
 how = "integrate"
 upstream = "polars"
-secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap", "fredapi"]
-feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), multi-feed regime, offline-first FRED vintages & causal LightGBM/CatBoost/SHAP ranker"
-why = "Delegates causal data transforms, calendar ops, drift, changepoint, motif & GBDT+SHAP ranking to pinned upstreams"
+secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap", "fredapi", "duckdb", "sqlglot", "edgartools", "skchange", "shapiq"]
+feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), sqlglot AST PIT DuckDB SQL guard, offline-first edgartools SEC & FRED vintages, skchange PELT/MovingWindow/CAPA regime anomalies, Sim/Live RVOL parity (compute_causal_session_rvol_frame matching scanner.py ToD U-shape & 09:30 auction exclusion), 5-tier extreme-mover taxonomy, per-symbol microstructure min_trailing_pct, LightGBM/CatBoost/SHAP ranker & shapiq k-SII order-2 interactions"
+why = "Delegates causal data transforms, PIT SQL AST validation, SEC/FRED vintages, calendar ops, drift, changepoint/anomaly detection, motif, early-mover calibration & GBDT+SHAP/shapiq attribution to pinned upstreams"
 
 [files."src/tier0_sota/research.py"]
 how = "integrate"
 upstream = "skfolio"
-secondary_upstreams = ["clarabel", "hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow"]
-feature = "6-gate statistical falsification (hftbacktest markout, 1x/2x costs, CPCV >= 16, DSR/PBO, Hansen SPA, HAC) & skfolio+Clarabel.rs portfolio optimization"
-why = "Delegates validation gates, convex portfolio sizing and experiment ledger strictly to pinned upstreams"
+secondary_upstreams = ["clarabel", "hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow", "optuna", "nautilus_trader", "duckdb", "mapie"]
+feature = "6-gate statistical falsification (hftbacktest L1 markout min_l1_fills=16, 1x/2x costs, skfolio 8/3 CPCV 21 OOS paths >=16 with cpcv_min_samples=48 DISCARD_INSUFFICIENT_PATHS, DSR/PBO, Hansen SPA, raw-float Newey-West HAC Gate 6 vs HLZ-inspired Bonferroni hurdle), skfolio+Clarabel.rs portfolio optimization, MAPIE SplitConformalRegressor distribution-free excursion intervals (clamped <=2.00%) & Optuna/MLflow/NautilusTrader v2 calibration CLI"
+why = "Delegates validation gates, conformal UQ, convex portfolio sizing, Optuna/Nautilus calibration and experiment ledger strictly to pinned upstreams"
 
 [files."src/tier0_sota/definitions.py"]
 how = "integrate"
 upstream = "dagster"
-feature = "Upstream-native Dagster Definitions & asset graph (pre-wall PIT, risk SHA-256, Paper Farm snapshot)"
-why = "Exposes a clean Dagster Definitions entrypoint without duplicating scheduler/UI scaffolding"
+secondary_upstreams = ["systemd", "mlflow", "duckdb"]
+feature = "Upstream-native Dagster Definitions, 8-asset compounding graph (pre-wall PIT, risk SHA-256, Paper Farm snapshot, TV cockpit, frontier triggers incl. starred landscape, L15 audit & Alertmanager :9093) & nonstop_compounding_loop_job timer contract"
+why = "Exposes a clean Dagster Definitions entrypoint and native schedule/job without duplicating scheduler/UI scaffolding"
 
 [files."src/tier0_sota/live/__init__.py"]
 how = "integrate"
@@ -201,23 +223,44 @@ why = "Exposes fail-closed Paper Farm, extreme-mover scanner, and performance ad
 [files."src/tier0_sota/live/scanner.py"]
 how = "integrate"
 upstream = "alpaca-py"
-secondary_upstreams = ["polars"]
-feature = "Whole-market extreme-mover live scanner (Alpaca SIP + FINRA TRF) & post-selection ETB borrow lookup"
-why = "Uses official alpaca-py data/trading clients with zero banned libraries"
+secondary_upstreams = ["polars", "edgartools"]
+feature = "Whole-market 24/5 extreme-mover scanner (Alpaca SIP/BOATS + FINRA TRF Exchange.D block/carryover + OPRA UOA/GEX + news/corp-actions + offline-first edgartools PIT SEC catalysts + UV buildup), PIT-calibrated 5-tier taxonomy/min_trailing_pct & post-selection exchange/ETB lookup"
+why = "Uses official alpaca-py data/trading/option/news clients and offline-first causal edgartools SEC catalyst enrichment with zero banned libraries"
 
 [files."src/tier0_sota/live/paper_farm.py"]
 how = "integrate"
 upstream = "nautilus_trader"
 secondary_upstreams = ["alpaca-py", "duckdb"]
-feature = "3-lane non-overlapping Alpaca Paper + IBKR :4002 adapter with isolated per-account DuckDB & fail-closed paper-only boundary"
-why = "Delegates Paper Farm execution and isolated per-account telemetry to pinned upstreams"
+feature = "3-lane non-overlapping Alpaca Paper (ALPACA_PA1..PA3 default 200 rpm ALPACA_PAPER_200 per lane via ALPACA_PAPER_DEFAULT_MAX_RPM / resolve_alpaca_paper_venue_profile(), with optional 1,000 rpm ALPACA_PAPER_1000 via TIER0_ALPACA_RPM) + IBKR :4002 (3000rpm) adapter, 4-session 24/5 lossless trailing presets (native TrailingStopOrderRequest vs collared STOP_LIMIT), NVDA->NVDS inverse hedge routing, isolated per-account DuckDB & ADR-0020 Stage-4 K3/K4/3-way restart reconciliation drills"
+why = "Delegates Paper Farm execution, native trailing order requests, NautilusTrader v2 RiskEngine/TradingState drills and isolated per-account telemetry to pinned upstreams"
+
+[files."src/tier0_sota/live/runner.py"]
+how = "integrate"
+upstream = "alpaca-py"
+secondary_upstreams = ["duckdb", "pydantic"]
+feature = "Authenticated paper inventory, broker activity reconciliation, bidirectional TV-to-engine coordination manifest & SIP-to-TV staging"
+why = "Uses the native Trading API, per-account DuckDB transactions and the validated TV preset contract"
+
+[files."src/tier0_sota/live/execution.py"]
+how = "integrate"
+upstream = "alpaca-py"
+secondary_upstreams = ["duckdb", "nautilus_trader"]
+feature = "Paper-only SIP and BOATS trade stream supervision, zero-latency half-auto TV preset adoption, native OTO replacements, 4-session collared exits, climax auto-reverse (ETB/NVDS/SQQQ/SOXS) & 60s rapid re-entry"
+why = "Uses native market data streams and TradingClient order state with durable per-account protection decisions"
 
 [files."src/tier0_sota/live/performance.py"]
 how = "integrate"
 upstream = "polars"
 secondary_upstreams = ["duckdb", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp"]
-feature = "Paper Farm live performance & TCA manifest aggregator, FINOS/OpenBB JSON export & OTel/Prometheus telemetry recording"
+feature = "Paper Farm live performance & TCA manifest aggregator, FINOS/OpenBB JSON export & unitless OTel/Prometheus telemetry (combined equity, momentum top-score/RVOL/TRF/ignition/climax, profit-lock tier, fast-sell armed & active/stale staged alerts)"
 why = "Aggregates Paper Farm metrics and emits declarative JSON & OTel/Prometheus metrics without custom UI servers"
+
+[files."src/tier0_sota/live/merit.py"]
+how = "integrate"
+upstream = "duckdb"
+secondary_upstreams = ["pydantic", "exchange_calendars"]
+feature = "Tier-3 Key A per-leg (LONG/SHORT) paper-merit record, latched demotion and capital ladder from read-only DuckDB ledger snapshots, the pre-wall dossier and drill/reconciliation receipts (not wired: no caller yet)"
+why = "Reads each paper ledger once into a private read-only DuckDB snapshot (SHA-256 of the evaluated bytes) and validates the record with Pydantic v2 models; XNYS session days from exchange_calendars; no broker call, no network"
 
 [files."src/tier0_sota/tv/__init__.py"]
 how = "integrate"
@@ -229,13 +272,207 @@ why = "Re-exports Pydantic v2 validated TvAlertV1 bridge and staged ticket helpe
 [files."src/tier0_sota/tv/bridge.py"]
 how = "integrate"
 upstream = "pydantic"
-secondary_upstreams = ["nautilus_trader"]
-feature = "Fail-closed TradingView Pine v6 alert contract (TvAlertV1, semi_auto_confirmed=False) & live endpoint refusal"
+secondary_upstreams = ["nautilus_trader", "duckdb"]
+feature = "Fail-closed TradingView Pine v6 alert contract (TvAlertV1, semi_auto_confirmed=False), 30-column DuckDB+Parquet audit archival (prune_and_archive_staged_presets), 4-session preset enrichment & live endpoint refusal"
 why = "Delegates schema validation directly to Pydantic v2 instead of hand-patched validators"
 
 [files."src/tier0_sota/tv/tickets.py"]
 how = "integrate"
 upstream = "pydantic"
-secondary_upstreams = ["nautilus_trader"]
-feature = "Extreme-mover Half-Auto staged ticket & TradingView watchlist generator (DIRECT_SHORT_ETB vs INVERSE_HEDGE)"
-why = "Generates validated display-only order tickets and watchlists without CDP automation"
+secondary_upstreams = ["nautilus_trader", "pinescript-mcp", "finos-workspace-plugins"]
+feature = "Extreme-mover Half-Auto staged ticket, unified 24/5 preset-setup automation (run_preset_setup_automation), 4-session non-noise min-trail Order Preset Pack (engine SSOT), exchange-qualified TV watchlist & official TV MCP sync payload/receipt, 5-tab/27-widget FINOS/OpenBB/LWC/Mermaid cockpit JSON & Pine-synced compounding manifest generator"
+why = "Generates validated display-only order tickets, presets, watchlists, official TV MCP payloads & L10 cockpit contracts (ag-grid, plotly-charts, @finos-workspace/mermaid) without CDP automation"
+
+[files."pine/tier0_omni_sota_24x5.pine"]
+how = "build-on"
+upstream = "TradingView/ta/10"
+secondary_upstreams = ["TradingView/TechnicalRating/3", "STD;VWAP", "STD;Relative%1Volume%1at%1Time", "STD;UP_DOWN_Volume", "STD;Technical%1Ratings"]
+feature = "Pane-0 24/5 display-only indicator combining official TradingView/ta/10 RVOL@Time & intrabar CVD, TradingView/TechnicalRating/3, and STD;VWAP stdev bands with Rule-612 lossless trailing HUD & TvAlertV1 JSON"
+why = "Delegates RVOL@Time, intrabar volume delta, VWAP standard-deviation bands, and technical ratings to official TradingView libraries rather than hand-rolling math"
+
+[files."pine/tier0_sota_strategy_24x5.pine"]
+how = "build-on"
+upstream = "TradingView/ta/10"
+secondary_upstreams = ["TradingView/TechnicalRating/3", "STD;VWAP", "STD;Technical%1Ratings%1Strategy"]
+feature = "Pane-0 Strategy Tester & Deep Backtesting script combining official TradingView/ta/10, TradingView/TechnicalRating/3, and native strategy.risk.max_intraday_loss() with Rule-612 4-tier progressive trailing"
+why = "Validates and backtests Core Trading Philosophy parameters directly inside TradingView's official Pine v6 strategy engine and MCP compiler"
+
+[files."pine/tier0_market_regime.pine"]
+how = "build-on"
+upstream = "TradingView/TechnicalRating/3"
+secondary_upstreams = ["STD;Technical%1Ratings"]
+feature = "Pane-1 multi-feed market status, RSP/SPY 20D breadth, and crash-defensive short/hedge gauge augmented with official TradingView/TechnicalRating/3 ratings"
+why = "Grounds SPY/QQQ/SOXX multi-feed market regime telemetry directly in TradingView's official TechnicalRating/3 library"
+
+[files."pine/tier0_darkpool_uv_buildup.pine"]
+how = "build-on"
+upstream = "TradingView/ta/10"
+secondary_upstreams = ["STD;Relative%1Volume%1at%1Time", "STD;UP_DOWN_Volume", "STD;VWAP"]
+feature = "Pane-2 unusual volume buildup and darkpool proxy combining official TradingView/ta/10 relativeVolume, requestUpAndDownVolume, requestVolumeDelta, and STD;VWAP"
+why = "Replaces hand-rolled single-bar RVOL and CLV CVD approximations with official TradingView intrabar volume delta and time-of-day relative volume"
+
+[files."scripts/run_nonstop_compounding_loop.py"]
+how = "integrate"
+upstream = "dagster"
+secondary_upstreams = ["systemd", "optuna", "mlflow", "duckdb", "nautilus_trader", "fnox"]
+feature = "Single-tick (--once) fail-closed paper-only 3-stage compounding orchestrator driven strictly by native systemd timer + Dagster job (zero ad-hoc Python sleep loops, passive /proc/net/tcp live-port guard)"
+why = "Orchestrates pre-wall PIT calibration (tier0_sota.research), Dual-Flywheel reflection, and live 24/5 Paper/TV heartbeat without self-invented polling daemons"
+
+[files."scripts/run_early_mover_compounding.py"]
+how = "integrate"
+upstream = "optuna"
+secondary_upstreams = ["mlflow", "polars", "alpaca-py", "nautilus_trader"]
+feature = "Pre-wall (<=2026-10-15) Optuna/MLflow/XERJ early-mover weight compounding & isolated out-of-sample recent-week NVDA premarket historical audit"
+why = "Delegates hyperparameter search, experiment tracking, and causal data frames strictly to pinned Optuna, MLflow, Polars, and alpaca-py upstreams"
+
+[files."docker/systemd/tier0-compounding-loop.service"]
+how = "integrate"
+upstream = "systemd"
+secondary_upstreams = ["fnox", "uv"]
+feature = "WSL2 native oneshot systemd unit executing single-tick paper-only compounding cycle under CPU/Memory bounds and passive live-port guard"
+why = "Delegates recurring process supervision and resource cgroups directly to native OS systemd"
+
+[files."docker/systemd/tier0-compounding-loop.timer"]
+how = "integrate"
+upstream = "systemd"
+feature = "WSL2 native persistent 2h systemd timer driving tier0-compounding-loop.service"
+why = "Replaces ad-hoc Python infinite sleep loops with native OS systemd timer scheduling"
+
+[files."docker/systemd/tier0-paper-farm-execution.service"]
+how = "integrate"
+upstream = "systemd"
+secondary_upstreams = ["fnox", "uv", "alpaca-py", "nautilus_trader"]
+feature = "WSL2 native persistent systemd supervisor running 24/5 continuous SIP+BOATS lossless trailing and zero-latency TV preset adoption (default ALPACA_PA1..PA3 200 rpm per lane in paper_farm.py, with systemd unit configured for optional TIER0_ALPACA_RPM=1000 ALPACA_PAPER_1000 override)"
+why = "Delegates always-on process supervision, restart recovery, and cgroup bounds strictly to native OS systemd with passive live-port and immutable risk.py pre-start checks"
+
+[files."docker/compose.sota.yml"]
+how = "integrate"
+upstream = "mlflow"
+secondary_upstreams = ["dagster-webserver", "optuna-dashboard", "inspect-ai", "zensical", "otel-collector-contrib", "prometheus", "alertmanager", "grafana", "xerj", "caddy", "finos-workspace", "aideml"]
+feature = "Official containerized L6/L8/L10 research & telemetry portals stack (MLflow :5000, Optuna :8080, Dagster code/webserver/daemon :3000, Inspect View :7575, Zensical :8010, OTel Collector :4317/:4318/:9464, Prometheus :9090, profile-gated Alertmanager :9093, Grafana :3001, XERJ :9200, Caddy :8793/:4213, profile-gated FINOS :1420, profile-gated aideml-sandbox)"
+why = "Runs every hosted portal, telemetry service, and agent sandbox strictly inside pinned upstream images and compose topology with loopback bindings and resource caps"
+
+[files."docker/Caddyfile"]
+how = "integrate"
+upstream = "caddy"
+secondary_upstreams = ["nautilus_trader", "ml4t-diagnostic", "allure-report", "duckdb"]
+feature = "Loopback-bound (bind 127.0.0.1) Caddy v2.11.9 server hosting the upstream report pages (Nautilus create_tearsheet, ml4t-diagnostic, skfolio) & Allure 3 test reports (:8793) plus Origin-normalising CSRF proxy for DuckDB SQL UI (:4213 -> 127.0.0.1:4214)"
+why = "Serves unmodified upstream static HTML/test reports and preserves DuckDB UI HTTP 401 CSRF rejection on foreign Origins strictly via declarative Caddyfile with zero custom web servers"
+
+[files."docker/otel-collector-config.yaml"]
+how = "integrate"
+upstream = "otel-collector-contrib"
+secondary_upstreams = ["opentelemetry-sdk", "prometheus"]
+feature = "OpenTelemetry Collector Contrib v0.166.0 metrics pipeline routing OTLP gRPC (:4317) / HTTP (:4318), collector self-telemetry (:8888), and host_metrics via memory_limiter + batch into Prometheus exporter (:9464) with health_check (:13133)"
+why = "Delegates host and live OTLP telemetry ingestion and OpenMetrics exposition strictly to the official OpenTelemetry Collector Contrib upstream"
+
+[files."docker/compose.ibkr-paper.yml"]
+how = "integrate"
+upstream = "gnzsnz/ib-gateway-docker"
+secondary_upstreams = ["IbcAlpha/IBC", "novnc/noVNC", "nautilus_trader"]
+feature = "Standalone Paper-Only IBKR Gateway (:4002 loopback, zero live ports 4001/7496/8798/8796) with IBC daily AUTO_RESTART_TIME and interactive noVNC login"
+why = "Delegates IBKR Paper session lifecycle, daily auto-restart, and interactive 2FA login strictly to NautilusTrader's recommended OSI IB Gateway + IBC container"
+
+[files."docker/grafana/dashboards/tier0-workstation-telemetry.json"]
+how = "integrate"
+upstream = "grafana"
+secondary_upstreams = ["otel-collector-contrib", "prometheus"]
+feature = "Declarative Grafana workstation CPU/memory/load dashboard fed by OTel Collector host_metrics and Prometheus"
+why = "Renders workstation resource telemetry strictly inside hosted Grafana with zero custom HTML/JS"
+
+[files."docker/grafana/dashboards/tier0-order-presets-momentum.json"]
+how = "integrate"
+upstream = "grafana"
+secondary_upstreams = ["prometheus", "otel-collector-contrib"]
+feature = "Declarative 11-panel Grafana dashboard for 4-account combined equity ($2.01M), active 24/5 trailed positions, profit-lock tiers, fast-sell arming, momentum leader scores/RVOL/TRF, ignition/climax counters, active/stale staged alerts & ALPACA_PAPER_1000/IBKR_PAPER_4002 order handles"
+why = "Renders live momentum, lossless trailing and order-preset telemetry strictly inside hosted Grafana with zero hand-written HTML/JS/CSS"
+
+[files."evals/symbolic_risk_crosshair.py"]
+how = "integrate"
+upstream = "pschanely/CrossHair"
+secondary_upstreams = ["z3-solver", "boxed/mutmut"]
+feature = "Isolated uvx CrossHair PEP-316 bounded symbolic exploration harness (5 contracts + 30 runtime parity cases) complementing exhaustive Z3 SMT UNSAT proofs and isolated WSL report-only mutmut 3.8.1 audit (just mutate-risk) on immutable risk.py with zero mypy in uv.lock"
+why = "Adds bounded symbolic contract exploration and mutation testing via isolated temporary environments without introducing banned mypy into uv.lock"
+
+[files."docker/prometheus_rules.yml"]
+how = "integrate"
+upstream = "prometheus"
+secondary_upstreams = ["prometheus/alertmanager", "otel-collector-contrib"]
+feature = "15 declarative Prometheus alerting rules routed to profile-gated Alertmanager (:9093), covering drawdown fuse, telemetry health, TCA envelope, 24/5 extended-hours & adopted-position protection, momentum ignition/darkpool/climax, profit-lock/fast-sell arming, staged-alert staleness & workstation saturation"
+why = "Enforces 24/5 trading momentum and operational alerting purely via official Prometheus + Alertmanager declarative rules"
+
+[files."docker/alertmanager.yml"]
+how = "integrate"
+upstream = "prometheus/alertmanager"
+secondary_upstreams = ["prometheus"]
+feature = "Declarative Alertmanager category routing (momentum, lossless_trailing, risk_ops) with zero-secret loopback receiver tier0-local-null"
+why = "Routes Prometheus momentum, lossless trailing and risk alerts strictly through official Alertmanager without custom notification daemons"
+
+[files."docker/systemd/tier0-workstation-sota-guard.service"]
+how = "integrate"
+upstream = "systemd"
+secondary_upstreams = ["fnox", "uv"]
+feature = "WSL2 native oneshot systemd preflight, reconcile & cache-hygiene guard with passive forbidden live-port and immutable risk.py SHA-256 pre-checks"
+why = "Delegates periodic workstation preflight reconciliation and hygiene bounds directly to native OS systemd"
+
+[files."docker/systemd/tier0-workstation-sota-guard.timer"]
+how = "integrate"
+upstream = "systemd"
+feature = "WSL2 native systemd timer scheduling tier0-workstation-sota-guard.service"
+why = "Uses native OS systemd timers instead of custom background polling scripts"
+
+[files."scripts/run_stage4_drills.py"]
+how = "integrate"
+upstream = "nautilus_trader"
+secondary_upstreams = ["alpaca-py", "duckdb", "polars"]
+feature = "ADR-0020 Stage-4 automated K3 TradingState/RiskEngine, K4 sandbox broker flatten & fail-closed 3-way restart reconciliation drills CLI emitting stage4_drills_receipt.json (paper_only=True, live_execution_enabled=False)"
+why = "Exercises real upstream NautilusTrader v2 RiskEngine/TradingState, isolated DuckDB ledgers and sandboxed alpaca-py flatten contracts without touching live brokers or duplicating engine logic"
+
+[files."scripts/run_h109_prewall_study.py"]
+how = "integrate"
+upstream = "nautilus_trader"
+secondary_upstreams = ["hftbacktest", "polars", "duckdb", "skfolio", "ml4t-diagnostic", "edgartools", "sqlglot", "skchange", "shapiq", "mapie"]
+feature = "Pre-wall (<=2026-10-15) H109 multi-feed ADR-0028 6-gate falsification study combining NautilusTrader v2 BacktestEngine, Rust hftbacktest L1 queue markout and graduated ADR-0028 primitives"
+why = "Executes preregistered causal falsification studies directly inside verified upstream backtest, L1 markout, and statistical engines"
+
+[files."scripts/run_sim_backtest_tearsheet_suite.py"]
+how = "integrate"
+upstream = "nautilus_trader"
+secondary_upstreams = ["polars", "pandera", "mlflow", "exchange_calendars"]
+feature = "Native NautilusTrader v2 ParquetDataCatalog population (<=2026-10-15), multi-session empirical BacktestEngine execution and unmodified create_tearsheet HTML + MLflow 3 logging"
+why = "Populates native NautilusTrader v2 ParquetDataCatalog and generates unmodified official tearsheets with zero hand-written HTML/JS"
+
+[files."scripts/generate_ml4t_and_shap_tearsheets.py"]
+how = "integrate"
+upstream = "ml4t-diagnostic"
+secondary_upstreams = ["skfolio", "shap", "shapiq", "lightgbm", "catboost", "polars", "duckdb", "mlflow"]
+feature = "Causal pre-wall skfolio CombinatorialPurgedCV (>=16 paths) artifacts, interactive reports written by the upstreams' own functions (ml4t-diagnostic generate_backtest_tearsheet / FeatureImportanceDashboard, skfolio plot_train_test_folds / Population.plot_distribution) + DuckDB sim audit snapshot (TreeSHAP and shapiq k-SII values)"
+why = "One upstream call per report file with run data only: no figure, page, section or table composed here, and no typed-in result numbers (missing inputs stay missing)"
+
+[files."docker/grafana/dashboards/tier0-sim-backtest-control-center.json"]
+how = "integrate"
+upstream = "grafana"
+secondary_upstreams = ["prometheus", "otel-collector-contrib"]
+feature = "Declarative 3-panel Grafana control-center dashboard (paper TCA cost envelope, risk guardrails, scrape health) provisioned automatically on :3001"
+why = "Shows the harness's own emitted Prometheus metrics through Grafana dashboard JSON (configuration only); panels without an emitted metric were removed 2026-11-27"
+
+[files.".omp/mcp.json"]
+how = "integrate"
+upstream = "oh-my-pi"
+secondary_upstreams = ["mcp", "codebase-memory-mcp", "xerj"]
+feature = "Canonical 4-stdio MCP server contract (codebase-memory, xerj, nautilus-engine, edgartools) enforcing 6/6 repo parity for oh-my-pi (omp v19.2.1) alongside 7/7 declarative .omp/agents/*.md workers"
+why = "Eliminates broken legacy OMX/OMC/Codex plugin hooks with a clean, MIT declarative Rust+TS Pi-family worker harness and exact MCP parity"
+
+[official_upstream_org_audit]
+verified_date = "2026-11-27"
+alpacahq_active_admitted = ["alpacahq/alpaca-py (Apache-2.0, 0.45.0)", "alpacahq/alpaca-mcp-server (MIT, 2.4.1, off-repo paper-only plugin alpaca-sota-mcp)"]
+alpacahq_watches = ["alpacahq/alpaca-skills (Apache-2.0)", "alpacahq/cli (Apache-2.0)"]
+alpacahq_excluded = ["alpacahq/alpaca-trade-api-python (archived)", "alpacahq/pylivetrader (legacy zipline)", "alpacahq/alpaca-backtrader-api (banned backtrader)", "alpacahq/alpaca-zipline (unlicensed zipline)", "alpacahq/backtrader (archived GPL-3.0)", "alpacahq/Lean (archived)"]
+nautechsystems_active_admitted = ["nautechsystems/nautilus_trader (LGPL-3.0, 2.0.0rc9)"]
+nautechsystems_watches = ["nautechsystems/nautilus_agents (LGPL-3.0, off hot path)", "nautechsystems/nautilus_engineering (LGPL-3.0)"]
+nautechsystems_excluded = ["nautechsystems/nautilus_ibapi (archived)", "nautechsystems/nautilus_experiments (archived)"]
+tradingview_active_admitted = ["tradingview/lightweight-charts (Apache-2.0)", "tradingview/fancy-canvas (MIT)", "https://mcp.tradingview.com/mcp (official OAuth 2.1, zero CDP)", "paulieb89/pinescript-mcp (MIT, 0.7.7)", "TradingView/ta/10", "TradingView/TechnicalRating/3", "STD;VWAP"]
+pinecoders_osi_references = ["pinecoders/awesome-pinescript (MIT)", "pinecoders/pinescript-enums (MPL-2.0)", "pinecoders/pynescript (LGPL-3.0)"]
+pinecoders_excluded = ["pinecoders/pine-utils (GPL-3.0)", "pinecoders/tradingview-pinescript-indicators (GPL-3.0)", "pinecoders/pinescript-cheatsheet (GPL-3.0)", "pinecoders/pine-script-mode (GPL-2.0)", "pinecoders/vim-pine-script (GPL-2.0)", "pinecoders/sublime-pine (GPL-3.0)", "pinecoders/pine-script-syntax-highlighting (archived NOASSERTION)", "pinecoders/pynecore (L3 single-engine overlap)"]
+off_repo_paper_plugins = ["tradingview-sota-mcp", "alpaca-sota-mcp"]
+repo_mcp_parity_preserved = "4-stdio-MCP (codebase-memory, edgartools, nautilus-engine, xerj) across all 6 repo configs (.mcp.json, .claude/settings.json, .codex/config.toml, .gemini/settings.json, opencode.json, .omp/mcp.json)"

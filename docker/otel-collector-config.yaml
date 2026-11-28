@@ -1,6 +1,7 @@
 # Official upstream OpenTelemetry Collector Contrib config (v0.166.0).
-# Routes live application OTLP metrics (gRPC :4317, HTTP :4318) and collector self-telemetry
-# (:8888) through memory_limiter + batch into the Prometheus scrape exporter (:9464/metrics).
+# Routes live application OTLP metrics (gRPC :4317, HTTP :4318), collector self-telemetry
+# (:8888), and host_metrics (CPU/memory/load) through memory_limiter + batch into the
+# unprefixed Prometheus scrape exporter (:9464/metrics).
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133
@@ -16,18 +17,24 @@ receivers:
     config:
       scrape_configs:
         - job_name: otel-collector
-          scrape_interval: 10s
+          scrape_interval: 30s
           static_configs:
             - targets: ["127.0.0.1:8888"]
+  host_metrics:
+    collection_interval: 30s
+    scrapers:
+      cpu: {}
+      memory: {}
+      load: {}
 
 processors:
   memory_limiter:
-    check_interval: 1s
+    check_interval: 5s
     limit_mib: 384
     spike_limit_mib: 96
   batch:
     send_batch_size: 1024
-    timeout: 5s
+    timeout: 10s
 
 exporters:
   prometheus:
@@ -40,7 +47,7 @@ service:
   extensions: [health_check]
   telemetry:
     metrics:
-      level: detailed
+      level: normal
       readers:
         - pull:
             exporter:
@@ -49,6 +56,6 @@ service:
                 port: 8888
   pipelines:
     metrics:
-      receivers: [otlp, prometheus]
+      receivers: [otlp, prometheus, host_metrics]
       processors: [memory_limiter, batch]
       exporters: [prometheus]

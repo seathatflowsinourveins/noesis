@@ -38,6 +38,9 @@ nav = [
   { "ADR-0023: jdx/fnox + age Secret Profiles & Cross-OS Parity" = "adr/ADR-0023.md" },
   { "ADR-0024: Executable MADR 4.0 Governance & Compounding OS" = "adr/ADR-0024.md" },
   { "ADR-0025: SOTA Research Practice, Clean-Install & MCP Tooling" = "adr/ADR-0025.md" },
+  { "ADR-0026: Workstation CPU, 9p I/O, Thread Bounds & Dev-Loop" = "adr/ADR-0026.md" },
+  { "ADR-0027: Full-Landscape SOTA TradingView 24/5 Practice & Cockpit" = "adr/ADR-0027.md" },
+  { "ADR-0028: Starred Repos & L10-L15 Frontier Convergence" = "adr/ADR-0028.md" },
 ]
 
 [project.theme]

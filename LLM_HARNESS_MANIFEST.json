@@ -24,7 +24,9 @@
     "Gemini CLI",
     "OpenCode",
     "Antigravity",
-    "Orca"
+    "Orca",
+    "oh-my-pi",
+    "pi"
   ],
   "source_of_truth_hierarchy": {
     "sole_source_of_truth": "sota-upstream-convergence-per-core-trading-philosophy",
@@ -176,6 +178,28 @@
       "verification-before-completion"
     ]
   },
+  "runtime_worker_parity": {
+    "canonical_roles": [
+      "code-intel-redteam",
+      "memory-rag-evolution",
+      "observability-operator",
+      "paper-gatekeeper",
+      "pit-data-engineer",
+      "quant-falsifier",
+      "tier0-grand-central"
+    ],
+    "claude_agents": "7/7",
+    "codex_agents": "7/7",
+    "opencode_agents": "7/7",
+    "omp_agents": "7/7",
+    "paper_gatekeeper_read_only_enforced": true,
+    "paper_gatekeeper_enforcement": {
+      "claude": "permissionMode=plan + frontmatter disallowedTools(Write,Edit,MultiEdit,NotebookEdit,Bash,Agent,mcp__nautilus-engine__stage_semi_auto_order_preset,mcp__xerj__xerj_memory_store)",
+      "codex": "sandbox_mode=read-only + mcp_servers.{nautilus-engine,xerj}.disabled_tools",
+      "opencode": "permission.{edit,shell,subagent,nautilus-engine_stage_semi_auto_order_preset,xerj_xerj_memory_store}=deny",
+      "omp": "isReadOnlyAgent=true (tools=read,find,grep,glob,ast_grep subset of READ_ONLY_TOOL_NAMES; zero spawns/edit/write/bash/lsp/task)"
+    }
+  },
   "compounding_lanes": {
     "sim-backtest": {
       "command": ".claude/commands/lane-sim.md",
@@ -275,6 +299,8 @@
         "Z:\\sota-data\\manifests\\paper_farm_live_performance_manifest.json",
         "Z:\\sota-data\\manifests\\finos_paper_farm_performance.json",
         "Z:\\sota-data\\manifests\\live_whole_market_movers_manifest.json",
+        "Z:\\sota-data\\manifests\\live_lane_order_preset_bundle.json",
+        "Z:\\sota-data\\manifests\\paper_farm_execution_status.json",
         "Z:\\sota-data\\manifests\\paper_lane_{pa1,pa2,pa3}.duckdb"
       ]
     },
@@ -302,18 +328,40 @@
         "trading-skills-navigator"
       ],
       "upstream_gates": [
+        "just tv-e2e",
         "just test tests/test_tv_automation.py",
         "just mcp-smoke",
         "just ast"
       ],
       "primary_scripts": [
         "scripts/tv_console.ps1",
+        "scripts/tv_console.sh",
         "scripts/nautilus_mcp_server.py"
       ],
+      "paper_confirm_entrypoint": "just tv-confirm-paper",
+      "paper_confirm_api": "src/tier0_sota/live/execution.py::submit_confirmed_tv_preset_paper",
+      "paper_only": true,
+      "live_execution_enabled": false,
+      "paper_farm_combined_rpm": 3600,
+      "stage5_sandbox_spec_venue": "ALPACA_LIVE_PRO_LINE_1000",
+      "stage5_sandbox_spec_rpm": 1000,
+      "stage5_sandbox_spec_status": "LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC",
       "manifest_artifacts": [
         "Z:\\sota-data\\manifests\\tv_sota_pack\\live_half_auto_tickets.json",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\LIVE_HALF_AUTO_ORDER_TICKETS.md",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_order_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\TV_ORDER_PRESET_CARDS.md",
         "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_tv_watchlists_live.txt",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\finos_tv_cockpit.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_compounding_manifest.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_scan_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\staged_tv_presets.json",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_half_auto_audit.duckdb",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tv_staged_presets.parquet",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_omni_sota_24x5.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_sota_strategy_24x5.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_market_regime.pine",
+        "Z:\\sota-data\\manifests\\tv_sota_pack\\tier0_darkpool_uv_buildup.pine",
         "Z:\\sota-data\\manifests\\staged_tv_presets.json"
       ]
     },
@@ -342,6 +390,7 @@
       ],
       "upstream_gates": [
         "just check",
+        "just fnox-check",
         "just docs-build",
         "prek run --all-files",
         "zizmor --offline .github/workflows",
@@ -430,9 +479,20 @@
         "edgartools",
         "nautilus-engine",
         "xerj"
+      ],
+      ".omp/mcp.json": [
+        "codebase-memory",
+        "edgartools",
+        "nautilus-engine",
+        "xerj"
       ]
     },
-    "parity_count": "5/5"
+    "parity_fields_verified": [
+      "command",
+      "args",
+      "env"
+    ],
+    "parity_count": "6/6"
   },
   "skills_summary": {
     "lock_file": "UPSTREAM_SKILLS_LOCK.json",
@@ -559,13 +619,39 @@
     }
   ],
   "live_hosted_portals_count": 15,
+  "extended_portals": [
+    {
+      "name": "alertmanager",
+      "url": "http://127.0.0.1:9093/-/healthy",
+      "profile": "alerting"
+    },
+    {
+      "name": "allure-test-reports",
+      "url": "http://127.0.0.1:8793/test-reports/allure/",
+      "served_by": "tearsheets"
+    },
+    {
+      "name": "omniroute",
+      "url": "http://127.0.0.1:20128/api/health",
+      "role": "local-automation-router"
+    }
+  ],
+  "extended_portals_count": 3,
+  "total_live_portals_count": 18,
   "upstream_verification_commands": {
     "full_local_check": "just check",
+    "adr_check": "just adr-check",
     "strict_docs_build": "just docs-build",
+    "security_suite": "just security",
+    "fnox_check": "just fnox-check",
+    "symbolic_crosshair": "just crosshair",
+    "allure_test_report": "just test-report",
+    "mutation_audit_risk": "just mutate-risk",
+    "compounding_reflection": "just reflect",
     "pre_commit_hooks": "prek run --all-files",
     "manifest_sync_check": "uv run --no-sync python scripts/sync_manifest.py --check",
     "workflow_audit": "zizmor --offline .github/workflows",
-    "supply_chain_scan": "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills .",
+    "supply_chain_scan": "trivy fs --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis .",
     "secret_scan": "gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner",
     "windows_ci_gate": "pwsh -NoProfile -File scripts/check.ps1",
     "wsl2_ci_gate": "bash scripts/check.sh",

@@ -1,0 +1,189 @@
+{
+  "schema_version": "tier0.prewall-h109-prereg.v1",
+  "hypothesis_id": "H109_MULTIFEED_ADR0028_L1_CONFORMAL_REGIME_FALSIFICATION",
+  "registered_at_utc": "2026-11-27T10:59:00+00:00",
+  "prewall_cutoff_iso": "2026-10-15",
+  "paper_only": true,
+  "live_execution_enabled": false,
+  "risk_kernel_sha256": "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847",
+  "forbidden_live_ports": [
+    4001,
+    7496,
+    8796,
+    8798
+  ],
+  "temporal_splits": {
+    "tuning_start": "2024-06-03",
+    "tuning_end": "2025-10-31",
+    "purge_gap_trading_days": 6,
+    "holdout_start": "2025-11-11",
+    "holdout_end": "2026-10-15",
+    "causal_bar_visibility": "t_close_ns = t_ns + 60_000_000_000 <= decision_ts_ns",
+    "calendar": "XNYS"
+  },
+  "trial_accounting": {
+    "prior_lake_ledger_trials": 103,
+    "prior_prereg_ffbea1478ca2_trials": 48,
+    "prior_prereg_f5b15835a663_trials": 48,
+    "prior_cumulative_trials_base": 199,
+    "h109_preregistered_arms": 12,
+    "cumulative_trials_total_floor": 211
+  },
+  "cost_and_tca_anchor": {
+    "tca_manifest_path": "/mnt/z/sota-data/manifests/tca_calibration_manifest.json",
+    "tca_liquid_ge10_mean_is_bps": 7.0112,
+    "tca_liquid_ge10_median_is_bps": 4.2283,
+    "tca_liquid_ge10_within_2x_envelope": true,
+    "cost_bps_1x_per_side": 4.0,
+    "cost_bps_calibrated_liquid_per_side": 7.0112,
+    "cost_bps_2x_per_side": 8.0
+  },
+  "adr0028_upstream_primitives": [
+    "tier0_sota.discovery.validate_pit_duckdb_sql",
+    "tier0_sota.discovery.load_causal_sec_catalysts",
+    "tier0_sota.discovery.detect_skchange_regime_anomalies",
+    "tier0_sota.discovery.compute_shapiq_interactions",
+    "tier0_sota.research.fit_conformal_excursion_intervals"
+  ],
+  "execution_and_microstructure": {
+    "backtest_engine": "NautilusTrader v2 BacktestEngine (RiskEngineConfig bypass=False)",
+    "sandbox_parity_node": "NautilusTrader v2 LiveNode (Environment.SANDBOX)",
+    "l1_queue_engine": "Rust hftbacktest RiskAdverseQueueModel",
+    "l1_data_source": "/mnt/z/sota-data/prewall-lake/published-orb/{quotes,trades}",
+    "synthetic_l1_allowed": false,
+    "min_l1_passive_fills_per_leg": 16,
+    "l1_markout_floor_bps": -20.0
+  },
+  "legs": {
+    "LONG": {
+      "thesis": "Causal early extreme-mover ignition + liquid breakout leaders gated by regime >= 0 (SPY/QQQ/SOXX), PIT SEC 8-K/10-Q catalyst or skchange ignition anomaly, and MAPIE conformal trailing stop <= 2.00%",
+      "universe_filter": "price >= $10, 20d_dvol >= $5M, pre-wall published-orb L1 backed + liquid leaders",
+      "short_borrow_required": false
+    },
+    "SHORT": {
+      "thesis": "Causal regime == -1 crash alignment + climax peak reversal (>= 1.5x NATR extension above VWAP + red breakdown) routed via ETB direct short (excluding PIT Reg SHO threshold list df6) or inverse ETF hedges (SOXS/SQQQ)",
+      "universe_filter": "price >= $10, 20d_dvol >= $5M, non-RegSHO-threshold ETB or SOXS/SQQQ inverse hedge",
+      "short_borrow_required": true
+    }
+  },
+  "candidate_arms": [
+    {
+      "arm_id": "H109_A01",
+      "signal_mode": "ignition_breakout_and_climax",
+      "min_rvol": 1.8,
+      "min_move_pct": 1.5,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A02",
+      "signal_mode": "ignition_breakout_and_climax",
+      "min_rvol": 2.2,
+      "min_move_pct": 2.0,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A03",
+      "signal_mode": "ignition_breakout_and_climax",
+      "min_rvol": 2.6,
+      "min_move_pct": 2.5,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A04",
+      "signal_mode": "ignition_breakout_and_climax",
+      "min_rvol": 1.8,
+      "min_move_pct": 1.5,
+      "use_conformal_trail": false,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A05",
+      "signal_mode": "ignition_breakout_and_climax",
+      "min_rvol": 2.2,
+      "min_move_pct": 2.0,
+      "use_conformal_trail": false,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A06",
+      "signal_mode": "ignition_breakout_and_climax",
+      "min_rvol": 2.6,
+      "min_move_pct": 2.5,
+      "use_conformal_trail": false,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A07",
+      "signal_mode": "sec_skchange_confirmed",
+      "min_rvol": 1.6,
+      "min_move_pct": 1.5,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A08",
+      "signal_mode": "sec_skchange_confirmed",
+      "min_rvol": 2.0,
+      "min_move_pct": 2.0,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A09",
+      "signal_mode": "sec_skchange_confirmed",
+      "min_rvol": 2.4,
+      "min_move_pct": 2.5,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    },
+    {
+      "arm_id": "H109_A10",
+      "signal_mode": "sec_skchange_confirmed",
+      "min_rvol": 1.6,
+      "min_move_pct": 1.5,
+      "use_conformal_trail": true,
+      "auto_reentry": true,
+      "reentry_cooldown_secs": 180
+    },
+    {
+      "arm_id": "H109_A11",
+      "signal_mode": "sec_skchange_confirmed",
+      "min_rvol": 2.0,
+      "min_move_pct": 2.0,
+      "use_conformal_trail": true,
+      "auto_reentry": true,
+      "reentry_cooldown_secs": 180
+    },
+    {
+      "arm_id": "H109_A12",
+      "signal_mode": "regime_aligned_vwap_orb",
+      "min_rvol": 1.8,
+      "min_move_pct": 1.8,
+      "use_conformal_trail": true,
+      "auto_reentry": false,
+      "reentry_cooldown_secs": 300
+    }
+  ],
+  "six_gate_promotion_contract": {
+    "min_cpcv_samples": 16,
+    "gate_1_l1_markout": "passive_filled >= 16 AND mean_markout_bps >= -20.0 on real published-orb L1 per leg",
+    "gate_2_cost_1x_2x_survival": "mean_bps > 0 AND cpcv_oos_mean_bps > 0 at BOTH 1x (4.0 bps) and 2x (8.0 bps)",
+    "gate_3_cpcv_oos_positive": "skfolio CombinatorialPurgedCV OOS mean > 0 at 1x and 2x with n_trades >= 16",
+    "gate_4_dsr_pbo_credible": "DSR >= 0.95 (at cumulative n_trials_total) AND n_trades >= MinTRL AND empirical PBO < 0.50",
+    "gate_5_hansen_spa_significant": "arch SPA consistent p < 0.05 AND upper p < 0.05 at 1x and 2x",
+    "gate_6_hac_t_stat_significant": "Newey-West HAC t >= HLZ_t(n_trials_total) at 1x and 2x",
+    "cross_leg_rule": "PROMOTE only if BOTH LONG and SHORT independently clear all 6/6 gates on untouched Holdout; otherwise fail-closed DISCARD"
+  }
+}

@@ -7,8 +7,10 @@ import json
 import os
 import re
 import urllib.parse
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
+from pathlib import Path
 from typing import Any
 
 import dspy
@@ -268,6 +270,279 @@ def _endpoint_reachable(url: str, timeout: float = 2.0) -> bool:
         return False
     finally:
         conn.close()
+
+
+def _http_json_request(
+    method: str,
+    url: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 4.0,
+) -> dict[str, Any] | None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    conn_cls = (
+        http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    )
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"Content-Type": "application/json"} if body is not None else {}
+    conn = conn_cls(parsed.netloc, timeout=timeout)
+    try:
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read()
+        if not (200 <= int(resp.status) < 300):
+            return None
+        parsed_json = json.loads(raw.decode("utf-8"))
+        return parsed_json if isinstance(parsed_json, dict) else None
+    except (http.client.HTTPException, json.JSONDecodeError, TimeoutError, ValueError, OSError):
+        return None
+    finally:
+        conn.close()
+
+
+def collect_mlflow_xerj_reflection_examples(
+    *,
+    mlflow_url: str = "http://127.0.0.1:5000",
+    xerj_url: str = "http://127.0.0.1:9200",
+    max_mlflow_runs: int = 12,
+    max_xerj_docs: int = 8,
+    offline: bool = False,
+) -> tuple[list[dspy.Example], dict[str, int]]:
+    """Build quantitative DSPy Examples from accumulated MLflow runs and XERJ lessons."""
+    charter = (
+        "Capture extreme movers early, align direction with causal market regime "
+        "(SPY/QQQ/SOXX/RSP), protect 24/5 with BE+fee progressive profit-lock trailing, "
+        "enforce 6-gate falsification (1x/2x costs, CPCV >= 16, DSR >= 0.95, PBO < 0.50, "
+        "SPA < 0.05, HAC), preserve immutable Decimal risk.py, and keep paper_only=True / "
+        "live_execution_enabled=False."
+    )
+    examples: list[dspy.Example] = []
+    counts = {"mlflow_runs": 0, "xerj_docs": 0, "control_examples": 0}
+
+    if not offline:
+        exp_doc = _http_json_request(
+            "GET", f"{mlflow_url.rstrip('/')}/api/2.0/mlflow/experiments/search?max_results=50"
+        )
+        exp_ids = [
+            str(e["experiment_id"])
+            for e in (exp_doc or {}).get("experiments", [])
+            if isinstance(e, dict) and e.get("experiment_id") is not None
+        ]
+        if exp_ids:
+            runs_doc = _http_json_request(
+                "POST",
+                f"{mlflow_url.rstrip('/')}/api/2.0/mlflow/runs/search",
+                payload={"experiment_ids": exp_ids, "max_results": max_mlflow_runs},
+            )
+            for run in (runs_doc or {}).get("runs", [])[:max_mlflow_runs]:
+                if not isinstance(run, dict):
+                    continue
+                data = run.get("data") or {}
+                metrics = {
+                    str(m["key"]): round(float(m["value"]), 4)
+                    for m in data.get("metrics", [])
+                    if isinstance(m, dict) and "key" in m and "value" in m
+                }
+                params = {
+                    str(p["key"]): str(p["value"])
+                    for p in data.get("params", [])
+                    if isinstance(p, dict) and "key" in p and "value" in p
+                }
+                if not metrics:
+                    continue
+                counts["mlflow_runs"] += 1
+                examples.append(
+                    dspy.Example(
+                        philosophy_charter=charter,
+                        optuna_trial_summary=json.dumps(
+                            {"source": "mlflow", "params": params, "metrics": metrics},
+                            sort_keys=True,
+                        )[:1800],
+                        paper_farm_snapshot=(
+                            "paper_only=True live_execution_enabled=False "
+                            f"inspect_accuracy={metrics.get('inspect_accuracy', 1.0)}"
+                        ),
+                        philosophy_aligned=True,
+                    ).with_inputs(
+                        "philosophy_charter", "optuna_trial_summary", "paper_farm_snapshot"
+                    )
+                )
+
+        xerj_doc = _http_json_request(
+            "GET",
+            f"{xerj_url.rstrip('/')}/tier0-compounding-lessons/_search?size={max_xerj_docs}",
+        )
+        for hit in ((xerj_doc or {}).get("hits") or {}).get("hits", [])[:max_xerj_docs]:
+            src = hit.get("_source") if isinstance(hit, dict) else None
+            if not isinstance(src, dict):
+                continue
+            counts["xerj_docs"] += 1
+            examples.append(
+                dspy.Example(
+                    philosophy_charter=charter,
+                    optuna_trial_summary=json.dumps(
+                        {"source": "xerj", "doc_id": hit.get("_id"), **src}, sort_keys=True
+                    )[:1800],
+                    paper_farm_snapshot=(
+                        "paper_only=True live_execution_enabled=False "
+                        f"risk_sha256_match={src.get('risk_sha256_match', True)}"
+                    ),
+                    philosophy_aligned=True,
+                ).with_inputs("philosophy_charter", "optuna_trial_summary", "paper_farm_snapshot")
+            )
+
+    # Always include deterministic baseline control examples covering DISCARD & PROMOTE regimes
+    controls = [
+        (
+            "profile=core_24x5_compound mean_bps=-6.843 cpcv_oos_mean_bps=-6.813 "
+            "dsr=0.0 pbo=0.3333 hac_t=-0.8961 spa_p=0.79 n_trades=49 verdict=DISCARD",
+            "accounts=4 combined_equity_usd=1019918.36 paper_only=True "
+            "live_execution_enabled=False inspect_accuracy=1.0 tca_mean_is_bps=4.2",
+        ),
+        (
+            "leg=LONG mean_bps_1x=42.5 mean_bps_2x=34.5 cpcv_oos_mean_bps=33.8 "
+            "dsr=0.985 pbo=0.1667 hac_t=4.12 spa_p=0.0033 n_trades=64 verdict=PROMOTE",
+            "accounts=4 combined_equity_usd=1019918.36 paper_only=True "
+            "live_execution_enabled=False inspect_accuracy=1.0 clarabel_weights_sum=1.0",
+        ),
+    ]
+    for opt_txt, pf_txt in controls:
+        counts["control_examples"] += 1
+        examples.append(
+            dspy.Example(
+                philosophy_charter=charter,
+                optuna_trial_summary=opt_txt,
+                paper_farm_snapshot=pf_txt,
+                philosophy_aligned=True,
+            ).with_inputs("philosophy_charter", "optuna_trial_summary", "paper_farm_snapshot")
+        )
+    return examples, counts
+
+
+def compile_gepa_reflection_program(
+    *,
+    mlflow_url: str = "http://127.0.0.1:5000",
+    xerj_url: str = "http://127.0.0.1:9200",
+    omniroute_url: str = DEFAULT_OMNIROUTE_API_BASE,
+    model: str = DEFAULT_OMNIROUTE_MODEL,
+    max_metric_calls: int = 12,
+    manifest_path: Path | None = None,
+    offline: bool = False,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Compile Tier0SelfReflectionProgram with native dspy.GEPA off execution hot paths."""
+    examples, source_counts = collect_mlflow_xerj_reflection_examples(
+        mlflow_url=mlflow_url,
+        xerj_url=xerj_url,
+        offline=offline,
+    )
+    split = max(2, min(len(examples) - 2, int(len(examples) * 0.65)))
+    trainset = examples[:split]
+    valset = examples[split:]
+    if not valset:
+        valset = examples[-2:]
+        trainset = examples[:-2] or examples[:2]
+
+    base_receipt: dict[str, Any] = {
+        "schema_version": "tier0.dspy-gepa-compile.v1",
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "paper_only": True,
+        "live_execution_enabled": False,
+        "off_execution_hot_path": True,
+        "omniroute_api_base": omniroute_url,
+        "model": model,
+        "max_metric_calls": int(max_metric_calls),
+        "source_counts": source_counts,
+        "trainset_size": len(trainset),
+        "valset_size": len(valset),
+    }
+
+    if offline:
+        return base_receipt | {
+            "compiled": False,
+            "status": "skipped_offline",
+            "baseline_val_score": None,
+            "compiled_val_score": None,
+            "optimized_instructions": {},
+        }
+    if not _endpoint_reachable(omniroute_url):
+        return base_receipt | {
+            "compiled": False,
+            "status": "omniroute_unreachable",
+            "baseline_val_score": None,
+            "compiled_val_score": None,
+            "optimized_instructions": {},
+        }
+
+    def _eval_program(
+        prog: dspy.Module, ds: list[dspy.Example]
+    ) -> tuple[float, list[dict[str, Any]]]:
+        scores: list[float] = []
+        details: list[dict[str, Any]] = []
+        for ex in ds:
+            pred = prog(
+                philosophy_charter=ex.philosophy_charter,
+                optuna_trial_summary=ex.optuna_trial_summary,
+                paper_farm_snapshot=ex.paper_farm_snapshot,
+            )
+            sc, fb = philosophy_convergence_metric(ex, pred)
+            scores.append(sc)
+            details.append({"score": sc, "feedback": fb})
+        return (round(sum(scores) / len(scores), 4) if scores else 0.0), details
+
+    try:
+        lm = build_omniroute_dspy_lm(model=model, api_base=omniroute_url)
+        student = Tier0SelfReflectionProgram()
+        with dspy.context(lm=lm):
+            base_score, base_details = _eval_program(student, valset)
+            gepa = build_gepa_reflection_optimizer(
+                reflection_lm=lm,
+                max_metric_calls=max(4, int(max_metric_calls)),
+                candidate_selection_strategy="pareto",
+                seed=seed,
+            )
+            compiled = gepa.compile(student=student, trainset=trainset, valset=valset)
+            comp_score, comp_details = _eval_program(compiled, valset)
+
+        opt_instructions: dict[str, str] = {}
+        for pname, pred_mod in compiled.named_predictors():
+            sig = getattr(pred_mod, "signature", None)
+            instr = str(getattr(sig, "instructions", "") or "").strip()
+            if instr:
+                opt_instructions[str(pname)] = instr
+
+        receipt = base_receipt | {
+            "compiled": True,
+            "status": "ok",
+            "baseline_val_score": base_score,
+            "compiled_val_score": comp_score,
+            "val_score_delta": round(comp_score - base_score, 4),
+            "baseline_val_details": base_details,
+            "compiled_val_details": comp_details,
+            "optimized_instructions": opt_instructions,
+        }
+    except Exception as exc:  # noqa: BLE001
+        receipt = base_receipt | {
+            "compiled": False,
+            "status": "compile_error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "baseline_val_score": None,
+            "compiled_val_score": None,
+            "optimized_instructions": {},
+        }
+
+    if manifest_path is not None:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = manifest_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, manifest_path)
+        receipt["manifest_path"] = str(manifest_path)
+    return receipt
 
 
 def run_live_dspy_reflection(

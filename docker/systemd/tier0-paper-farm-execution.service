@@ -1,0 +1,26 @@
+[Unit]
+Description=Tier-0 SOTA 24/5 Alpaca Paper 1000rpm Continuous Execution & Lossless Trailing Supervisor (Paper-Only, WSL2 Native)
+After=network-online.target tier0-openbb-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sota
+WorkingDirectory=/mnt/z/noesis
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/mnt/z/noesis/src
+Environment=TIER0_DATA_ROOT=/mnt/z/sota-data
+Environment=TIER0_ALPACA_RPM=1000
+Environment=LIVE_EXECUTION_ENABLED=false
+Environment=OMP_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+MemoryHigh=2G
+MemoryMax=4G
+CPUQuota=200%
+Restart=always
+RestartSec=5
+ExecStartPre=/usr/bin/env bash -lc 'test -z "$(ss -lntH | grep -E ":(4001|7496|8798|8796)\\b" || true)" && test "$(sha256sum /mnt/z/noesis/src/tier0_sota/risk.py | cut -d" " -f1)" = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"'
+ExecStart=/usr/bin/env bash -lc 'export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" UV_PROJECT_ENVIRONMENT="$HOME/noesis/.venv" FNOX_AGE_KEY_FILE="$HOME/.config/fnox/age.txt" && exec fnox exec --profile paper -- uv run --no-sync python -c "import pathlib, sys; from tier0_sota.live.execution import run_execution; run_execution(pathlib.Path(sys.argv[1]))" /mnt/z/sota-data/manifests'
+
+[Install]
+WantedBy=multi-user.target

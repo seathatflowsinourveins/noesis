@@ -1,8 +1,8 @@
 services:
   mlflow:
     image: tier0-sota-research:latest
-    cpus: "4.0"
-    mem_limit: 2g
+    cpus: "2.0"
+    mem_limit: 1536m
     build:
       context: ..
       dockerfile: docker/Dockerfile.research
@@ -24,7 +24,7 @@ services:
       - --cors-allowed-origins
       - http://127.0.0.1:5000,http://localhost:5000,http://${TIER0_TAILSCALE_HOST:-localhost}:5000,https://${TIER0_TAILSCALE_HOST:-localhost}:5000,http://${TIER0_TAILSCALE_SHORT:-localhost}:5000
       - --workers
-      - "2"
+      - "1"
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
@@ -40,19 +40,25 @@ services:
       - MLFLOW_ENABLE_REMOTE_ASSISTANT=true
       - MLFLOW_ENABLE_ASSISTANT_SANDBOX=true
       - OMP_NUM_THREADS=2
-      - POLARS_MAX_THREADS=4
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - BLIS_NUM_THREADS=2
+      - POLARS_MAX_THREADS=2
+      - RAYON_NUM_THREADS=2
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
-      interval: 30s
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:5000/health"]
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
   optuna-dashboard:
     image: tier0-sota-research:latest
-    cpus: "2.0"
-    mem_limit: 1g
+    cpus: "1.0"
+    mem_limit: 768m
     pull_policy: never
     user: "1000:1000"
     working_dir: /workspace
@@ -73,27 +79,92 @@ services:
       - HOME=/tmp
       - USER=sota
       - LOGNAME=sota
+      - OMP_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - BLIS_NUM_THREADS=2
+      - POLARS_MAX_THREADS=2
+      - RAYON_NUM_THREADS=2
     depends_on:
       - mlflow
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=3)"]
-      interval: 30s
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
-  dagster-webserver:
+  dagster-code-server:
     image: tier0-sota-research:latest
-    cpus: "4.0"
+    cpus: "2.0"
     mem_limit: 2g
     pull_policy: never
     user: "1000:1000"
     working_dir: /workspace
     command:
-      - dagster-webserver
+      - dagster
+      - api
+      - grpc
+      - -h
+      - 0.0.0.0
+      - -p
+      - "4266"
       - -m
       - tier0_sota.definitions
+      - -d
+      - /workspace
+      - --max-workers
+      - "4"
+    volumes:
+      - ${TIER0_REPO_ROOT:-..}:/workspace
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/dagster_home:/var/dagster_home
+      - ./dagster.yaml:/var/dagster_home/dagster.yaml:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests
+      - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
+    environment:
+      - HOME=/tmp
+      - USER=sota
+      - LOGNAME=sota
+      - DAGSTER_HOME=/var/dagster_home
+      - TIER0_MARKET_DATA_ROOT=/mnt/z/sota-data/prewall-lake
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - XERJ_URL=http://xerj:9200
+      - PYTHONPATH=/workspace/src:/workspace
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
+      - BLIS_NUM_THREADS=4
+      - POLARS_MAX_THREADS=4
+      - RAYON_NUM_THREADS=4
+      - TIER0_DUCKDB_THREADS=4
+    depends_on:
+      - mlflow
+      - xerj
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/4266'"]
+      interval: 120s
+      start_interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  dagster-webserver:
+    image: tier0-sota-research:latest
+    cpus: "1.0"
+    mem_limit: 1g
+    pull_policy: never
+    user: "1000:1000"
+    working_dir: /workspace
+    command:
+      - dagster-webserver
+      - -w
+      - /var/dagster_home/workspace.yaml
       - -h
       - 0.0.0.0
       - -p
@@ -104,6 +175,7 @@ services:
       - ${TIER0_REPO_ROOT:-..}:/workspace
       - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/dagster_home:/var/dagster_home
       - ./dagster.yaml:/var/dagster_home/dagster.yaml:ro
+      - ./workspace.yaml:/var/dagster_home/workspace.yaml:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
@@ -116,33 +188,46 @@ services:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - XERJ_URL=http://xerj:9200
       - PYTHONPATH=/workspace/src:/workspace
+      - OMP_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - BLIS_NUM_THREADS=2
+      - POLARS_MAX_THREADS=2
+      - RAYON_NUM_THREADS=2
     depends_on:
-      - mlflow
-      - xerj
+      dagster-code-server:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+      xerj:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/server_info', timeout=3)"]
-      interval: 30s
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:3000/server_info"]
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
   dagster-daemon:
     image: tier0-sota-research:latest
-    cpus: "4.0"
-    mem_limit: 4g
+    cpus: "1.5"
+    mem_limit: 1g
     pull_policy: never
     user: "1000:1000"
     working_dir: /workspace
     command:
       - dagster-daemon
       - run
-      - -m
-      - tier0_sota.definitions
+      - -w
+      - /var/dagster_home/workspace.yaml
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
       - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/dagster_home:/var/dagster_home
       - ./dagster.yaml:/var/dagster_home/dagster.yaml:ro
+      - ./workspace.yaml:/var/dagster_home/workspace.yaml:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/prewall-lake:/mnt/z/sota-data/prewall-lake:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/duckdb:/mnt/z/sota-data/duckdb:ro
@@ -155,15 +240,33 @@ services:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - XERJ_URL=http://xerj:9200
       - PYTHONPATH=/workspace/src:/workspace
+      - OMP_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - BLIS_NUM_THREADS=2
+      - POLARS_MAX_THREADS=2
+      - RAYON_NUM_THREADS=2
     depends_on:
-      - dagster-webserver
-      - xerj
+      dagster-code-server:
+        condition: service_healthy
+      dagster-webserver:
+        condition: service_started
+      xerj:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "dagster-daemon", "liveness-check"]
+      interval: 600s
+      start_interval: 10s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   inspect-view:
     image: tier0-sota-research:latest
-    cpus: "2.0"
-    mem_limit: 1g
+    cpus: "1.0"
+    mem_limit: 768m
     pull_policy: never
     user: "1000:1000"
     working_dir: /workspace
@@ -207,20 +310,28 @@ services:
       - HOME=/tmp
       - USER=sota
       - LOGNAME=sota
+      - OMP_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - BLIS_NUM_THREADS=2
+      - POLARS_MAX_THREADS=2
+      - RAYON_NUM_THREADS=2
     depends_on:
       - mlflow
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7575/', timeout=3)"]
-      interval: 30s
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:7575/"]
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
   zensical:
     image: tier0-sota-research:latest
-    cpus: "2.0"
-    mem_limit: 1g
+    cpus: "1.0"
+    mem_limit: 512m
     pull_policy: never
     user: "1000:1000"
     working_dir: /workspace
@@ -235,18 +346,28 @@ services:
       - "127.0.0.1:8010:8000"
     volumes:
       - ${TIER0_REPO_ROOT:-..}:/workspace
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/zensical-site:/workspace/site
+      - ${TIER0_STATE_ROOT:-${HOME}/tier0-sota-state}/zensical-cache:/workspace/.cache
     environment:
       - HOME=/tmp
       - USER=sota
       - LOGNAME=sota
+      - OMP_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+      - BLIS_NUM_THREADS=2
+      - POLARS_MAX_THREADS=2
+      - RAYON_NUM_THREADS=2
     depends_on:
       - mlflow
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
-      interval: 30s
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:8000/"]
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
   telemetry-exporter:
@@ -262,6 +383,8 @@ services:
       - "127.0.0.1:13133:13133"
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      - GOMAXPROCS=1
     restart: unless-stopped
 
   prometheus:
@@ -272,22 +395,53 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus_rules.yml:/etc/prometheus/prometheus_rules.yml:ro
       - prometheus_data:/prometheus
+    environment:
+      - GOMAXPROCS=2
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+      - --web.external-url=http://127.0.0.1:9090
       - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=2GB
     depends_on:
       - telemetry-exporter
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/healthy || exit 1"]
-      interval: 30s
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
       start_period: 15s
     restart: unless-stopped
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    profiles:
+      - alerting
+    cpus: "0.25"
+    mem_limit: 128m
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    environment:
+      - GOMAXPROCS=1
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9093/-/healthy || exit 1"]
+      interval: 60s
+      start_interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
   grafana:
-    image: grafana/grafana:13.3.1
+    image: grafana/grafana:13.3.2
     cpus: "2.0"
     mem_limit: 1g
     ports:
@@ -295,19 +449,35 @@ services:
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
     environment:
+      - GOMAXPROCS=2
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false
+      - GF_PLUGINS_DISABLE_PLUGINS=cloudwatch,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,stackdriver,tempo,zipkin
+      # Metrics Drilldown is a catalog plugin Grafana preinstalls on startup (not in the image);
+      # pin the version so the default preinstall_auto_update cannot change it on recreate.
+      - GF_PLUGINS_PREINSTALL=grafana-metricsdrilldown-app@3.2.0
+      - GF_UNIFIED_ALERTING_ENABLED=false
+      - GF_LIVE_MAX_CONNECTIONS=0
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+      - GF_LOG_LEVEL=warn
+      - GF_LOG_FILTERS=search-manifest-watcher:error
     depends_on:
       - prometheus
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
-      interval: 30s
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
 
   xerj:
@@ -315,8 +485,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.xerj
-    cpus: "4.0"
-    mem_limit: 2g
+    cpus: "2.0"
+    mem_limit: 1g
     user: "1000:1000"
     ports:
       - "127.0.0.1:9200:9200"
@@ -328,10 +498,19 @@ services:
       - XERJ_BIND_ADDRESS=0.0.0.0
       - XERJ_ALLOW_INSECURE_NETWORK_BIND=true
       - XERJ_DISABLE_FEEDBACK=true
+      - TOKIO_WORKER_THREADS=4
+      - RAYON_NUM_THREADS=4
     command:
       - --insecure
       - --data-dir
       - /data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:9200/"]
+      interval: 120s
+      start_interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
 
   tearsheets:
@@ -339,27 +518,29 @@ services:
     cpus: "0.5"
     mem_limit: 256m
     user: "1000:1000"
+    network_mode: host
     command:
       - caddy
-      - file-server
-      - --listen
-      - :8793
-      - --root
-      - /mnt/z/sota-data/manifests
-      - --browse
-    ports:
-      - "127.0.0.1:8793:8793"
+      - run
+      - --config
+      - /etc/caddy/Caddyfile
+      - --adapter
+      - caddyfile
     volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
     environment:
       - HOME=/tmp
       - XDG_CONFIG_HOME=/tmp/caddy/config
       - XDG_DATA_HOME=/tmp/caddy/data
+      - GOMAXPROCS=1
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8793/ || exit 1"]
-      interval: 30s
+      interval: 120s
+      start_interval: 5s
       timeout: 5s
       retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # Optional portals-profile helper for inspecting FINOS workspace plugin mounts.
@@ -417,3 +598,4 @@ services:
 
 volumes:
   prometheus_data:
+  grafana_data:

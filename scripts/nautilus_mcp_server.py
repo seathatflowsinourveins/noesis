@@ -17,8 +17,37 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import polars as pl
-from mcp.server.fastmcp import FastMCP
+
+def _apply_mcp_stdio_thread_bounds() -> None:
+    """Cap idle thread pools for long-lived stdio MCP server processes."""
+    if (
+        __name__ != "__main__"
+        or "--smoke" in sys.argv
+        or "--self-check" in sys.argv
+        or os.environ.get("TIER0_UNBOUNDED_THREADS", "").strip() == "1"
+    ):
+        return
+    raw = os.environ.get("TIER0_MCP_THREADS", "2").strip()
+    threads = raw if raw.isdigit() and int(raw) > 0 else "2"
+    for key in (
+        "POLARS_MAX_THREADS",
+        "RAYON_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "TOKIO_WORKER_THREADS",
+    ):
+        os.environ[key] = threads
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+    os.environ.setdefault("GOMP_SPINCOUNT", "0")
+
+
+_apply_mcp_stdio_thread_bounds()
+
+import polars as pl  # noqa: E402
+from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.types import ToolAnnotations  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -38,13 +67,17 @@ from tier0_sota.engine import (  # noqa: E402
     SESSION_PROTECTION_24X5,
     build_sandbox_live_node,
     build_venue_live_node_config,
+    build_venue_order_handle_spec,
     get_session_protection_profile,
     inspect_venue_capability,
     run_nautilus_signal_backtest,
     select_pooled_trailing_schedule,
     validate_venue_order_capability,
 )
-from tier0_sota.research import evaluate_hftbacktest_queue_markout  # noqa: E402
+from tier0_sota.live.paper_farm import (  # noqa: E402
+    build_symbol_24x5_session_presets,
+    resolve_alpaca_paper_venue_profile,
+)
 from tier0_sota.risk import (  # noqa: E402
     MAX_STOP_LOSS_PCT,
     Side,
@@ -69,9 +102,17 @@ _FALLBACK_PERF_PATH = DEFAULT_MANIFEST_DIR / "live_performance_manifest.json"
 _FALLBACK_MOVERS_PATH = DEFAULT_MANIFEST_DIR / "live_whole_market_movers_manifest.json"
 
 mcp = FastMCP("tier0-nautilus-engine")
+# MCP tool annotation hints: nine tools only read local state; the staging tool rewrites
+# the staged-ticket JSON and upserts the local DuckDB audit (no broker or network calls).
+_READ_ONLY_LOCAL = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+_STAGES_LOCAL_TICKET = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def get_engine_backbone_status(venue_profile: str = "IBKR_PAPER_4002") -> dict[str, Any]:
     """Return read-only Environment.SANDBOX LiveNode spec and 24/5 session metadata."""
     prof = validate_venue_order_capability(venue_profile)
@@ -94,27 +135,34 @@ def get_engine_backbone_status(venue_profile: str = "IBKR_PAPER_4002") -> dict[s
             "max_order_submit_rate": str(re_cfg.max_order_submit_rate),
             "max_order_modify_rate": str(re_cfg.max_order_modify_rate),
         },
+        "order_handle_spec": build_venue_order_handle_spec(prof.venue_id),
         "sessions_24x5": sorted(SESSION_PROTECTION_24X5.keys()),
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def inspect_venue_profile(
     venue_profile: str = "IBKR_PAPER_4002",
     algo: str = "STOP_LIMIT",
     requested_rpm: int | None = None,
     require_24x5_overnight: bool = False,
+    session: str = "RTH",
+    trailing_schedule: str = "baseline",
 ) -> dict[str, Any]:
-    """Inspect multi-venue RPM pacing, algorithm support, and fail-closed LIVE posture."""
-    return inspect_venue_capability(
+    """Inspect multi-venue RPM pacing, order-handle spec, algo support & fail-closed LIVE gate."""
+    cap = inspect_venue_capability(
         venue_profile,
         algo=algo,
         requested_rpm=requested_rpm,
         require_24x5_overnight=require_24x5_overnight,
     )
+    cap["order_handle_spec"] = build_venue_order_handle_spec(
+        venue_profile, session=session, trailing_schedule=trailing_schedule
+    )
+    return cap
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def compute_risk_sized_stop(
     entry_price: str,
     side: str,
@@ -140,7 +188,7 @@ def compute_risk_sized_stop(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def run_prewall_native_backbone_parity(
     symbol: str = "AAPL", day: str = "2026-10-15"
 ) -> dict[str, Any]:
@@ -186,7 +234,7 @@ def run_prewall_native_backbone_parity(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def check_prewall_pit_session(day: str = "2026-10-15") -> dict[str, Any]:
     """Validate pre-wall PIT date (<= 2026-10-15) and resolve prior XNYS session."""
     d = assert_pre_wall_date(day)
@@ -199,7 +247,7 @@ def check_prewall_pit_session(day: str = "2026-10-15") -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def evaluate_l1_queue_markout(
     symbol: str, day: str = "2026-10-15", side: str = "BUY", root: str | None = None
 ) -> dict[str, Any]:
@@ -218,13 +266,39 @@ def evaluate_l1_queue_markout(
         return {"ok": False, "error": f"Missing L1 quotes/trades for {sym} on {d.isoformat()}"}
     q_df = pl.scan_parquet([str(p) for p in q_files]).collect()
     t_df = pl.scan_parquet([str(p) for p in t_files]).collect()
+    from tier0_sota.research import evaluate_hftbacktest_queue_markout
+
     res = evaluate_hftbacktest_queue_markout(q_df, t_df, symbol=sym, side=sd)
     return {"ok": True, **res}
 
 
-@mcp.tool()
+_ADMITTED_WATCHLIST_SCHEMAS = frozenset(
+    {
+        "tier0.watchlist-manifest.v1",
+        "tier0.whole-market-movers.v2",
+        "tier0.live-half-auto-tickets.v1",
+        "tier0.live-lane-preset-bundle.v1",
+        "tier0.tv-compounding-manifest.v1",
+        "tier0.tv-engine-coordination.v1",
+        "tier0.tv-order-presets.v1",
+        "tier0.staged-tv-presets.v1",
+    }
+)
+
+
+def _read_optional_json_dict(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, Any]:
-    """Read live watchlist/movers manifest JSON (v1 or v2) fail-closed."""
+    """Read live watchlist, movers, preset bundle, or TV compounding manifest fail-closed."""
     env_p = os.environ.get("TIER0_WATCHLIST_MANIFEST") or os.environ.get(
         "TIER0_LIVE_WATCHLIST_MANIFEST"
     )
@@ -241,14 +315,85 @@ def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, A
     if not isinstance(data, dict):
         return {"ok": False, "error": "Invalid watchlist manifest JSON: expected object"}
     schema = data.get("schema_version")
-    if schema not in {"tier0.watchlist-manifest.v1", "tier0.whole-market-movers.v2"}:
+    if schema not in _ADMITTED_WATCHLIST_SCHEMAS:
         return {"ok": False, "error": f"Unexpected schema_version: {schema!r}"}
-    return {"ok": True, "manifest_path": str(target), **data}
+    res: dict[str, Any] = {"ok": True, "manifest_path": str(target), **data}
+    if schema == "tier0.whole-market-movers.v2":
+        tv_sync: dict[str, Any] = {}
+        bundle = _read_optional_json_dict(target.parent / "live_lane_order_preset_bundle.json")
+        if bundle is not None:
+            tv_sync["preset_bundle_count"] = len(bundle.get("top_potential_symbols") or ())
+            tv_sync["tca_calibration_ok"] = bool(bundle.get("tca_calibration_ok", True))
+        comp = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_compounding_manifest.json"
+        )
+        if comp is not None:
+            tv_sync["tv_compounding"] = comp
+        tickets = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "live_half_auto_tickets.json"
+        )
+        if tickets is not None:
+            tv_sync["tickets_count"] = len(tickets.get("tickets") or ())
+            tv_sync["standby_presets_count"] = len(tickets.get("standby_presets") or ())
+        coord = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_engine_coordination_manifest.json"
+        )
+        if coord is not None:
+            tv_sync["tv_engine_coordination"] = coord
+        staged_doc = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "staged_tv_presets.json"
+        )
+        if staged_doc is not None:
+            staged_rows = [
+                row
+                for row in (staged_doc.get("presets") or ())
+                if isinstance(row, Mapping) and row.get("symbol")
+            ]
+            tv_sync["staged_tv_presets_count"] = len(staged_rows)
+            tv_sync["staged_tv_presets"] = [
+                {
+                    "alert_id": row.get("alert_id"),
+                    "symbol": row.get("symbol"),
+                    "side": row.get("side"),
+                    "session": row.get("session"),
+                    "venue_profile": row.get("venue_profile"),
+                    "order_type": row.get("order_type"),
+                    "min_trailing_pct": row.get("min_trailing_pct"),
+                    "semi_auto_confirmed": bool(row.get("semi_auto_confirmed", False)),
+                    "sessions_covered": sorted(
+                        (row.get("session_order_presets") or {}).keys()
+                        if isinstance(row.get("session_order_presets"), Mapping)
+                        else ()
+                    ),
+                }
+                for row in staged_rows
+            ]
+        order_presets_doc = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_order_presets.json"
+        )
+        if order_presets_doc is not None:
+            cards = order_presets_doc.get("symbol_order_cards") or ()
+            tv_sync["tv_order_presets_count"] = len(cards)
+            tv_sync["tv_order_presets_venue_profile"] = order_presets_doc.get("venue_profile")
+            tv_sync["tv_order_presets_sessions"] = sorted(SESSION_PROTECTION_24X5.keys())
+        wl_sync = _read_optional_json_dict(
+            target.parent / "tv_sota_pack" / "tv_watchlist_sync_payload.json"
+        )
+        if wl_sync is not None and isinstance(wl_sync.get("watchlists"), Mapping):
+            wl_map = wl_sync["watchlists"]
+            tv_sync["watchlist_sync_payload_counts"] = {
+                str(k): int(v.get("symbol_count") or 0)
+                for k, v in wl_map.items()
+                if isinstance(v, Mapping)
+            }
+        if tv_sync:
+            res["tv_sync"] = tv_sync
+    return res
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str, Any]:
-    """Read Paper Farm live performance manifest JSON fail-closed."""
+    """Read Paper Farm live performance manifest JSON fail-closed with sibling TV sync."""
     env_p = os.environ.get("TIER0_PERFORMANCE_MANIFEST") or os.environ.get(
         "TIER0_LIVE_PERFORMANCE_MANIFEST"
     )
@@ -260,10 +405,24 @@ def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str,
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"ok": False, "error": f"Invalid performance manifest JSON: {exc}"}
-    return {"ok": True, **data}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "Invalid performance manifest JSON: expected object"}
+    res: dict[str, Any] = {"ok": True, **data}
+    comp = _read_optional_json_dict(target.parent / "tv_sota_pack" / "tv_compounding_manifest.json")
+    if comp is not None:
+        res["tv_compounding"] = comp
+    coord = _read_optional_json_dict(
+        target.parent / "tv_sota_pack" / "tv_engine_coordination_manifest.json"
+    )
+    if coord is not None:
+        res["tv_engine_coordination"] = coord
+    exe = _read_optional_json_dict(target.parent / "paper_farm_execution_status.json")
+    if exe is not None:
+        res["execution_status_snapshot"] = exe
+    return res
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def rank_symbols_advisory(
     day: str = "2026-10-15",
     top_k: int = 10,
@@ -321,8 +480,15 @@ def _stage_minimal_order_preset(
     if sess not in ("PRE_MARKET", "RTH", "AFTER_HOURS", "OVERNIGHT"):
         raise ValueError(f"Unsupported or closed session {src.get('session')!r}")
     vu = venue.strip().upper()
-    if vu not in ("IBKR", "ALPACA"):
-        raise ValueError(f"Unsupported venue {venue!r}")
+    req_vp = str(src.get("venue_profile") or "").strip().upper()
+    if req_vp:
+        vprof = validate_venue_order_capability(req_vp)
+        vu = vprof.broker
+        resolved_vp = vprof.venue_id
+    else:
+        if vu not in ("IBKR", "ALPACA"):
+            raise ValueError(f"Unsupported venue {venue!r}")
+        resolved_vp = "IBKR_PAPER_4002" if vu == "IBKR" else resolve_alpaca_paper_venue_profile()[0]
     if vu == "ALPACA" and out_side == "SELL" and sess == "OVERNIGHT":
         raise ValueError("ALPACA overnight SHORT unsupported; use IBKR")
     natr = Decimal(str(src.get("natr_pct", "0.020")))
@@ -344,20 +510,108 @@ def _stage_minimal_order_preset(
     cd = int(src.get("reentry_cooldown_secs", 60))
     if cd < 60 or cd > 86_400:
         raise ValueError("reentry_cooldown_secs must be in [60, 86400]")
+    handle_spec = build_venue_order_handle_spec(
+        resolved_vp, session=prof.session, trailing_schedule=req_sched
+    )
+    route_side: Side = "LONG" if out_side == "BUY" else "SHORT"
+    raw_px = src.get("trigger_price") or src.get("entry_price") or src.get("price") or "100.00"
+    ref_px = Decimal(str(raw_px))
+    if not ref_px.is_finite() or ref_px <= Decimal("0"):
+        raise ValueError(f"Invalid reference price: {raw_px!r}")
+    alp_vp = resolved_vp if resolved_vp in ("ALPACA_PAPER_200", "ALPACA_PAPER_1000") else None
+    alp_rpm = (
+        1000 if alp_vp == "ALPACA_PAPER_1000" else (200 if alp_vp == "ALPACA_PAPER_200" else None)
+    )
+    cal_trail = src.get("min_trailing_pct")
+    session_presets = build_symbol_24x5_session_presets(
+        symbol=sym,
+        side=route_side,
+        ref_price=ref_px,
+        natr_pct=natr,
+        spread_bps=src.get("spread_bps"),
+        calibrated_min_trailing_pct=cal_trail,
+        alpaca_venue_profile=alp_vp,
+        alpaca_max_rpm=alp_rpm,
+        inverse_hedge_symbol=(str(src.get("pair_symbol") or "").strip().upper() or None),
+    )
+    active_sp = session_presets[prof.session]
+    r_locks: dict[str, Any] = {
+        "be_plus_fee_price": active_sp["be_plus_fee_price"],
+        "lock_at_1r": active_sp["lock_at_1r"],
+        "lock_at_2r": active_sp["lock_at_2r"],
+        "lock_at_3r": active_sp["lock_at_3r"],
+        "fast_sell_non_noise_reverse_trigger": active_sp["fast_sell_non_noise_reverse_trigger"],
+    }
+    momentum_reason = {
+        k: v
+        for k, v in (
+            (
+                "calibrated_category",
+                str(src.get("calibrated_category") or src.get("setup_archetype") or "").strip()
+                or None,
+            ),
+            ("rvol", float(src["rvol"]) if src.get("rvol") is not None else None),
+            (
+                "darkpool_trf_ratio",
+                float(src["darkpool_trf_ratio"])
+                if src.get("darkpool_trf_ratio") is not None
+                else None,
+            ),
+            (
+                "technical_alignment_score",
+                float(src["technical_alignment_score"])
+                if src.get("technical_alignment_score") is not None
+                else None,
+            ),
+        )
+        if v is not None
+    }
     norm_preset: dict[str, Any] = {
         "symbol": sym,
         "qty": 1,
         "side": out_side,
         "session": prof.session,
         "venue": vu,
+        "venue_profile": resolved_vp,
         "order_type": order_type,
         "limit_collar_bps": collar,
         "trailing_schedule": req_sched,
+        "min_trailing_pct": float(active_sp["min_trailing_pct"]),
+        "r_lock_levels": r_locks,
+        "session_order_presets": session_presets,
         "auto_reverse": bool(src.get("auto_reverse", True)),
+        "auto_reverse_policy": "FLATTEN_FIRST_PEAK_CLIMAX_REVERSE",
         "auto_reentry": bool(src.get("auto_reentry", True)),
         "reentry_cooldown_secs": cd,
+        "paper_only": True,
         "semi_auto_confirmed": False,
+        "live_execution_enabled": False,
+        "order_handle_spec": handle_spec,
     }
+    if momentum_reason:
+        norm_preset["momentum_trigger_reason"] = momentum_reason
+    if src.get("darkpool_trf_ratio") is not None:
+        trf_v = float(src["darkpool_trf_ratio"])
+        if not 0.0 <= trf_v <= 1.0:
+            raise ValueError("darkpool_trf_ratio must be in [0.0, 1.0]")
+        norm_preset["darkpool_trf_ratio"] = round(trf_v, 4)
+    for num_key in ("vol_buildup_ratio", "hidden_volume_ratio"):
+        if src.get(num_key) is not None:
+            nv = float(src[num_key])
+            if nv < 0.0:
+                raise ValueError(f"{num_key} must be >= 0.0")
+            norm_preset[num_key] = round(nv, 4)
+    for bool_key in ("unusual_volume_buildup", "peak_confirmed"):
+        if src.get(bool_key) is not None:
+            norm_preset[bool_key] = bool(src[bool_key])
+    for str_key in ("pair_symbol", "setup_archetype", "order_preset_id"):
+        if val := str(src.get(str_key) or "").strip():
+            norm_preset[str_key] = val.upper() if str_key == "pair_symbol" else val
+    if src.get("script_kind") is not None:
+        sk = str(src["script_kind"]).strip().lower()
+        if sk not in ("indicator", "strategy"):
+            raise ValueError(f"Unsupported script_kind: {src['script_kind']!r}")
+        norm_preset["script_kind"] = sk
     if staged_path is not None:
         _atomic_write_json(
             Path(staged_path),
@@ -370,7 +624,7 @@ def _stage_minimal_order_preset(
     return norm_preset
 
 
-@mcp.tool()
+@mcp.tool(annotations=_STAGES_LOCAL_TICKET)
 def stage_semi_auto_order_preset(
     payload: dict[str, Any] | None = None,
     symbol: str | None = None,
@@ -383,6 +637,7 @@ def stage_semi_auto_order_preset(
     staged_path: str | None = None,
     watchlist_path: str | None = None,
     venue: str = "IBKR",
+    venue_profile: str | None = None,
     live_intake: bool = False,
 ) -> dict[str, Any]:
     """Validate and stage a semi-auto qty=1 preset (always semi_auto_confirmed=False)."""
@@ -398,6 +653,8 @@ def stage_semi_auto_order_preset(
         src["side"] = side
     if session is not None:
         src["session"] = session
+    if venue_profile is not None:
+        src["venue_profile"] = venue_profile
     if qty != 1 or "qty" not in src:
         src["qty"] = qty
     try:
@@ -405,6 +662,16 @@ def stage_semi_auto_order_preset(
             if path is not None and (not path.strip() or Path(path).is_dir()):
                 raise ValueError("Expected a nonempty file path")
         if "schema_version" in src:
+            req_vp = str(src.get("venue_profile") or "").strip().upper()
+            resolved_vp = (
+                validate_venue_order_capability(req_vp).venue_id
+                if req_vp
+                else (
+                    "IBKR_PAPER_4002"
+                    if venue.strip().upper() == "IBKR"
+                    else resolve_alpaca_paper_venue_profile()[0]
+                )
+            )
             s_path = DEFAULT_STAGED_PATH if staged_path is None else Path(staged_path)
             w_path = DEFAULT_WATCHLIST_PATH if watchlist_path is None else Path(watchlist_path)
             staged = stage_tv_alert_preset(
@@ -414,17 +681,28 @@ def stage_semi_auto_order_preset(
                 venue=venue,
                 live_intake=live_intake,
             )
+            staged_with_handle = {
+                **staged,
+                "venue_profile": resolved_vp,
+                "paper_only": True,
+                "live_execution_enabled": False,
+                "order_handle_spec": build_venue_order_handle_spec(
+                    resolved_vp,
+                    session=str(staged.get("session") or "RTH"),
+                    trailing_schedule=str(staged.get("trailing_schedule") or "baseline"),
+                ),
+            }
             return {
                 "ok": True,
-                **staged,
+                **staged_with_handle,
                 "semi_auto_confirmed": False,
-                "preset": staged,
-                "order_preset": staged,
+                "preset": staged_with_handle,
+                "order_preset": staged_with_handle,
             }
         if live_intake:
             raise ValueError("Live intake requires a complete tier0.tv-alert.v1 payload")
         norm = _stage_minimal_order_preset(src, staged_path=staged_path, venue=venue)
-    except (ValueError, TypeError, KeyError, OSError, OverflowError) as exc:
+    except (ValueError, TypeError, KeyError, OSError, OverflowError, PermissionError) as exc:
         return {"ok": False, "error": str(exc), "semi_auto_confirmed": False}
     return {
         "ok": True,
@@ -462,6 +740,7 @@ def run_smoke_check() -> dict[str, Any]:
 
     st = get_engine_backbone_status()
     vp = inspect_venue_profile()
+    vp_alp1000 = inspect_venue_profile("ALPACA_PAPER_1000")
     stop = compute_risk_sized_stop("100.00", "LONG", "100000")
     pit = check_prewall_pit_session("2026-10-15")
     par = run_prewall_native_backbone_parity()
@@ -483,6 +762,11 @@ def run_smoke_check() -> dict[str, Any]:
         and st["broker_ports_open"] == 0
         and st["live_execution_enabled"] is False
         and vp["allowed"] is True
+        and vp_alp1000["allowed"] is True
+        and vp_alp1000["max_rpm"] == 1000
+        and vp_alp1000["exit_reserve_rpm"] == 100
+        and vp_alp1000["live_execution_enabled"] is False
+        and vp_alp1000["order_handle_spec"]["trailing_modify_cadence_secs"] >= 1.0
         and int(stop["shares"]) > 0
         and pit["pre_wall_ok"] is True
         and par["overall_ok"] is True
