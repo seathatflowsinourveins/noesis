@@ -844,3 +844,59 @@ def test_workstation_lazy_imports_and_thread_bounds_fitness(
     ws_path = REPO_ROOT / "docker" / "workspace.yaml"
     assert ws_path.is_file(), "Missing official Dagster gRPC docker/workspace.yaml"
     assert "dagster-code-server" in ws_path.read_text(encoding="utf-8")
+
+
+def test_sota_manifest_frontier_spdx_zero_crypto_and_options_sidecar() -> None:
+    """Enforce 75/75 frontier SPDX tags, zero-crypto QC trigger, and structured options sidecar."""
+    sota = json.loads(
+        (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
+    )
+
+    frontier_cands = [
+        cand
+        for layer_doc in sota["earned_trigger_frontier_l11_to_l15"].values()
+        for cand in layer_doc.get("candidates", [])
+    ]
+    assert len(frontier_cands) >= 75
+    missing_frontier_spdx = [
+        c.get("slug") for c in frontier_cands if not str(c.get("spdx", "")).strip()
+    ]
+    assert missing_frontier_spdx == [], f"Frontier candidates missing spdx: {missing_frontier_spdx}"
+
+    excluded_wrappers = sota["backtest_platform_and_dashboard_form_audit"][
+        "excluded_backtest_dashboard_wrappers"
+    ]
+    missing_wrapper_spdx = [
+        w.get("repo") for w in excluded_wrappers if not str(w.get("spdx", "")).strip()
+    ]
+    assert missing_wrapper_spdx == [], (
+        f"Excluded dashboard wrappers missing spdx: {missing_wrapper_spdx}"
+    )
+
+    peers = {
+        p["repo"]: p
+        for p in sota["backtest_platform_and_dashboard_form_audit"][
+            "evaluated_backtest_engine_peers"
+        ]
+    }
+    qc_trigger = str(peers["QuantConnect/Lean"].get("earned_reconsideration_trigger", "")).strip()
+    assert qc_trigger, "QuantConnect/Lean must define earned_reconsideration_trigger"
+    assert "crypto" not in qc_trigger.lower(), (
+        f"QuantConnect/Lean trigger must stay US Equities & Options only: {qc_trigger}"
+    )
+
+    sidecar = sota["us_equities_options_sota_convergence_audit"]["paid_additive_us_options_sidecar"]
+    assert isinstance(sidecar, dict)
+    assert sidecar["local_refalsification_required_before_execution"] is True
+    stratum1_providers = [r["provider"] for r in sidecar["paid_additive_stratum1_data_rails"]]
+    stratum2_providers = [
+        r["provider"] for r in sidecar["paid_additive_stratum2_off_repo_sidecars"]
+    ]
+    assert any("Databento" in p for p in stratum1_providers)
+    assert any("QuantConnect" in p for p in stratum2_providers)
+    assert any("ORATS" in p for p in stratum2_providers)
+    guardrails = sidecar["execution_guardrails"]
+    assert guardrails["paper_only"] is True
+    assert guardrails["live_execution_enabled"] is False
+    assert guardrails["replaces_nautilus_v2_l3_ssot"] is False
+    assert guardrails["requires_local_6gate_falsification"] is True
