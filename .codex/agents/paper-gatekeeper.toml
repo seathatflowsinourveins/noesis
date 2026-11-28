@@ -10,7 +10,15 @@ Keep Stage-5 live autonomous entry refused until all 6 falsification gates clear
 """
 
 [mcp_servers.nautilus-engine]
+command = "uv"
+args = ["run", "--no-sync", "python", "scripts/nautilus_mcp_server.py"]
 disabled_tools = ["stage_semi_auto_order_preset"]
 
 [mcp_servers.xerj]
+command = "xerj"
+args = ["mcp"]
 disabled_tools = ["xerj_memory_store"]
+
+[mcp_servers.xerj.env]
+XERJ_URL = "http://127.0.0.1:9200"
+XERJ_DISABLE_FEEDBACK = "true"
