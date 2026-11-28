@@ -691,7 +691,9 @@ def test_thanksgiving_overnight_to_black_friday_early_close_24x5_parity() -> Non
         ((2026, 11, 27, 12, 59), "RTH"),
         ((2026, 11, 27, 13, 0), "AFTER_HOURS"),
         ((2026, 11, 27, 15, 59), "AFTER_HOURS"),
-        ((2026, 11, 27, 19, 59), "AFTER_HOURS"),
+        ((2026, 11, 27, 16, 59), "AFTER_HOURS"),
+        ((2026, 11, 27, 17, 0), "CLOSED"),
+        ((2026, 11, 27, 19, 59), "CLOSED"),
         ((2026, 11, 27, 20, 0), "CLOSED"),
     )
     for (y, m, d, hh, mm), expected_session in calendar_checks:

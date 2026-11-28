@@ -122,7 +122,7 @@ rejected_overlaps = ["poetry", "pipenv", "conda", "pip-tools", "custom-env-shell
 
 [layers.L1]
 name = "Data, Schema Validation, Calendars & Causal PIT"
-winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "edgartools", "fredapi", "sqlglot"]
+winners = ["polars", "duckdb", "pandera", "pydantic", "exchange_calendars", "pandas_market_calendars", "edgartools", "fredapi", "sqlglot"]
 rejected_overlaps = ["pandas-datareader", "yfinance", "clickhouse-local-server"]
 
 [layers.L2]
@@ -188,7 +188,7 @@ why = "Immutable pure Decimal Rule-612 risk kernel (SHA-256 & Z3 UNSAT verified)
 [files."src/tier0_sota/engine.py"]
 how = "integrate"
 upstream = "nautilus_trader"
-secondary_upstreams = ["hftbacktest", "polars", "exchange_calendars"]
+secondary_upstreams = ["hftbacktest", "polars", "exchange_calendars", "pandas_market_calendars"]
 feature = "NautilusTrader v2 24/5 session protection, per-symbol non-noise min-trail & synthetic off-hours order-type SSOT, 4-tier progressive lossless trailing, rapid re-entry, flatten-first auto-reverse & 1000rpm/3000rpm venue order-handle pacing"
 why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity directly to NautilusTrader v2"
 
