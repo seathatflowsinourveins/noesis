@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import sys
+import textwrap
 import tomllib
 from datetime import date
 from pathlib import Path
@@ -204,6 +208,15 @@ def test_ci_tool_versions_match_mise_pins() -> None:
                     used.append(("syft", str(inputs["syft-version"])))
                 elif uses.startswith("gitleaks/gitleaks-action@"):
                     used.append(("gitleaks", str(env["GITLEAKS_VERSION"])))
+    docker_uv_pins: list[str] = []
+    for dockerfile in sorted((REPO_ROOT / "docker").glob("Dockerfile.*")):
+        for ver in re.findall(
+            r"(?m)^COPY\s+--from=ghcr\.io/astral-sh/uv:([^\s@]+)",
+            dockerfile.read_text(encoding="utf-8"),
+        ):
+            docker_uv_pins.append(ver)
+            used.append(("uv", ver))
+    assert len(docker_uv_pins) >= 2, f"expected uv pins in Dockerfiles, got {docker_uv_pins}"
     assert {tool for tool, _ in used} == {"uv", "trivy", "zizmor", "syft", "gitleaks"}
     by_tool: dict[str, set[str]] = {}
     for tool, version in used:
@@ -308,6 +321,14 @@ def test_dependabot_covers_every_pinned_ecosystem() -> None:
     assert set(hook_groups[0]["patterns"]) == MISE_PINNED_HOOKS
     for group in hook_groups[1:]:
         assert set(group.get("exclude-patterns", [])) >= MISE_PINNED_HOOKS, group
+    # uv inside Dockerfiles moves in lockstep with mise.toml + workflows, so keep it separated
+    # from python/alpine bumps in the docker ecosystem.
+    (docker_eco,) = [u for u in updates if u["package-ecosystem"] == "docker"]
+    docker_groups = list(docker_eco["groups"].values())
+    assert next(iter(docker_eco["groups"])) == "docker-with-mise-pins"
+    assert set(docker_groups[0]["patterns"]) == {"ghcr.io/astral-sh/uv"}
+    for group in docker_groups[1:]:
+        assert "ghcr.io/astral-sh/uv" in set(group.get("exclude-patterns", [])), group
     # The auto-merge group must name exactly the actions that the four required jobs run.
     workflows = _load_workflows()
     required_workflow_actions = {
@@ -644,3 +665,179 @@ def test_dockerfile_images_pin_an_exact_version() -> None:
             last = ref.rsplit("/", 1)[-1]
             assert ":" in last, (path.name, ref)
             assert EXACT_IMAGE_TAG_RE.fullmatch(last.rsplit(":", 1)[1]), (path.name, ref)
+
+
+def _extract_just_os_recipe(just_text: str, name: str, os_name: str) -> str:
+    """Return the dedented body of a `[unix]`/`[windows]` justfile recipe."""
+    lines = just_text.splitlines()
+    for idx, line in enumerate(lines[:-1]):
+        if line.strip() == f"[{os_name}]" and re.match(
+            rf"^{re.escape(name)}(?: [^:]*)?:", lines[idx + 1]
+        ):
+            body: list[str] = []
+            for nxt in lines[idx + 2 :]:
+                if nxt and not nxt.startswith("    "):
+                    break
+                body.append(nxt)
+            return textwrap.dedent("\n".join(body))
+    raise AssertionError(f"missing [{os_name}] recipe {name!r} in justfile")
+
+
+def _extract_pyeof_heredoc(script_text: str) -> str:
+    match = re.search(r"<<'PYEOF'\n(.*?)\nPYEOF", script_text, flags=re.DOTALL)
+    assert match is not None, "missing PYEOF heredoc"
+    return textwrap.dedent(match.group(1)).strip()
+
+
+def test_lock_proof_catches_downgrades_and_matches_ci(tmp_path: Path) -> None:
+    """ADR-0032 §4: lock-proof matches CI PR proof and fails closed on any package downgrade."""
+    just_text = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    unix_body = _extract_just_os_recipe(just_text, "lock-proof", "unix")
+    win_body = _extract_just_os_recipe(just_text, "lock-proof", "windows")
+    unix_py = _extract_pyeof_heredoc(unix_body)
+
+    # Verify non-required read-only CI job in ci.yml runs the exact same no-downgrade script.
+    ci_jobs = _load_workflows()["ci.yml"]["jobs"]
+    pr_job = ci_jobs["pr-lock-and-compose-proof"]
+    assert pr_job["name"] not in REQUIRED_CHECKS
+    assert pr_job["if"] == "github.event_name == 'pull_request'"
+    assert pr_job["permissions"] == {"contents": "read"}
+    (checkout_step,) = [
+        step
+        for step in pr_job["steps"]
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert checkout_step.get("with", {}).get("fetch-depth") == 0
+    assert checkout_step.get("with", {}).get("persist-credentials") is False
+    pr_runs = "\n".join(str(step.get("run", "")) for step in pr_job["steps"])
+    assert "docker compose -f docker/compose.sota.yml config -q" in pr_runs
+    assert "docker compose -f docker/compose.ibkr-paper.yml config -q" in pr_runs
+    (lock_step,) = [
+        step for step in pr_job["steps"] if "LOCK_PROOF_OK=1" in str(step.get("run", ""))
+    ]
+    assert lock_step.get("shell") == "bash"
+    assert lock_step.get("env", {}).get("BASE_SHA") == "${{ github.event.pull_request.base.sha }}"
+    assert "set -euo pipefail" in str(lock_step["run"])
+    assert "2>&1 <<'PYEOF'" in str(lock_step["run"])
+    ci_py = _extract_pyeof_heredoc(str(lock_step["run"]))
+    assert ci_py == unix_py, "ci.yml lock-proof script drifted from justfile [unix] lock-proof"
+
+    # Extract Windows -c one-liner so both OS implementations are empirically verified.
+    win_match = re.search(r"python -c '([^']+)' '\{\{base\}\}'", win_body)
+    assert win_match is not None, "missing Windows lock-proof python -c command"
+    win_py = win_match.group(1)
+
+    git = shutil.which("git")
+    assert git is not None
+    repo = tmp_path / "lock-repo"
+    repo.mkdir()
+    base_lock = (
+        "version = 1\n\n"
+        '[[package]]\nname = "hftbacktest"\nversion = "2.4.4"\n\n'
+        '[[package]]\nname = "nautilus-trader"\nversion = "2.0.0rc9"\n\n'
+        '[[package]]\nname = "numpy"\nversion = "2.2.6"\n'
+    )
+    (repo / "uv.lock").write_text(base_lock, encoding="utf-8")
+    for cmd in (
+        [git, "init", "-q"],
+        [git, "config", "user.email", "test@example.com"],
+        [git, "config", "user.name", "Test"],
+        [git, "add", "uv.lock"],
+        [git, "commit", "-q", "-m", "base"],
+    ):
+        subprocess.run(cmd, cwd=repo, check=True)
+    base_sha = subprocess.run(
+        [git, "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    def run_both(base_ref: str) -> list[subprocess.CompletedProcess[str]]:
+        return [
+            subprocess.run(
+                [sys.executable, "-c", code, base_ref],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            for code in (unix_py, win_py)
+        ]
+
+    # 1. Identical lockfile -> pass.
+    for res in run_both(base_sha):
+        assert res.returncode == 0, res.stderr
+        assert "LOCK_PROOF_OK=1" in res.stdout
+
+    # 2. Pure upgrade (including rc -> final) -> pass.
+    (repo / "uv.lock").write_text(
+        base_lock.replace('version = "2.0.0rc9"', 'version = "2.0.0"'), encoding="utf-8"
+    )
+    for res in run_both(base_sha):
+        assert res.returncode == 0, res.stderr
+        assert "upgraded=1 downgraded=0" in res.stdout
+
+    # 3. PR #2-class silent downgrade (hftbacktest 2.4.4 -> 2.4.2) -> fail closed.
+    (repo / "uv.lock").write_text(
+        base_lock.replace('version = "2.4.4"', 'version = "2.4.2"'), encoding="utf-8"
+    )
+    for res in run_both(base_sha):
+        assert res.returncode != 0
+        assert "LOCK_PROOF_FAIL downgraded=1" in res.stderr
+        payload = json.loads(res.stdout)
+        assert payload["downgraded"] == {"hftbacktest": {"base": ["2.4.4"], "head": ["2.4.2"]}}
+
+    # 4. Prerelease downgrade (2.0.0rc9 -> 2.0.0rc8) -> fail closed.
+    (repo / "uv.lock").write_text(
+        base_lock.replace('version = "2.0.0rc9"', 'version = "2.0.0rc8"'), encoding="utf-8"
+    )
+    for res in run_both(base_sha):
+        assert res.returncode != 0
+        assert "LOCK_PROOF_FAIL downgraded=1" in res.stderr
+
+    # 5. Invalid base ref -> fail closed (zero silent fallback).
+    for res in run_both("nonexistent-base-ref"):
+        assert res.returncode != 0
+        assert "cannot read nonexistent-base-ref:uv.lock" in res.stderr
+
+
+def test_docker_proof_and_prod_sync_recipes_are_fail_closed() -> None:
+    """ADR-0032 §4: docker-proof refuses :latest; prod-sync enforces main/clean/risk/ports."""
+    just_text = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^docker-proof tag=\"pr-proof\": compose-config$", just_text)
+    for os_name in ("unix", "windows"):
+        body = _extract_just_os_recipe(just_text, "docker-proof", os_name)
+        assert "latest" in body, os_name
+        for dockerfile in (
+            "docker/Dockerfile.research",
+            "docker/Dockerfile.sandbox",
+            "docker/Dockerfile.xerj",
+        ):
+            assert dockerfile in body, (os_name, dockerfile)
+        assert "DOCKER_PROOF_OK=1" in body, os_name
+
+    prod_body = _extract_just_os_recipe(just_text, "prod-sync", "unix")
+    assert "set -euo pipefail" in prod_body
+    assert 'ss_out="$(ss -lntH)"' in prod_body
+    assert "ss -lntH | grep" not in prod_body
+    for port in ("4001", "7496", "8798", "8796", "9223"):
+        assert port in prod_body, port
+    assert "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847" in prod_body
+    pre_merge_risk = 'git -C "$repo" show "$after:src/tier0_sota/risk.py"'
+    assert pre_merge_risk in prod_body
+    assert prod_body.index(pre_merge_risk) < prod_body.index("merge --ff-only origin/main")
+    assert prod_body.index(pre_merge_risk) < prod_body.index("PROD_SYNC_DRY_RUN_OK=1")
+    assert "merge --ff-only origin/main" in prod_body
+    assert "--force-recreate tearsheets" in prod_body
+    assert "dry-run" in prod_body
+    assert "preflight_resume.sh" in prod_body
+    assert "s5-panel-chain" not in prod_body
+
+
+def test_bootstrap_env_orders_mise_shims_before_local_bin() -> None:
+    """Orca worktree setup resolves mise-pinned uv/zizmor/syft ahead of ~/.local/bin."""
+    script = (REPO_ROOT / "scripts" / "bootstrap_env.sh").read_text(encoding="utf-8")
+    match = re.search(r'(?m)^export PATH="([^"]+)"$', script)
+    assert match is not None
+    path_expr = match.group(1)
+    assert "$HOME/.local/share/mise/shims" in path_expr
+    assert "$HOME/.local/bin" in path_expr
+    assert path_expr.index("$HOME/.local/share/mise/shims") < path_expr.index("$HOME/.local/bin")

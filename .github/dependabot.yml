@@ -84,10 +84,21 @@ updates:
       - dependency-name: "python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
+      # uv moves in lockstep with mise.toml and workflow setup-uv pins in the toolchain PR
+      # (ADR-0032 section 4), so keep it separate from python/alpine Dockerfile bumps.
+      docker-with-mise-pins:
+        applies-to: version-updates
+        patterns:
+          - "ghcr.io/astral-sh/uv"
+        update-types:
+          - "minor"
+          - "patch"
       docker-minor-and-patch:
         applies-to: version-updates
         patterns:
           - "*"
+        exclude-patterns:
+          - "ghcr.io/astral-sh/uv"
         update-types:
           - "minor"
           - "patch"
