@@ -125,7 +125,7 @@ Every newly opened session across all **6 supported runtimes** (`Orca`, `Codex` 
 
 | # | Portal | Loopback URL | Activation / Verification Check |
 |---|---|---|---|
-| 16 | Alertmanager (`v0.28.1`) | `http://127.0.0.1:9093/-/healthy` | HTTP 200 (`just alerting-up` / Docker Compose `--profile alerting`; 15 Prometheus rules) |
+| 16 | Alertmanager (`v0.35.1`) | `http://127.0.0.1:9093/-/healthy` | HTTP 200 (`just alerting-up` / Docker Compose `--profile alerting`; 15 Prometheus rules) |
 | 17 | Allure Report 3 (`v3.33.0`) | `http://127.0.0.1:8793/test-reports/allure/` | HTTP 200 static single-file HTML + `/test-reports/junit.xml` served by Caddy (`just test-report`) |
 | 18 | OmniRoute Local Router | `http://127.0.0.1:20128/api/health` | HTTP 200 (also gated separately by preflight #12 `omniroute_local_router`) |
 

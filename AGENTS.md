@@ -47,7 +47,7 @@ just docs-build                                # uv run --no-sync zensical build
 just crosshair                                 # uvx --from crosshair-tool==0.0.114 PEP-316 symbolic proofs on risk.py + engine.py
 just test-report                               # Allure Report 3.33.0 single-file HTML (:8793/test-reports/allure/) + JUnit XML
 just mutate-risk                               # WSL isolated mktemp -d mutmut 3.8.1 sensitivity audit on risk.py
-just alerting-up                               # start profile-gated Alertmanager v0.28.1 (:9093) for 15 Prometheus rules
+just alerting-up                               # start profile-gated Alertmanager v0.35.1 (:9093) for 15 Prometheus rules
 just security                                  # gitleaks, zizmor --offline, trivy fs, license-audit (repo + installed venv wheels SPDX)
 just license-audit                             # trivy fs --license-full + trivy rootfs over installed venv wheels (only LGPL-3.0-only ignored per ADR-0016)
 just preflight                                 # 13/13 workstation & 15/15 baseline (+3 extended = 18) portal preflight

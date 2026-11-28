@@ -416,7 +416,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:v0.28.1
+    image: prom/alertmanager:v0.35.1
     profiles:
       - alerting
     cpus: "0.25"
