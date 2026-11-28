@@ -20,6 +20,40 @@
       "type": "stdio",
       "command": "codebase-memory-mcp",
       "args": []
+    },
+    "mlflow": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.13",
+        "--from",
+        "mlflow==3.18.0",
+        "--with",
+        "fastmcp==2.14.7",
+        "--with",
+        "mcp==1.30.0",
+        "mlflow",
+        "mcp",
+        "run"
+      ],
+      "env": {
+        "MLFLOW_TRACKING_URI": "http://127.0.0.1:5000",
+        "MLFLOW_MCP_TOOLS": "ml"
+      }
+    },
+    "optuna": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.13",
+        "--from",
+        "optuna-mcp==0.2.0",
+        "--with",
+        "mcp==1.30.0",
+        "optuna-mcp"
+      ]
     }
   }
 }

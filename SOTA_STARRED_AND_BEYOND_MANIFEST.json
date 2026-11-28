@@ -1785,7 +1785,8 @@
       "watches": [
         "nautilus_ga_reverification (check_kind=installed_package_metadata via PEP-440 grammar against nautilus_trader, ADR-0016)",
         "hftbacktest_release_freshness (check_kind=calendar_review_timer, >365d staleness review from 2025-12-10, ADR-0016)",
-        "promptfoo_quarterly_license_audit (check_kind=calendar_review_timer, 90d MIT/neutrality cadence from 2026-11-27, ADR-0024)"
+        "promptfoo_quarterly_license_audit (check_kind=calendar_review_timer, 90d MIT/neutrality cadence from 2026-11-27, ADR-0024)",
+        "xerj_rc_freshness (check_kind=calendar_review_timer, 90d RC->GA review cadence from 2026-11-28 for docker/Dockerfile.xerj 1.0.0-rc.104, ADR-0024)"
       ]
     },
     "not_applicable": [
@@ -2140,6 +2141,57 @@
       "status_manifest_path": "/mnt/z/sota-data/manifests/multi_runtime_convergence_loop_status.json",
       "systemd_user_timer": "~/.config/systemd/user/tier0-multi-runtime-convergence.timer (active/enabled, every 2h, Persistent=true, CPUQuota=400%, MemoryMax=6G)",
       "live_once_verified": "4/4 parallel workers exit_code=0 (codex normal-speed 34s + claude plan 45s + omp OmniRoute 11s + mechanical 11s; 16/16 portals HTTP 200; XERJ synced)"
+    }
+  },
+  "dual_ecosystem_zero_rebuild_hosting_resolution": {
+    "verified_date": "2026-11-28",
+    "asset_scope": "US Equities, Stocks & US Equity Options ONLY (zero crypto)",
+    "verdict": "USE_UPSTREAM_NATIVE_SPECIALISTS_REBUILD_NOTHING",
+    "authoritative_adrs": [
+      "ADR-0016",
+      "ADR-0021",
+      "ADR-0032",
+      "ADR-0033"
+    ],
+    "canonical_manifests": {
+      "dual_ecosystem_resolution": "/mnt/z/sota-data/manifests/tier0_dual_ecosystem_native_llm_hosting_resolution.json",
+      "dual_ecosystem_master": "/mnt/z/sota-data/manifests/tier0_sota_dual_ecosystem_master_manifest.json"
+    },
+    "guardrails": {
+      "paper_only": true,
+      "live_execution_enabled": false,
+      "zero_crypto_enforced": true,
+      "replaces_nautilus_v2_l3_ssot": false,
+      "zero_llm_on_execution_hot_path": true
+    },
+    "quantconnect_cloud_primary_source_facts": {
+      "remote_mcp_endpoint": "https://www.quantconnect.com/api/v2/mcp",
+      "remote_mcp_tools_count": 48,
+      "remote_mcp_tool_groups_count": 11,
+      "native_asset_plots_and_2d_heatmaps": true,
+      "native_bar_replay_docs_hits": 0,
+      "native_24x5_boats_overnight_supported": false,
+      "modular_mcp_pricing_floor_usd_monthly": "$34/mo (Researcher $10 + A1-1 $24); $84/mo Researcher Pack"
+    },
+    "sovereign_local_and_tradingview_rails": {
+      "nautilus_v2_hosting_model": "LiveNode / BacktestNode 1-node-per-process (TradingNode removed in 2.0.0rc9)",
+      "nautilus_native_per_symbol_fills": "create_bars_with_fills (Plotly OHLC + buy/sell triangles + rangeslider on Caddy :8793/tearsheets/)",
+      "nautilus_pro_boundary": "Live-node monitoring + 2-5 tool docs MCP only (no backtest/replay UI)",
+      "tradingview_official_mcp_tools": 38,
+      "tradingview_supercharts_bar_replay": true
+    },
+    "honest_marimo_boundary": {
+      "loc": 1778,
+      "classification": "custom_reactive_notebook_scratchpad_frozen",
+      "off_repo_only": true,
+      "replaces_upstream_dashboards": false
+    },
+    "active_loopback_docker_agpl_carveout": {
+      "repo": "grafana/grafana",
+      "pinned_image_tag": "13.3.2",
+      "spdx": "AGPL-3.0-only",
+      "layer": "L6",
+      "isolation": "Unmodified loopback-only (127.0.0.1:3001) Docker container outside src/ Python import graph; companion to L14 watched grafana/{loki,tempo,pyroscope}"
     }
   }
 }

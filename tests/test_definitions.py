@@ -212,7 +212,7 @@ def test_sim_vs_paper_parity_perold_order_and_notional_weighting(
 def test_frontier_trigger_telemetry_mechanized_upstream_watches(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """All 3 ADR-0016/ADR-0024 prose watches emit deterministic structured telemetry & booleans."""
+    """All 4 ADR-0016/ADR-0024 prose watches emit deterministic structured telemetry & booleans."""
     from datetime import date
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as stdlib_version
@@ -278,6 +278,18 @@ def test_frontier_trigger_telemetry_mechanized_upstream_watches(
     assert pf["audit_due"] == (pf["days_since_audit"] >= 90)
     assert triggers["promptfoo_quarterly_license_audit"] is pf["audit_due"]
 
+    # 4. XERJ RC tarball freshness review (calendar timer, 90d cadence from 2026-11-28).
+    xr = watches["xerj_rc_freshness"]
+    assert xr["check_kind"] == "calendar_review_timer"
+    assert xr["upstream"] == "xerj-org/xerj"
+    assert xr["pinned_version"] == "1.0.0-rc.104"
+    assert xr["spdx_license"] == "Apache-2.0"
+    assert xr["last_audited_utc"] == "2026-11-28"
+    assert xr["cadence_days"] == 90
+    assert isinstance(xr["days_since_audit"], int)
+    assert xr["review_due"] == (xr["days_since_audit"] >= 90)
+    assert triggers["xerj_rc_freshness"] is xr["review_due"]
+
     # Explicit PEP-440 version cases (verified against packaging.version.Version.is_prerelease):
     for ver_str, exp_installed, exp_pre, exp_reverify in (
         ("2.0.0rc9", True, True, True),
@@ -313,15 +325,22 @@ def test_frontier_trigger_telemetry_mechanized_upstream_watches(
         assert nw["is_prerelease"] is exp_pre, ver_str
         assert nw["ga_reverification_required"] is exp_reverify, ver_str
 
-    # Calendar boundary flips: >365d trips hftbacktest; >=90d trips Promptfoo.
+    # Calendar boundary flips: >365d trips hftbacktest; >=90d trips Promptfoo & XERJ RC.
     monkeypatch.setattr(defs_mod, "pkg_version", lambda _name: "2.0.0")
     fresh = _evaluate_upstream_watch_triggers(today_utc=date(2026, 12, 10))
     assert fresh["hftbacktest_release_freshness"]["days_since_upstream_release"] == 365
     assert fresh["hftbacktest_release_freshness"]["staleness_review_due"] is False
     assert fresh["promptfoo_quarterly_license_audit"]["audit_due"] is False
+    assert fresh["xerj_rc_freshness"]["review_due"] is False
 
     due = _evaluate_upstream_watch_triggers(today_utc=date(2027, 2, 25))
     assert due["hftbacktest_release_freshness"]["days_since_upstream_release"] == 442
     assert due["hftbacktest_release_freshness"]["staleness_review_due"] is True
     assert due["promptfoo_quarterly_license_audit"]["days_since_audit"] == 90
     assert due["promptfoo_quarterly_license_audit"]["audit_due"] is True
+    assert due["xerj_rc_freshness"]["days_since_audit"] == 89
+    assert due["xerj_rc_freshness"]["review_due"] is False
+
+    xerj_due = _evaluate_upstream_watch_triggers(today_utc=date(2027, 2, 26))
+    assert xerj_due["xerj_rc_freshness"]["days_since_audit"] == 90
+    assert xerj_due["xerj_rc_freshness"]["review_due"] is True

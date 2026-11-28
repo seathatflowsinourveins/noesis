@@ -227,7 +227,14 @@ def test_harness_ssot_and_scoped_mcp_lanes() -> None:
     )
 
     expected_lanes = {
-        "sim.mcp.json": ["codebase-memory", "edgartools", "nautilus-engine", "xerj"],
+        "sim.mcp.json": [
+            "codebase-memory",
+            "edgartools",
+            "mlflow",
+            "nautilus-engine",
+            "optuna",
+            "xerj",
+        ],
         "paper.mcp.json": ["codebase-memory", "nautilus-engine", "xerj"],
         "tv.mcp.json": ["nautilus-engine", "xerj"],
         "gate.mcp.json": ["codebase-memory", "xerj"],
@@ -1007,3 +1014,38 @@ def test_sota_manifest_frontier_spdx_zero_crypto_and_options_sidecar() -> None:
         ]
         == f"{accepted_adr_count}/{accepted_adr_count} (100%)"
     )
+
+
+def test_dual_ecosystem_zero_rebuild_resolution_and_grafana_agpl_carveout() -> None:
+    """Enforce zero-rebuild dual-ecosystem guardrails, QC primary facts & Grafana AGPL boundary."""
+    sota = json.loads(
+        (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
+    )
+    res = sota["dual_ecosystem_zero_rebuild_hosting_resolution"]
+    assert res["verdict"] == "USE_UPSTREAM_NATIVE_SPECIALISTS_REBUILD_NOTHING"
+
+    guardrails = res["guardrails"]
+    assert guardrails["paper_only"] is True
+    assert guardrails["live_execution_enabled"] is False
+    assert guardrails["zero_crypto_enforced"] is True
+    assert guardrails["replaces_nautilus_v2_l3_ssot"] is False
+    assert guardrails["zero_llm_on_execution_hot_path"] is True
+
+    qc = res["quantconnect_cloud_primary_source_facts"]
+    assert qc["remote_mcp_tools_count"] == 48
+    assert qc["remote_mcp_tool_groups_count"] == 11
+    assert qc["native_asset_plots_and_2d_heatmaps"] is True
+    assert qc["native_bar_replay_docs_hits"] == 0
+    assert qc["native_24x5_boats_overnight_supported"] is False
+
+    marimo = res["honest_marimo_boundary"]
+    assert marimo["off_repo_only"] is True
+    assert marimo["replaces_upstream_dashboards"] is False
+
+    carveout = res["active_loopback_docker_agpl_carveout"]
+    assert carveout["repo"] == "grafana/grafana"
+    assert carveout["pinned_image_tag"] == "13.3.2"
+    assert carveout["spdx"] == "AGPL-3.0-only"
+    compose_text = (REPO_ROOT / "docker" / "compose.sota.yml").read_text(encoding="utf-8")
+    assert "grafana/grafana:13.3.2" in compose_text
+    assert "127.0.0.1:3001:3000" in compose_text
