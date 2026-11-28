@@ -572,8 +572,37 @@
         {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "status": "reference_only_defer", "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"},
         {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "status": "admitted_on_demand_companion", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "invocation": "uvx pinescript-mcp", "role": "zero_cdp_local_pine_v6_companion_mcp", "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"},
         {"slug": "TradersPost/pine-mcp", "spdx": "MIT", "status": "earned_trigger_watch", "zero_cdp": true, "npm": "pinescript-mcp-server", "invocation": "npx -y pinescript-mcp-server", "role": "zero_cdp_local_pine_v6_docs_companion_mcp", "scope_boundary": "MIT Pine Script docs MCP ONLY; TradersPost proprietary commercial SaaS webhook relay remains excluded under SPDX OSI firewall", "trigger": "on-demand zero-CDP MIT Node Pine Script v6 docs companion MCP via npx -y pinescript-mcp-server (Pine docs MCP only; commercial SaaS relay excluded)"},
-        {"slug": "optuna/optuna-mcp", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "Official Optuna MCP server for outer-loop HPO study inspection & parameter-plateau queries (strictly off execution hot path; ADR-0018)"},
-        {"slug": "mlflow/mlflow-mcp", "alias": "mlflow[mcp]", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "Official MLflow 3 MCP server extra (mlflow[mcp]) for outer-loop experiment/run/artifact queries (strictly off execution hot path; ADR-0018)"},
+        {
+          "slug": "optuna/optuna-mcp",
+          "spdx": "MIT",
+          "pypi": "optuna-mcp==0.2.0",
+          "runtime_pins": ["optuna==5.1.0", "mcp==1.30.0", "python==3.13"],
+          "status": "admitted_off_repo_research_mcp_plugin",
+          "plugin_name": "quant-research-sota-mcp",
+          "plugin_path": "~/.gemini/config/plugins/quant-research-sota-mcp/",
+          "tools_count": 26,
+          "storage_target": "sqlite:///$HOME/tier0-sota-state/mlflow/optuna.db",
+          "repo_mcp_parity_impact": "none (off-repo global Antigravity plugin; preserves exact 4-stdio-MCP parity across all 6 repo configs and zero pyproject.toml/uv.lock addition)",
+          "execution_hot_path_isolation": "strictly outer-research-loop only (ADR-0018, ADR-0025, no-llm-on-execution-hot-path)",
+          "canonical_manifest": "/mnt/z/sota-data/manifests/tier0_sota_full_llm_native_ecosystem_manifest.json",
+          "trigger": "Official Optuna MCP server (MIT, 0.2.0, 26 tools) admitted as off-repo research plugin bound to live Optuna RDB store"
+        },
+        {
+          "slug": "mlflow/mlflow-mcp",
+          "alias": "mlflow[mcp]",
+          "spdx": "Apache-2.0",
+          "pypi": "mlflow==3.18.0",
+          "runtime_pins": ["fastmcp==2.14.7", "mcp==1.30.0", "python==3.13"],
+          "status": "admitted_off_repo_research_mcp_plugin",
+          "plugin_name": "quant-research-sota-mcp",
+          "plugin_path": "~/.gemini/config/plugins/quant-research-sota-mcp/",
+          "tools_count": 26,
+          "tracking_uri": "http://127.0.0.1:5000",
+          "repo_mcp_parity_impact": "none (off-repo global Antigravity plugin via uvx; preserves exact 4-stdio-MCP parity across all 6 repo configs and zero pyproject.toml/uv.lock addition)",
+          "execution_hot_path_isolation": "strictly outer-research-loop only (ADR-0018, ADR-0025, no-llm-on-execution-hot-path)",
+          "canonical_manifest": "/mnt/z/sota-data/manifests/tier0_sota_full_llm_native_ecosystem_manifest.json",
+          "trigger": "Official MLflow 3 MCP server (Apache-2.0, 3.18.0, 26 tools) admitted as off-repo research plugin bound to live MLflow 3 server :5000"
+        },
         {
           "slug": "tradingview/mcp-official",
           "spdx": "Platform-OAuth-2.1",
@@ -720,7 +749,7 @@
       },
       "form_e_frontier_watches": {
         "name": "Earned-Trigger 2026 Frontier Backtest UI Watches (ADR-0018 4-Gate Watch; 4 remaining watches after marimo 0.26.0 off-repo admission)",
-        "admitted_off_repo_workbench_note": "marimo-team/marimo (0.26.0, Apache-2.0) promoted to admitted_off_repo_interactive_workbench live on http://127.0.0.1:2718/ (PEP 723 pure .py, 5 reactive tabs incl. live read-only DuckDB SQL, zero .ipynb, zero uv.lock bloat; ADR-0021)",
+        "admitted_off_repo_workbench_note": "marimo-team/marimo (0.26.0, Apache-2.0) promoted to admitted_off_repo_interactive_workbench live on http://127.0.0.1:2718/ (PEP 723 pure .py, 7 reactive tabs incl. live Optuna RDB / MLflow 3 / Strategy E2E compounding hub, live read-only DuckDB SQL, 18-engine landscape evidence, zero .ipynb, zero raw HTML/JS/Plotly, zero uv.lock bloat; ADR-0021)",
         "storage_watch_cross_reference": "L11 high-volume storage watch (vortex-data/vortex for lake > 100 GB/run) lives canonically under earned_trigger_frontier_l11_to_l15.L11",
         "repos": [
           {"repo": "rerun-io/rerun", "spdx": "MIT OR Apache-2.0", "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog; awaits L2/L3 feed)"},
