@@ -428,7 +428,7 @@
         {"slug": "grafana/tempo", "status": "earned_trigger_watch", "trigger": "distributed OTel trace storage"},
         {"slug": "grafana/pyroscope", "status": "earned_trigger_watch", "trigger": "continuous Rust/Python profiling"},
         {"slug": "prometheus/alertmanager", "spdx": "Apache-2.0", "status": "admitted_profile_gated", "compose_profile": "alerting", "version": "0.28.1", "recipe": "just alerting-up", "port": 9093, "live_verified": true, "inhibit_rules_count": 2, "prometheus_rules_count": 15, "artifacts": ["docker/compose.sota.yml", "docker/prometheus.yml", "docker/prometheus_rules.yml", "docker/alertmanager.yml"], "adr": "ADR-0028", "trigger": "24/5 alert routing with critical/down inhibit_rules"},
-        {"slug": "allure-framework/allure3", "spdx": "Apache-2.0", "status": "admitted_test_reports_group", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "pyproject_group": "test-reports", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "license_evidence": "https://github.com/allure-framework/allure3/blob/a859ae4ddb9b5ca60ac81a07ca029b6d5ca60ac81/LICENSE.txt", "adr": "ADR-0021 / ADR-0024", "trigger": "Zero-container static single-file upstream test dashboard served via Caddy :8793/test-reports/allure/ (crossed gap trigger: repo had 0 test-result UI)"},
+        {"slug": "allure-framework/allure3", "spdx": "Apache-2.0", "status": "admitted_test_reports_group", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "pyproject_group": "test-reports", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "license_evidence": "https://github.com/allure-framework/allure3/blob/82bcaf76619b004269bc1621d53bb223ff63bf16/LICENSE.txt", "adr": "ADR-0021 / ADR-0024", "trigger": "Zero-container static single-file upstream test dashboard served via Caddy :8793/test-reports/allure/ (crossed gap trigger: repo had 0 test-result UI)"},
         {"slug": "langfuse/langfuse", "status": "earned_trigger_watch", "trigger": "LLM trace scaling beyond MLflow"}
       ]
     },
@@ -674,15 +674,15 @@
     "verified_date": "2026-11-27",
     "authoritative_adrs": ["ADR-0003", "ADR-0016", "ADR-0017", "ADR-0018", "ADR-0021", "ADR-0024", "ADR-0026", "ADR-0028"],
     "canonical_manifest_path": "/mnt/z/sota-data/manifests/backtest_platform_and_dashboard_sota_manifest.json",
-    "architectural_principle": "Decoupled Rust-native execution & microstructure queue engines (NautilusTrader v2 + hftbacktest) with LLM strictly as outer research operator (arXiv:2309.17322), composed with five specialized official OSI upstream dashboard forms fed solely by declarative artifacts (zero self-built or engine-coupled web GUIs).",
+    "architectural_principle": "Decoupled Rust-native execution & microstructure queue engines (NautilusTrader v2 + hftbacktest) with LLM strictly as outer research operator (arXiv:2309.17322), composed with official OSI upstream dashboard forms (ADR-0021 section 4: four deployed, one watched) fed by declarative artifacts and the upstreams' own report functions. Under the dashboards rule (owner decision 2026-11-27) no figure, page or table renderer is written here except the TradingView Pine lane; two figure specifications (src/tier0_sota/live/performance.py, src/tier0_sota/tv/tickets.py) remain open as lane work items.",
     "five_upstream_dashboard_forms": {
       "form_a_static_tearsheets": {
-        "name": "Unmodified Interactive Plotly HTML Tearsheets",
+        "name": "Upstream Report Functions (one upstream call per file, run data only)",
         "repos": [
           {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "status": "release_candidate", "spdx": "LGPL-3.0-only", "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark') & create_bars_with_fills(theme='nautilus_dark')"},
-          {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.backtest.tearsheet.generate_backtest_tearsheet(template='full', interactive=True) & FeatureImportanceDashboard (pure native interactive tabbed HTML; Streamlit [dashboard] extra & hand-built go.Figure blocked by no-handbuilt-plotly-chart)"},
-          {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution"},
-          {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution"},
+          {"repo": "skfolio/skfolio", "version": "1.14.6", "spdx": "BSD-3-Clause", "api": "skfolio.model_selection.CombinatorialPurgedCV.plot_train_test_folds + skfolio.population.Population.plot_distribution (the upstream Plotly figures written with write_html)"}, {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.backtest.generate_backtest_tearsheet(template='full', interactive=True) + ml4t.diagnostic.visualization.FeatureImportanceDashboard (Streamlit [dashboard] extra excluded; the earlier combine_figures_to_html page composition was retired 2026-11-27; hand-built figures blocked by ast-grep no-handbuilt-plotly-chart)"},
+          {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution (values feed the ml4t dashboards and DuckDB tables)"},
+          {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution (DuckDB interaction table)"},
           {"repo": "caddyserver/caddy", "version": "2.11.9-alpine", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:8793/tearsheets/"}
         ]
       },
@@ -694,11 +694,11 @@
           {"repo": "dagster-io/dagster", "version": "1.13.31", "spdx": "Apache-2.0", "note": "OSS core only (commercial Dagster+ excluded)", "endpoint": "http://127.0.0.1:3000"},
           {"repo": "UKGovernmentBEIS/inspect_ai", "version": "0.3.292", "spdx": "MIT", "endpoint": "http://127.0.0.1:7575"},
           {"repo": "zensical/zensical", "version": "0.1.3", "spdx": "MIT", "endpoint": "http://127.0.0.1:8010"},
-          {"repo": "allure-framework/allure3", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "spdx": "Apache-2.0", "license_evidence": "https://github.com/allure-framework/allure3/blob/a859ae4ddb9b5ca60ac81a07ca029b6d5ca60ac81/LICENSE.txt", "endpoint": "http://127.0.0.1:8793/test-reports/allure/"}
+          {"repo": "allure-framework/allure3", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "spdx": "Apache-2.0", "license_evidence": "https://github.com/allure-framework/allure3/blob/82bcaf76619b004269bc1621d53bb223ff63bf16/LICENSE.txt", "endpoint": "http://127.0.0.1:8793/test-reports/allure/"}
         ]
       },
       "form_c_institutional_terminal": {
-        "name": "Declarative Institutional Terminal & Streaming Arrow Blotter",
+        "name": "Institutional Terminal & Streaming Arrow Blotter",
         "repos": [
           {"repo": "openbq-org/finos-workspace", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:1420"},
           {"repo": "openbq-org/finos-workspace-plugins", "spdx": "Apache-2.0", "plugins": ["ag-grid@2.3.0", "plotly-charts@2.5.0", "@finos-workspace/mermaid@1.0.0"]},
@@ -711,7 +711,7 @@
       "form_d_observability_and_sql": {
         "name": "Live 24/5 Observability & Read-Only SQL Workbench",
         "repos": [
-          {"repo": "grafana/grafana", "version": "13.3.1", "spdx": "AGPL-3.0-only", "deployment_policy": "Unmodified loopback-only on 127.0.0.1:3001 (never imported into src/, never network-exposed)", "license_evidence": "https://github.com/grafana/grafana/blob/2036e2ec87f4da921aeca540eb0d74df1b37f81e/LICENSE", "endpoint": "http://127.0.0.1:3001"},
+          {"repo": "grafana/grafana", "version": "13.3.2", "spdx": "AGPL-3.0-only", "deployment_policy": "Unmodified loopback-only on 127.0.0.1:3001 (never imported into src/, never network-exposed)", "license_evidence": "https://github.com/grafana/grafana/blob/2036e2ec87f4da921aeca540eb0d74df1b37f81e/LICENSE", "endpoint": "http://127.0.0.1:3001"},
           {"repo": "prometheus/prometheus", "version": "v3.16.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9090"},
           {"repo": "prometheus/alertmanager", "version": "v0.28.1", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9093"},
           {"repo": "open-telemetry/opentelemetry-collector-contrib", "version": "0.166.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9464"},

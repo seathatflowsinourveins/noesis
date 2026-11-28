@@ -2,7 +2,8 @@
 	admin off
 }
 
-# Official upstream Caddy static file server for unmodified Nautilus/ml4t/SHAP tearsheets (:8793).
+# Official upstream Caddy file server (:8793) for the manifests tree: the engine's create_tearsheet
+# pages, the interactive ml4t-diagnostic/skfolio report pages, Allure, and data files.
 http://127.0.0.1:8793, http://localhost:8793 {
 	bind 127.0.0.1
 	root * /mnt/z/sota-data/manifests

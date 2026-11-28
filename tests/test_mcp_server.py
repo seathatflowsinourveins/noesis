@@ -59,6 +59,28 @@ def test_fastmcp_registry_all_10_tools_and_dispatch() -> None:
     assert structured["prior_xnys_session"] == "2026-10-14"
 
 
+def test_tool_annotations_match_side_effects() -> None:
+    """MCP ToolAnnotations: nine local read-only tools, one local staged-ticket writer."""
+    tools = {t.name: t.annotations for t in asyncio.run(mcp_srv.mcp.list_tools())}
+    assert len(tools) == 10
+    writer = tools.pop("stage_semi_auto_order_preset")
+    assert writer is not None
+    assert (
+        writer.readOnlyHint,
+        writer.destructiveHint,
+        writer.idempotentHint,
+        writer.openWorldHint,
+    ) == (False, True, False, False)
+    for name, ann in tools.items():
+        assert ann is not None, name
+        assert (ann.readOnlyHint, ann.destructiveHint, ann.idempotentHint, ann.openWorldHint) == (
+            True,
+            False,
+            True,
+            False,
+        ), name
+
+
 def test_engine_backbone_and_venue_live_refusals() -> None:
     for venue in ("IBKR_PAPER_4002", "ALPACA_PAPER_200"):
         st = mcp_srv.get_engine_backbone_status(venue)

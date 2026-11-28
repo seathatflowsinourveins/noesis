@@ -205,6 +205,61 @@ def test_categorized_mover_taxonomy_and_scanner_weight_projection() -> None:
     assert all(0.5 <= v <= 25.0 for v in projected.values())
 
 
+def _optuna_feature_panel(days: list[date]) -> pl.DataFrame:
+    parts: list[pl.DataFrame] = []
+    for d in days:
+        bars = pl.concat(
+            [
+                _make_synthetic_session_bars(
+                    symbol="NVDA", day=d, prior_close=130.0, extreme_surge=True
+                ),
+                _make_synthetic_session_bars(
+                    symbol="FLAT", day=d, prior_close=55.0, extreme_surge=False
+                ),
+            ],
+            how="vertical",
+        )
+        parts.append(
+            disc.extract_causal_intraday_mover_features(
+                bars,
+                prior_close_by_sym={"NVDA": 130.0, "FLAT": 55.0},
+                baseline_vol_by_sym={"NVDA": 40_000_000.0, "FLAT": 30_000_000.0},
+                short_vol_ratio_by_sym={"NVDA": 0.41, "FLAT": 0.22},
+                enforce_prewall=True,
+            )
+        )
+    return pl.concat(parts, how="vertical")
+
+
+def test_optuna_calibration_storage_from_env_records_every_trial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unset TIER0_OPTUNA_STORAGE keeps Optuna in memory; set, each call gets its own study."""
+    import optuna
+
+    tr_feat = _optuna_feature_panel([date(2026, 10, 6), date(2026, 10, 7)])
+    ho_feat = _optuna_feature_panel([date(2026, 10, 12)])
+
+    monkeypatch.delenv(res.OPTUNA_STORAGE_ENV, raising=False)
+    in_memory = res.calibrate_extreme_mover_weights_optuna(tr_feat, ho_feat, n_trials=4, top_k=5)
+    assert in_memory["optuna"]["storage"] == "in_memory"
+    assert in_memory["optuna"]["study_name"] is None
+
+    storage_url = f"sqlite:///{(tmp_path / 'optuna.db').as_posix()}"
+    monkeypatch.setenv(res.OPTUNA_STORAGE_ENV, storage_url)
+    first = res.calibrate_extreme_mover_weights_optuna(tr_feat, ho_feat, n_trials=4, top_k=5)
+    second = res.calibrate_extreme_mover_weights_optuna(tr_feat, ho_feat, n_trials=4, top_k=5)
+    assert first["optuna"]["storage"] == second["optuna"]["storage"] == "rdb"
+    assert first["optuna"]["study_name"] != second["optuna"]["study_name"]
+    assert first["optuna"]["n_trials"] == second["optuna"]["n_trials"] == 4
+
+    stored = {
+        name: len(optuna.load_study(study_name=name, storage=storage_url).trials)
+        for name in optuna.get_all_study_names(storage=storage_url)
+    }
+    assert stored == {first["optuna"]["study_name"]: 4, second["optuna"]["study_name"]: 4}
+
+
 def test_optuna_prewall_calibration_nautilus_v2_replay_and_duckdb(tmp_path: Path) -> None:
     """Verify pre-wall Optuna calibration, Nautilus v2 replay, min-trail & DuckDB persistence."""
     train_days = [date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)]

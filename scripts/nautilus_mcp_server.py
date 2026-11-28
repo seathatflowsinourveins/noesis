@@ -47,6 +47,7 @@ _apply_mcp_stdio_thread_bounds()
 
 import polars as pl  # noqa: E402
 from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.types import ToolAnnotations  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -101,9 +102,17 @@ _FALLBACK_PERF_PATH = DEFAULT_MANIFEST_DIR / "live_performance_manifest.json"
 _FALLBACK_MOVERS_PATH = DEFAULT_MANIFEST_DIR / "live_whole_market_movers_manifest.json"
 
 mcp = FastMCP("tier0-nautilus-engine")
+# MCP tool annotation hints: nine tools only read local state; the staging tool rewrites
+# the staged-ticket JSON and upserts the local DuckDB audit (no broker or network calls).
+_READ_ONLY_LOCAL = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+_STAGES_LOCAL_TICKET = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def get_engine_backbone_status(venue_profile: str = "IBKR_PAPER_4002") -> dict[str, Any]:
     """Return read-only Environment.SANDBOX LiveNode spec and 24/5 session metadata."""
     prof = validate_venue_order_capability(venue_profile)
@@ -131,7 +140,7 @@ def get_engine_backbone_status(venue_profile: str = "IBKR_PAPER_4002") -> dict[s
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def inspect_venue_profile(
     venue_profile: str = "IBKR_PAPER_4002",
     algo: str = "STOP_LIMIT",
@@ -153,7 +162,7 @@ def inspect_venue_profile(
     return cap
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def compute_risk_sized_stop(
     entry_price: str,
     side: str,
@@ -179,7 +188,7 @@ def compute_risk_sized_stop(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def run_prewall_native_backbone_parity(
     symbol: str = "AAPL", day: str = "2026-10-15"
 ) -> dict[str, Any]:
@@ -225,7 +234,7 @@ def run_prewall_native_backbone_parity(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def check_prewall_pit_session(day: str = "2026-10-15") -> dict[str, Any]:
     """Validate pre-wall PIT date (<= 2026-10-15) and resolve prior XNYS session."""
     d = assert_pre_wall_date(day)
@@ -238,7 +247,7 @@ def check_prewall_pit_session(day: str = "2026-10-15") -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def evaluate_l1_queue_markout(
     symbol: str, day: str = "2026-10-15", side: str = "BUY", root: str | None = None
 ) -> dict[str, Any]:
@@ -287,7 +296,7 @@ def _read_optional_json_dict(path: Path) -> dict[str, Any] | None:
         return None
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, Any]:
     """Read live watchlist, movers, preset bundle, or TV compounding manifest fail-closed."""
     env_p = os.environ.get("TIER0_WATCHLIST_MANIFEST") or os.environ.get(
@@ -382,7 +391,7 @@ def get_live_watchlist_manifest(manifest_path: str | None = None) -> dict[str, A
     return res
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str, Any]:
     """Read Paper Farm live performance manifest JSON fail-closed with sibling TV sync."""
     env_p = os.environ.get("TIER0_PERFORMANCE_MANIFEST") or os.environ.get(
@@ -413,7 +422,7 @@ def get_live_performance_manifest(manifest_path: str | None = None) -> dict[str,
     return res
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY_LOCAL)
 def rank_symbols_advisory(
     day: str = "2026-10-15",
     top_k: int = 10,
@@ -615,7 +624,7 @@ def _stage_minimal_order_preset(
     return norm_preset
 
 
-@mcp.tool()
+@mcp.tool(annotations=_STAGES_LOCAL_TICKET)
 def stage_semi_auto_order_preset(
     payload: dict[str, Any] | None = None,
     symbol: str | None = None,

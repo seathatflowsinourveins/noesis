@@ -1577,6 +1577,14 @@ def replay_mover_with_nautilus_v2(
     }
 
 
+OPTUNA_STORAGE_ENV = "TIER0_OPTUNA_STORAGE"
+
+
+def optuna_storage_url() -> str | None:
+    """Return the Optuna storage URL from TIER0_OPTUNA_STORAGE, or None for in-memory."""
+    return os.environ.get(OPTUNA_STORAGE_ENV, "").strip() or None
+
+
 def calibrate_extreme_mover_weights_optuna(
     train_features_df: pl.DataFrame,
     holdout_features_df: pl.DataFrame,
@@ -1634,9 +1642,21 @@ def calibrate_extreme_mover_weights_optuna(
             0.45 * float(ev["recall_at_k"]) + 0.35 * float(ev["precision_at_k"]) + 0.20 * lead_bonus
         )
 
+    # Optuna's own storage argument: with TIER0_OPTUNA_STORAGE set (e.g. the SQLite file the
+    # Optuna Dashboard on :8080 reads), every trial is written to that store; unset keeps the
+    # in-memory default. One study per call, so best_params and n_trials describe this run only.
+    storage_url = optuna_storage_url()
+    study_name = (
+        f"tier0-early-mover-weights-seed{seed}-train{tr_max_ns}-holdout{ho_max_ns}-"
+        f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}"
+        if storage_url is not None
+        else None
+    )
     study = optuna.create_study(
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=seed),
+        storage=storage_url,
+        study_name=study_name,
     )
     study.optimize(_objective, n_trials=max(4, int(n_trials)))
     best_params = dict(study.best_params)
@@ -1658,6 +1678,8 @@ def calibrate_extreme_mover_weights_optuna(
             "best_objective": round(float(study.best_value), 6),
             "sampler": "TPESampler",
             "seed": seed,
+            "storage": "rdb" if storage_url is not None else "in_memory",
+            "study_name": study_name,
             "best_score_threshold": best_thr,
             "ranking_cpcv_pbo": round(float(pbo_rank), 4) if pbo_rank is not None else None,
         },
@@ -2552,6 +2574,7 @@ __all__ = [
     "CPCV_PURGED_SIZE",
     "FEED_LATENCY_NS",
     "MIN_CPCV_SAMPLES",
+    "OPTUNA_STORAGE_ENV",
     "build_causal_mover_signals",
     "calibrate_extreme_mover_weights_optuna",
     "compute_per_symbol_min_trailing_table",
@@ -2566,6 +2589,7 @@ __all__ = [
     "load_prewall_mover_feature_panel",
     "log_extreme_mover_calibration_to_mlflow",
     "log_falsification_to_mlflow",
+    "optuna_storage_url",
     "persist_calibration_to_duckdb",
     "replay_mover_with_nautilus_v2",
     "run_historical_extreme_mover_calibration",

@@ -2,94 +2,16 @@
   "uid": "tier0-sim-backtest-control-center",
   "title": "Tier-0 SOTA — Sim-Backtest, Falsification & Upstream Control Center",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "timezone": "browser",
   "tags": ["tier0", "sim-backtest", "falsification", "control-center"],
   "panels": [
     {
-      "id": 1,
-      "type": "stat",
-      "title": "Pre-Wall Trials Logged",
-      "gridPos": {"h": 6, "w": 4, "x": 0, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "max(tier0_prewall_trials_total) or vector(0)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "type": "stat",
-      "title": "Sandbox MLflow Trials",
-      "gridPos": {"h": 6, "w": 4, "x": 4, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "max(tier0_sandbox_mlflow_trials_total) or vector(0)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "type": "stat",
-      "title": "6-Gate Falsification Passes",
-      "gridPos": {"h": 6, "w": 4, "x": 8, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "max(tier0_falsification_passes_total) or vector(0)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "type": "stat",
-      "title": "Sandbox 24/7 Active",
-      "gridPos": {"h": 6, "w": 4, "x": 12, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "max(tier0_sandbox_24x7_active) or vector(0)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "type": "stat",
-      "title": "Live Execution Enabled (Fail-Closed = 0)",
-      "gridPos": {"h": 6, "w": 4, "x": 16, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "max(tier0_sandbox_live_execution_enabled) or vector(0)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "type": "stat",
-      "title": "Live/CDP Broker Ports Open (Must Be 0)",
-      "gridPos": {"h": 6, "w": 4, "x": 20, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "max(tier0_sandbox_broker_ports_open) or vector(0)",
-          "refId": "A"
-        }
-      ]
-    },
-    {
       "id": 7,
       "type": "timeseries",
       "title": "Sim-vs-Paper TCA Cost Envelope (Liquid >=$10 Order & Notional-Weighted IS bps)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
       "fieldConfig": {
         "defaults": {"unit": "bps", "decimals": 2},
@@ -119,39 +41,10 @@
       ]
     },
     {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Pre-Wall Compounding Trials & Rule-612 Stop Clamps",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
-      "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
-      "targets": [
-        {
-          "expr": "tier0_prewall_trials_total",
-          "legendFormat": "Pre-Wall Trials Total",
-          "refId": "A"
-        },
-        {
-          "expr": "tier0_sandbox_mlflow_trials_total",
-          "legendFormat": "Sandbox MLflow Trials",
-          "refId": "B"
-        },
-        {
-          "expr": "tier0_rule612_stop_clamps_total",
-          "legendFormat": "Rule-612 Stop Clamps",
-          "refId": "C"
-        },
-        {
-          "expr": "tier0_churn_blocks_total",
-          "legendFormat": "Churn Blocks",
-          "refId": "D"
-        }
-      ]
-    },
-    {
       "id": 9,
       "type": "timeseries",
       "title": "24/5 Lossless Risk Guardrails & Drawdown Breaker",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
       "targets": [
         {
@@ -168,11 +61,6 @@
           "expr": "tier0_paper_farm_combined_submitted_vs_filled_ratio",
           "legendFormat": "Submitted vs Filled Ratio",
           "refId": "C"
-        },
-        {
-          "expr": "tier0_intraday_throttle_scale",
-          "legendFormat": "Intraday Throttle Scale",
-          "refId": "D"
         }
       ]
     },
@@ -180,18 +68,13 @@
       "id": 10,
       "type": "timeseries",
       "title": "Upstream Control Center Scrape Targets Health",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
       "datasource": {"type": "prometheus", "uid": "tier0-prometheus"},
       "targets": [
         {
           "expr": "up{exported_job=\"\"}",
           "legendFormat": "Up: {{job}} ({{instance}})",
           "refId": "A"
-        },
-        {
-          "expr": "tier0_observability_up",
-          "legendFormat": "Tier-0 Observability Up",
-          "refId": "B"
         }
       ]
     }

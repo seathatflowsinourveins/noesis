@@ -591,7 +591,8 @@ def run_empirical_backtest_from_catalog(
             title = (
                 "Tier-0 SOTA Pre-Wall Empirical Backtest "
                 f"({catalog_meta['first_bar_utc'][:10]} to {catalog_meta['last_bar_utc'][:10]}, "
-                f"{len(strategies)} Symbols, 4 bps/side, RiskEngine=ON)"
+                f"{len(strategies)} Symbols, {cost_bps_per_side} bps/side, "
+                f"RiskEngine={'bypassed' if re_cfg.bypass else 'ON'})"
             )
             ts_cfg = TearsheetConfig(
                 theme="nautilus_dark",
@@ -674,7 +675,7 @@ def run_empirical_backtest_from_catalog(
             "engine": "NautilusTrader v2 BacktestEngine (ParquetDataCatalog read-back)",
             "venue": str(eng.VENUE_XNAS),
             "venue_profile": venue_profile,
-            "risk_engine_bypass": False,
+            "risk_engine_bypass": bool(re_cfg.bypass),
             "paper_only": True,
             "live_execution_enabled": False,
             "starting_equity_usd": c0,
@@ -751,7 +752,7 @@ def _log_to_mlflow(
                     "prewall_last_utc": catalog_meta["last_bar_utc"],
                     "cost_bps_per_side": backtest_meta["cost_bps_per_side"],
                     "venue_profile": backtest_meta["venue_profile"],
-                    "risk_engine_bypass": False,
+                    "risk_engine_bypass": bool(backtest_meta["risk_engine_bypass"]),
                 }
             )
             metrics: dict[str, float] = {
