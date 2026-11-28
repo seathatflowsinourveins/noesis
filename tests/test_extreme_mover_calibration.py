@@ -356,3 +356,90 @@ def test_discovery_and_research_preserve_adr0026_lazy_imports() -> None:
         check=True,
     )
     assert json.loads(proc.stdout.strip()) == []
+
+
+def test_discovery_session_rvol_matches_live_scanner_bb0eb23_semantics() -> None:
+    """discovery.py RVOL == live scanner (09:30 auction exclusion + ToD pace RVOL + blend)."""
+    from types import SimpleNamespace
+
+    from tier0_sota.live import scanner as sc
+
+    for const in (
+        "TOD_RVOL_RTH_CDF_ONE_MINUS_B",
+        "TOD_RVOL_RTH_CDF_B",
+        "TOD_RVOL_RTH_CDF_P",
+        "TOD_RVOL_RTH_SHARE_OF_FULLDAY",
+        "TOD_RVOL_PM_SHARE_OF_FULLDAY",
+        "TOD_RVOL_EARLY_CLOSE_SCALE",
+    ):
+        assert getattr(disc, const) == getattr(sc, const), const
+    assert disc.xnys_rth_close_minute_et(date(2026, 10, 15)) == 960
+    assert disc.xnys_rth_close_minute_et(date(2025, 11, 28)) == 780
+
+    baseline_20d = 2_000_000.0
+    # Regular session (2026-10-15) and pre-wall XNYS 13:00 ET early close (2025-11-28).
+    for day in (date(2026, 10, 15), date(2025, 11, 28)):
+        rth_close_m = disc.xnys_rth_close_minute_et(day)
+        starts_et = [
+            datetime(day.year, day.month, day.day, 9, 0, tzinfo=NY) + timedelta(minutes=m)
+            for m in (*range(0, 90), *range(235, 250))  # 09:00-10:29 & 12:55-13:09 ET
+        ]
+        vols: list[float] = []
+        for k, st_et in enumerate(starts_et):
+            if st_et.hour == 9 and st_et.minute == 30:
+                vols.append(250_000.0)  # opening-auction bar
+            elif st_et.hour < 9 or (st_et.hour == 9 and st_et.minute < 30):
+                vols.append(1_000.0 + 37.0 * k)
+            else:
+                vols.append(
+                    20_000.0 + float((k * 7_919) % 13_000) + (40_000.0 if k % 17 == 0 else 0.0)
+                )
+        close_ms = [(s.hour * 60 + s.minute) + 1 for s in starts_et]
+        sess_lbl = [
+            "PRE_MARKET" if cm <= 570 else ("RTH" if cm <= rth_close_m else "AFTER_HOURS")
+            for cm in close_ms
+        ]
+        df = pl.DataFrame(
+            {
+                "symbol": ["SOXS"] * len(starts_et),
+                "t_ns": [int(s.astimezone(UTC).timestamp()) * 1_000_000_000 for s in starts_et],
+                "v": vols,
+                "close_m": close_ms,
+                "sess": sess_lbl,
+                "mean_20d_vol": [baseline_20d] * len(starts_et),
+            }
+        )
+        out = disc.compute_causal_session_rvol_frame(df, rth_close_m=rth_close_m)
+        assert out.height == df.height
+        sc_bars = [
+            SimpleNamespace(timestamp=s.astimezone(UTC), volume=v)
+            for s, v in zip(starts_et, vols, strict=True)
+        ]
+        checked_open_exclusion = False
+        for i, row in enumerate(out.iter_rows(named=True)):
+            sess_i = str(row["sess"])
+            assert sc._bar_session(sc_bars[i]) == sess_i
+            exp_same = sc._compute_same_session_rvol(
+                sc_bars[: i + 1], sess_i, early_fallback_rvol=1.5
+            )
+            now_utc = sc_bars[i].timestamp + timedelta(minutes=1)
+            exp_tod = sc.compute_tod_rvol(sum(vols[: i + 1]), baseline_20d, now_utc, sess_i)
+            elapsed_rth = float(row["close_m"]) - 570.0
+            exp_blend = (
+                exp_tod
+                if sess_i == "RTH" and exp_tod > 0.0 and 0.0 <= elapsed_rth < 60.0
+                else max(exp_same, exp_tod)
+            )
+            assert row["rvol_same_session"] == pytest.approx(exp_same, rel=1e-9, abs=1e-12)
+            assert row["tod_rvol"] == pytest.approx(exp_tod, rel=1e-9, abs=1e-12)
+            assert row["rvol_blend"] == pytest.approx(exp_blend, rel=1e-9, abs=1e-12)
+            if sess_i == "RTH" and int(row["close_m"]) == 586:  # 09:45 ET bar close
+                rth_v = [
+                    v for v, s in zip(vols[: i + 1], sess_lbl[: i + 1], strict=True) if s == "RTH"
+                ]
+                naive = (sum(rth_v[-5:]) / 5.0) / (sum(rth_v[:-5]) / len(rth_v[:-5]))
+                assert row["rvol_same_session"] > naive  # 09:30 auction excluded from prior
+                checked_open_exclusion = True
+        assert checked_open_exclusion
+        if rth_close_m < 960:
+            assert "AFTER_HOURS" in set(out["sess"].to_list())

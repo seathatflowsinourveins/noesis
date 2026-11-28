@@ -1,0 +1,32 @@
+{
+	admin off
+}
+
+# Official upstream Caddy static file server for unmodified Nautilus/ml4t/SHAP tearsheets (:8793).
+http://127.0.0.1:8793, http://localhost:8793 {
+	bind 127.0.0.1
+	root * /mnt/z/sota-data/manifests
+	file_server browse
+}
+
+# Official upstream Caddy loopback gateway for DuckDB SQL UI (:4213 -> internal DuckDB UI :4214).
+# DuckDB v2.0.1 ui extension enforces strict CSRF Origin == http://localhost:<ui_local_port>,
+# rejecting browsers on http://127.0.0.1:4213 with HTTP 401 on POST /ddb/run.
+# Rewrite Origin ONLY for explicit loopback origins (127.0.0.1:4213 / localhost:4213); all foreign
+# or missing Origins pass through untouched so DuckDB UI preserves its HTTP 401 CSRF protection.
+http://127.0.0.1:4213, http://localhost:4213 {
+	bind 127.0.0.1
+	@loopback_origin header_regexp Origin ^http://(127\.0\.0\.1|localhost):4213$
+	handle @loopback_origin {
+		reverse_proxy 127.0.0.1:4214 {
+			header_up Origin http://localhost:4214
+			header_up Referer http://localhost:4214/
+			header_up Host localhost:4214
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:4214 {
+			header_up Host localhost:4214
+		}
+	}
+}

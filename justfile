@@ -99,6 +99,51 @@ manifest-check:
 test *args:
     {{uv_run}} pytest -q {{pytest_cache_flag}} {{args}}
 
+# Run pytest with JUnit XML + Allure Report 3 single-file HTML dashboard served via Caddy :8793/test-reports/allure/
+[unix]
+test-report *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data_root="${TIER0_DATA_ROOT:-/mnt/z/sota-data}"
+    report_root="${data_root}/manifests/test-reports"
+    allure_out="${report_root}/allure"
+    allure_res="$(mktemp -d)"
+    trap 'rm -rf "$allure_res"' EXIT
+    mkdir -p "$allure_out"
+    rc=0
+    {{uv_run}} --with allure-pytest==2.16.2 pytest -q {{pytest_cache_flag}} --alluredir="$allure_res" --junitxml="$report_root/junit.xml" {{args}} || rc=$?
+    PATH="$HOME/.local/bin:$PATH" npx --yes allure@3.33.0 awesome "$allure_res" --output "$allure_out" --single-file --report-name "noesis Tier-0 SOTA Verification"
+    chmod 755 "$report_root" "$allure_out"
+    find "$report_root" -type f -exec chmod 644 {} +
+    echo "TEST_REPORT_OK=1 rc=${rc} url=http://127.0.0.1:8793/test-reports/allure/"
+    exit "$rc"
+
+# Run pytest with JUnit XML + Allure Report 3 single-file HTML dashboard served via Caddy :8793/test-reports/allure/
+[windows]
+test-report *args:
+    $ErrorActionPreference = 'Stop'; $dataRoot = if ($env:TIER0_DATA_ROOT) { $env:TIER0_DATA_ROOT } else { 'Z:\sota-data' }; $reportRoot = Join-Path $dataRoot 'manifests\test-reports'; $allureOut = Join-Path $reportRoot 'allure'; $allureRes = Join-Path ([System.IO.Path]::GetTempPath()) ('noesis-allure-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $allureRes, $allureOut -Force | Out-Null; try { uv run --no-sync --with allure-pytest==2.16.2 pytest -q --alluredir="$allureRes" --junitxml="$(Join-Path $reportRoot 'junit.xml')" {{args}}; $rc = $LASTEXITCODE; npx --yes allure@3.33.0 awesome "$allureRes" --output "$allureOut" --single-file --report-name 'noesis Tier-0 SOTA Verification'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Write-Host ('TEST_REPORT_OK=1 rc=' + $rc + ' url=http://127.0.0.1:8793/test-reports/allure/'); exit $rc } finally { if (Test-Path -LiteralPath $allureRes) { Remove-Item -LiteralPath $allureRes -Recurse -Force -ErrorAction SilentlyContinue } }
+
+# Run isolated WSL-only report-only mutmut 3 mutation audit on a temp copy of risk.py (never mutates tracked risk.py)
+[unix]
+mutate-risk *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp_work="$(mktemp -d)"
+    trap 'rm -rf "$tmp_work"' EXIT
+    cp -a src tests scripts pyproject.toml uv.lock "$tmp_work/"
+    cat >> "$tmp_work/pyproject.toml" <<'EOF'
+
+    [tool.mutmut]
+    source_paths = ["src/tier0_sota"]
+    only_mutate = ["src/tier0_sota/risk.py"]
+    also_copy = ["scripts/"]
+    pytest_add_cli_args_test_selection = ["tests/test_core_engine.py"]
+    pytest_add_cli_args = ["-q", "-p", "no:cacheprovider", "-k", "test_rule_612_stop_cap_property or test_24x5_session_protection_and_4tier_progressive_trailing or test_compute_non_noise_min_trail_spec_24x5_and_invariants"]
+    EOF
+    cd "$tmp_work"
+    {{uv_prefix}}uv run --no-sync --with mutmut==3.8.1 mutmut run --max-children 4 {{args}} || true
+    {{uv_prefix}}uv run --no-sync --with mutmut==3.8.1 mutmut results || true
+
 # Refresh Half-Auto extreme-mover TV tickets, watchlists & DuckDB audit table (qty=1, semi_auto_confirmed=false)
 tv-tickets:
     {{uv_run}} python -m tier0_sota.tv.tickets --venue ALPACA

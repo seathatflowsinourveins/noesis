@@ -27,14 +27,47 @@ from tier0_sota.discovery import assert_pre_wall_date, assert_pre_wall_ns
 from tier0_sota.engine import run_nautilus_signal_backtest
 
 MIN_CPCV_SAMPLES: int = 16
+CPCV_N_FOLDS: int = 8
+CPCV_N_TEST_FOLDS: int = 3
+CPCV_PURGED_SIZE: int = 2
+CPCV_EMBARGO_SIZE: int = 2
 FEED_LATENCY_NS: int = 50_000
 
 
 @lru_cache(maxsize=1)
 def _cpcv() -> Any:
+    """skfolio CPCV with >= MIN_CPCV_SAMPLES OOS paths (8 folds / 3 test -> 56 splits, 21 paths)."""
     from skfolio.model_selection import CombinatorialPurgedCV
 
-    return CombinatorialPurgedCV(n_folds=4, n_test_folds=2, purged_size=1, embargo_size=1)
+    cv = CombinatorialPurgedCV(
+        n_folds=CPCV_N_FOLDS,
+        n_test_folds=CPCV_N_TEST_FOLDS,
+        purged_size=CPCV_PURGED_SIZE,
+        embargo_size=CPCV_EMBARGO_SIZE,
+    )
+    if int(cv.n_test_paths) < MIN_CPCV_SAMPLES:
+        raise ValueError(
+            f"CPCV must produce >= {MIN_CPCV_SAMPLES} OOS paths, got {int(cv.n_test_paths)}"
+        )
+    return cv
+
+
+@lru_cache(maxsize=1)
+def cpcv_min_samples() -> int:
+    """Smallest sample count upstream skfolio CPCV accepts for all >= 16 OOS paths."""
+    cv = _cpcv()
+    for n_obs in range(MIN_CPCV_SAMPLES, 100_000):
+        try:
+            list(cv.split(np.zeros((n_obs, 1))))
+        except ValueError:
+            continue
+        return n_obs
+    raise RuntimeError("skfolio CPCV rejected every sample size up to 100_000")
+
+
+def hlz_t_hurdle(n_trials_total: int) -> float:
+    """Project HLZ-inspired one-sided Bonferroni normal critical value for cumulative trials."""
+    return float(NormalDist().inv_cdf(1.0 - 0.00135 / max(1, int(n_trials_total))))
 
 
 def evaluate_hftbacktest_queue_markout(
@@ -152,6 +185,8 @@ def _compute_cpcv_pbo(trial_returns: Sequence[np.ndarray]) -> float | None:
     if len(elig) < 2:
         return None
     m_len = min(r.size for r in elig)
+    if m_len < cpcv_min_samples():
+        return None
     mat = np.column_stack([r[:m_len] for r in elig])
     cpcv = _cpcv()
     is_r, oos_r = [], []
@@ -192,24 +227,46 @@ def falsify_trade_returns(
     if trial_rets is not None and pbo is None:
         pbo = _compute_cpcv_pbo(trial_rets)
     worst_pct = round(float(np.min(tr_r)) * 100.0, 4) if n_s > 0 else 0.0
+    hlz_t = hlz_t_hurdle(n_t)
     if n_s < MIN_CPCV_SAMPLES:
         return {
             "n_trades": n_s,
             "worst_trade_pct": worst_pct,
             "cpcv_splits": 0,
+            "cpcv_oos_paths": 0,
+            "cpcv_min_samples": cpcv_min_samples(),
             "cpcv_oos_mean_bps": 0.0,
+            "cpcv_oos_splits_min_bps": 0.0,
+            "cpcv_oos_splits_median_bps": 0.0,
+            "cpcv_oos_splits_p05_bps": 0.0,
             "dsr": 0.0,
             "min_trl": None,
             "pbo": pbo,
             "hac_t": 0.0,
+            "hac_t_raw": 0.0,
+            "hlz_t_hurdle": round(hlz_t, 4),
+            "hlz_t_hurdle_raw": hlz_t,
             "spa_p": 1.0,
             "spa_p_upper": 1.0,
+            "gate_checks": {
+                "2_return_positive": False,
+                "3_cpcv_oos_positive": False,
+                "4_dsr_pbo_credible": False,
+                "5_hansen_spa_significant": False,
+                "6_hac_t_stat_significant": False,
+            },
             "promoted": False,
             "verdict": "DISCARD_INSUFFICIENT_TRADES",
         }
-    splits = list(_cpcv().split(tr_r.reshape(-1, 1)))
+    min_cpcv_n = cpcv_min_samples()
+    cpcv_ok = n_s >= min_cpcv_n
+    splits: list[Any] = list(_cpcv().split(tr_r.reshape(-1, 1))) if cpcv_ok else []
     te_idx = [np.concatenate(te) if isinstance(te, (list, tuple)) else te for _, te in splits]
-    cpcv_oos_m = float(np.mean([float(np.mean(tr_r[idx])) for idx in te_idx]))
+    split_oos_means = [float(np.mean(tr_r[idx])) for idx in te_idx] if cpcv_ok else []
+    cpcv_oos_m = float(np.mean(split_oos_means)) if split_oos_means else 0.0
+    cpcv_oos_min = float(np.min(split_oos_means)) if split_oos_means else 0.0
+    cpcv_oos_med = float(np.median(split_oos_means)) if split_oos_means else 0.0
+    cpcv_oos_p05 = float(np.percentile(split_oos_means, 5)) if split_oos_means else 0.0
     mean_r, std_r = float(np.mean(tr_r)), float(np.std(tr_r, ddof=1))
     if o.get("variance_trials") is not None:
         vt = max(1e-6, float(o["variance_trials"]))
@@ -245,33 +302,57 @@ def falsify_trade_returns(
         spa = SPA(np.zeros_like(tr_r), (-tr_r).reshape(-1, 1), block_size=2, reps=300, seed=42)
         spa.compute()
         spa_p, spa_pu = float(spa.pvalues["consistent"]), float(spa.pvalues["upper"])
-    hlz_t = float(NormalDist().inv_cdf(1.0 - 0.00135 / n_t))
-    pbo_ok = bool(pbo is not None and math.isfinite(float(pbo)) and float(pbo) < 0.50)
-    prom = bool(
-        mean_r > 0.0
+    # Evaluate all gate booleans ONCE from raw unrounded finite floats (prevents rounding flips).
+    n_oos_paths = int(_cpcv().n_test_paths) if cpcv_ok else 0
+    mean_ok = bool(math.isfinite(mean_r) and mean_r > 0.0)
+    cpcv_oos_ok = bool(
+        cpcv_ok
+        and n_oos_paths >= MIN_CPCV_SAMPLES
+        and math.isfinite(cpcv_oos_m)
         and cpcv_oos_m > 0.0
+    )
+    pbo_ok = bool(pbo is not None and math.isfinite(float(pbo)) and float(pbo) < 0.50)
+    dsr_pbo_ok = bool(
+        math.isfinite(dsr_val)
         and dsr_val >= 0.95
         and min_trl is not None
+        and math.isfinite(min_trl)
         and n_s >= min_trl
-        and hac_t >= hlz_t
-        and spa_p < 0.05
-        and spa_pu < 0.05
         and pbo_ok
     )
+    spa_ok = bool(math.isfinite(spa_p) and math.isfinite(spa_pu) and spa_p < 0.05 and spa_pu < 0.05)
+    hac_ok = bool(math.isfinite(hac_t) and math.isfinite(hlz_t) and hac_t >= hlz_t)
+    gate_checks = {
+        "2_return_positive": mean_ok,
+        "3_cpcv_oos_positive": cpcv_oos_ok,
+        "4_dsr_pbo_credible": dsr_pbo_ok,
+        "5_hansen_spa_significant": spa_ok,
+        "6_hac_t_stat_significant": hac_ok,
+    }
+    prom = all(gate_checks.values())
     return {
         "n_trades": n_s,
         "worst_trade_pct": worst_pct,
         "mean_bps": round(mean_r * 1e4, 3),
         "cpcv_splits": len(splits),
+        "cpcv_oos_paths": n_oos_paths,
+        "cpcv_min_samples": min_cpcv_n,
         "cpcv_oos_mean_bps": round(cpcv_oos_m * 1e4, 3),
+        "cpcv_oos_splits_min_bps": round(cpcv_oos_min * 1e4, 3),
+        "cpcv_oos_splits_median_bps": round(cpcv_oos_med * 1e4, 3),
+        "cpcv_oos_splits_p05_bps": round(cpcv_oos_p05 * 1e4, 3),
         "dsr": round(dsr_val, 6),
         "min_trl": round(min_trl, 2) if min_trl is not None else None,
         "pbo": round(float(pbo), 4) if pbo is not None else None,
         "hac_t": round(hac_t, 4),
+        "hac_t_raw": hac_t,
+        "hlz_t_hurdle": round(hlz_t, 4),
+        "hlz_t_hurdle_raw": hlz_t,
         "spa_p": round(spa_p, 4),
         "spa_p_upper": round(spa_pu, 4),
+        "gate_checks": gate_checks,
         "promoted": prom,
-        "verdict": "PROMOTE" if prom else "DISCARD",
+        "verdict": "PROMOTE" if prom else ("DISCARD" if cpcv_ok else "DISCARD_INSUFFICIENT_PATHS"),
     }
 
 
@@ -927,6 +1008,32 @@ def run_starred_frontier_landscape_benchmark(
     return manifest
 
 
+def _evaluate_l1_gate1(
+    l1: Mapping[str, Any] | None, *, min_l1_fills: int = MIN_CPCV_SAMPLES
+) -> tuple[bool, int]:
+    """Fail-closed Gate 1 check: when L1 evidence is supplied, require >= min_l1_fills & markout."""
+    if l1 is None:
+        return True, 0
+    if l1.get("passive_fills") is not None:
+        fills = int(l1["passive_fills"])
+    elif isinstance(l1.get("passive_filled"), bool):
+        fills = 1 if l1["passive_filled"] else 0
+    elif l1.get("passive_filled") is not None:
+        fills = int(l1["passive_filled"])
+    else:
+        fills = 0
+    submitted = bool(l1.get("passive_order_submitted", fills > 0))
+    raw_mk = l1.get("markout_bps", l1.get("mean_markout_bps"))
+    try:
+        markout = float(raw_mk) if raw_mk is not None else float("nan")
+    except (TypeError, ValueError):
+        markout = float("nan")
+    req_fills = max(1, int(min_l1_fills))
+    return bool(
+        submitted and fills >= req_fills and math.isfinite(markout) and markout >= -20.0
+    ), fills
+
+
 def evaluate_six_gate_falsification(
     *,
     bars_df: pl.DataFrame,
@@ -937,6 +1044,7 @@ def evaluate_six_gate_falsification(
     l1_quotes_df: pl.DataFrame | None = None,
     l1_trades_df: pl.DataFrame | None = None,
     l1_side: str = "BUY",
+    min_l1_fills: int = MIN_CPCV_SAMPLES,
     backtest_kwargs: dict[str, Any] | None = None,
     mlflow_tracking_uri: str | None = None,
     experiment_name: str = "tier0-sota-falsification",
@@ -978,19 +1086,21 @@ def evaluate_six_gate_falsification(
         l1 = evaluate_hftbacktest_queue_markout(
             l1_quotes_df, l1_trades_df, symbol=sym, side=l1_side
         )
-    g1 = l1 is None or (
-        l1["passive_order_submitted"] and l1["passive_filled"] and l1["markout_bps"] >= -20.0
-    )
+    g1, l1_fills = _evaluate_l1_gate1(l1, min_l1_fills=min_l1_fills)
+    hlz_t = hlz_t_hurdle(n_trials_total)
+    c1, c2 = f1["gate_checks"], f2["gate_checks"]
     g2 = (
-        bt1.total_return_pct > 0.0
-        and bt2.total_return_pct > 0.0
-        and f1["promoted"]
-        and f2["promoted"]
+        math.isfinite(float(bt1.total_return_pct))
+        and math.isfinite(float(bt2.total_return_pct))
+        and float(bt1.total_return_pct) > 0.0
+        and float(bt2.total_return_pct) > 0.0
+        and c1["2_return_positive"]
+        and c2["2_return_positive"]
     )
-    g3 = f1["cpcv_splits"] > 0 and f1["cpcv_oos_mean_bps"] > 0.0 and f2["cpcv_oos_mean_bps"] > 0.0
-    g4 = f1["dsr"] >= 0.95 and f2["dsr"] >= 0.95 and f1["pbo"] is not None and f1["pbo"] < 0.50
-    g5 = f1["spa_p"] < 0.05 and f2["spa_p"] < 0.05
-    g6 = f1["promoted"] and f2["promoted"]
+    g3 = c1["3_cpcv_oos_positive"] and c2["3_cpcv_oos_positive"]
+    g4 = c1["4_dsr_pbo_credible"] and c2["4_dsr_pbo_credible"]
+    g5 = c1["5_hansen_spa_significant"] and c2["5_hansen_spa_significant"]
+    g6 = c1["6_hac_t_stat_significant"] and c2["6_hac_t_stat_significant"]
     gates = {
         "1_hftbacktest_l1_markout": bool(g1),
         "2_cost_1x_2x_survival": bool(g2),
@@ -1002,6 +1112,12 @@ def evaluate_six_gate_falsification(
     promoted = all(gates.values())
     rep: dict[str, Any] = {
         "n_trials_total": n_trials_total,
+        "hlz_t_hurdle": round(hlz_t, 4),
+        "gate1_passive_fills": l1_fills,
+        "gate1_min_l1_fills": max(1, int(min_l1_fills)),
+        "gate6_hac_t_1x": float(f1["hac_t_raw"]),
+        "gate6_hac_t_2x": float(f2["hac_t_raw"]),
+        "gate6_hurdle": hlz_t,
         "gates": gates,
         "promoted": promoted,
         "verdict": "PROMOTE" if promoted else "DISCARD",
@@ -2430,17 +2546,23 @@ def _cli_main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
+    "CPCV_EMBARGO_SIZE",
+    "CPCV_N_FOLDS",
+    "CPCV_N_TEST_FOLDS",
+    "CPCV_PURGED_SIZE",
     "FEED_LATENCY_NS",
     "MIN_CPCV_SAMPLES",
     "build_causal_mover_signals",
     "calibrate_extreme_mover_weights_optuna",
     "compute_per_symbol_min_trailing_table",
     "compute_skfolio_portfolio_weights",
+    "cpcv_min_samples",
     "evaluate_hftbacktest_queue_markout",
     "evaluate_six_gate_falsification",
     "falsify_trade_returns",
     "fetch_alpaca_paper_sip_recent_bars",
     "fit_conformal_excursion_intervals",
+    "hlz_t_hurdle",
     "load_prewall_mover_feature_panel",
     "log_extreme_mover_calibration_to_mlflow",
     "log_falsification_to_mlflow",

@@ -59,6 +59,9 @@ research = [
 data-versioning = [
     "dvc>=3.67.1",
 ]
+test-reports = [
+    "allure-pytest==2.16.2",
+]
 evals = [
     "dspy>=3.0.0",
     "inspect-ai>=0.3.0",

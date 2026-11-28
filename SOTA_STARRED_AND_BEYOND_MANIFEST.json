@@ -177,7 +177,10 @@
     },
     "L3": {
       "name": "Single-Engine Sim == Paper == Live Execution",
-      "winners": ["nautechsystems/nautilus_trader (v2)", "nkaz001/hftbacktest"],
+      "winners": [
+        "nautechsystems/nautilus_trader (v2.0.0rc9, status: release-candidate, LGPL-3.0-only)",
+        "nkaz001/hftbacktest (v2.4.4, watch maintenance freshness)"
+      ],
       "artifacts": ["src/tier0_sota/engine.py", "src/tier0_sota/risk.py"]
     },
     "L4": {
@@ -216,10 +219,12 @@
         "open-telemetry/opentelemetry-python (opentelemetry-exporter-otlp)",
         "open-telemetry/opentelemetry-collector-contrib",
         "caddyserver/caddy",
-        "zensical/zensical"
+        "zensical/zensical",
+        "allure-framework/allure3 (v3.33.0 CLI + allure-pytest==2.16.2)"
       ],
       "artifacts": [
         "docker/compose.sota.yml",
+        "docker/Caddyfile",
         "docker/otel-collector-config.yaml",
         "zensical.toml",
         "docs/adr/CATALOG.md"
@@ -236,6 +241,8 @@
         "HypothesisWorks/hypothesis",
         "pytest-dev/pytest",
         "Z3Prover/z3 (z3-solver)",
+        "pschanely/CrossHair (isolated uvx)",
+        "boxed/mutmut (v3.8.1 isolated WSL report-only)",
         "osprey-oss/deptry",
         "aquasecurity/trivy",
         "anchore/syft",
@@ -382,20 +389,26 @@
         {"slug": "grafana/tempo", "trigger": "distributed OTel trace storage"},
         {"slug": "grafana/pyroscope", "trigger": "continuous Rust/Python profiling"},
         {"slug": "prometheus/alertmanager", "spdx": "Apache-2.0", "status": "admitted_profile_gated", "compose_profile": "alerting", "version": "0.28.1", "recipe": "just alerting-up", "port": 9093, "live_verified": true, "inhibit_rules_count": 2, "prometheus_rules_count": 15, "artifacts": ["docker/compose.sota.yml", "docker/prometheus.yml", "docker/prometheus_rules.yml", "docker/alertmanager.yml"], "adr": "ADR-0028", "trigger": "24/5 alert routing with critical/down inhibit_rules"},
+        {"slug": "allure-framework/allure3", "spdx": "Apache-2.0", "status": "admitted_test_reports_group", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "pyproject_group": "test-reports", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "license_evidence": "https://github.com/allure-framework/allure3/blob/a859ae4ddb9b5ca60ac81a07ca029b6d5ca60ac81/LICENSE.txt", "adr": "ADR-0021 / ADR-0024", "trigger": "Zero-container static single-file upstream test dashboard served via Caddy :8793/test-reports/allure/ (crossed gap trigger: repo had 0 test-result UI)"},
         {"slug": "langfuse/langfuse", "trigger": "LLM trace scaling beyond MLflow"}
       ]
     },
     "L15": {
       "name": "Formal Verification, Sandboxes, Red-Teaming, Evolution & Agent Protocols",
       "candidates": [
-        {"slug": "pschanely/CrossHair", "spdx": "MIT", "status": "admitted_isolated_uvx_cli", "recipe": "just crosshair", "zero_mypy_in_uv_lock": true, "artifacts": ["evals/symbolic_risk_crosshair.py"], "adr": "ADR-0028", "trigger": "symbolic execution on risk.py (ADMITTED via isolated uvx CLI in ADR-0028: 5 PEP-316 contracts + 30 parity cases, 0 counterexamples, 0 mypy in uv.lock)"},
-        {"slug": "boxed/mutmut", "spdx": "BSD-3-Clause", "trigger": "isolated temp-copy mutation testing on risk.py"},
+        {"slug": "pschanely/CrossHair", "spdx": "MIT", "status": "admitted_isolated_uvx_cli", "recipe": "just crosshair", "zero_mypy_in_uv_lock": true, "artifacts": ["evals/symbolic_risk_crosshair.py"], "adr": "ADR-0028", "trigger": "bounded symbolic exploration on risk.py (ADMITTED via isolated uvx CLI in ADR-0028: 5 PEP-316 contracts + 30 parity cases, 0 counterexamples, 0 mypy in uv.lock)"},
+        {"slug": "boxed/mutmut", "spdx": "BSD-3-Clause", "status": "admitted_isolated_uvx_cli", "version": "3.8.1", "recipe": "just mutate-risk", "wsl_only_fork": true, "never_mutates_tracked_risk_py": true, "artifacts": ["justfile", "src/tier0_sota/risk.py"], "adr": "ADR-0024", "trigger": "isolated temp-copy mutation sensitivity audit on risk.py (ADMITTED WSL-only mktemp -d report-only via just mutate-risk; 0 tracked mutations)"},
+        {"slug": "schemathesis/schemathesis", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "OpenAPI schema property fuzzing when repo exposes an owned HTTP/OpenAPI server (currently 0 owned HTTP servers; fuzzing upstream OpenBB excluded)"},
+        {"slug": "microsoft/playwright", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "browser E2E + Trace Viewer only if repo authors an owned FINOS widget plugin or web UI"},
+        {"slug": "ctrf-io/ctrf", "alias": "pytest-json-ctrf", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "JSON test telemetry when a Grafana upstream datasource consumes CTRF directly without custom glue"},
+        {"slug": "pytest-dev/pytest-xdist", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "conditional ADR-0026 parallel execution only after -n 4 --dist loadfile passes 3 consecutive runs cleanly with isolated DuckDB/MLflow state"},
+        {"slug": "nextest-rs/nextest", "alias": "cargo-nextest", "spdx": "Apache-2.0", "status": "not_applicable_no_owned_rust", "trigger": "N/A until repository owns/vendors a Rust workspace crate (currently consumes NautilusTrader/hftbacktest as wheels; same for proptest/kani)"},
         {"slug": "opengrep/opengrep", "spdx": "LGPL-2.1", "trigger": "OSI cross-file SAST beyond ast-grep + CodeQL (replaces non-OSI Semgrep rules)"},
         {"slug": "sigstore/cosign", "trigger": "container artifact signing"},
         {"slug": "slsa-framework/slsa-verifier", "trigger": "build provenance verification"},
         {"slug": "open-policy-agent/opa", "trigger": "policy-as-code admission gates"},
         {"slug": "harbor-framework/harbor", "spdx": "Apache-2.0", "trigger": "live containerized agent benchmark harness"},
-        {"slug": "promptfoo/promptfoo", "spdx": "MIT", "trigger": "CI prompt red-teaming and regression matrix"},
+        {"slug": "promptfoo/promptfoo", "spdx": "MIT", "status": "earned_trigger_watch", "note": "MIT license retained post-OpenAI acquisition (verified 2026-11-27); quarterly license & vendor-neutrality audit required before any admission", "trigger": "CI prompt red-teaming and regression matrix beyond Inspect AI + MLflow GenAI"},
         {"slug": "OpenHands/OpenHands", "spdx": "MIT", "trigger": "autonomous containerized coding benchmarks"},
         {"slug": "microsoft/PyRIT", "trigger": "automated LLM red-teaming"},
         {"slug": "ethz-spylab/agentdojo", "trigger": "prompt-injection benchmark"},
@@ -530,7 +543,7 @@
       "repos_total": 6,
       "archived_count": 2,
       "active_admitted": [
-        {"repo": "nautechsystems/nautilus_trader", "spdx": "LGPL-3.0", "pinned": "2.0.0rc9", "layer": "L3", "role": "Single-engine Rust-native Sim == Paper == Live execution, BacktestEngine/SANDBOX SSOT & built-in InteractiveBrokers adapter (:4002 paper-only)"}
+        {"repo": "nautechsystems/nautilus_trader", "spdx": "LGPL-3.0-only", "pinned": "2.0.0rc9", "status": "release_candidate", "ga_reverification_required": true, "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "layer": "L3", "role": "Single-engine Rust-native Sim == Paper == Live execution, BacktestEngine/SANDBOX SSOT & built-in InteractiveBrokers adapter (:4002 paper-only)"}
       ],
       "active_watches": [
         {"repo": "nautechsystems/nautilus_agents", "spdx": "LGPL-3.0", "role": "Official Rust Agents SDK (earned-trigger watch; strictly off synchronous execution hot path)"},
@@ -567,14 +580,14 @@
   },
   "backtest_platform_and_dashboard_form_audit": {
     "verified_date": "2026-11-27",
-    "authoritative_adrs": ["ADR-0003", "ADR-0016", "ADR-0017", "ADR-0018", "ADR-0021", "ADR-0028"],
+    "authoritative_adrs": ["ADR-0003", "ADR-0016", "ADR-0017", "ADR-0018", "ADR-0021", "ADR-0024", "ADR-0026", "ADR-0028"],
     "canonical_manifest_path": "/mnt/z/sota-data/manifests/backtest_platform_and_dashboard_sota_manifest.json",
-    "architectural_principle": "Decoupled Rust-native execution & microstructure queue engines (NautilusTrader v2 + hftbacktest) composed with five specialized official OSI upstream dashboard forms fed solely by declarative artifacts (zero self-built or engine-coupled web GUIs).",
+    "architectural_principle": "Decoupled Rust-native execution & microstructure queue engines (NautilusTrader v2 + hftbacktest) with LLM strictly as outer research operator (arXiv:2309.17322), composed with five specialized official OSI upstream dashboard forms fed solely by declarative artifacts (zero self-built or engine-coupled web GUIs).",
     "five_upstream_dashboard_forms": {
       "form_a_static_tearsheets": {
         "name": "Unmodified Interactive Plotly HTML Tearsheets",
         "repos": [
-          {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "spdx": "LGPL-3.0-only", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark')"},
+          {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "status": "release_candidate", "spdx": "LGPL-3.0-only", "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark')"},
           {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.report_generation.combine_figures_to_html (pure Plotly HTML; Streamlit [dashboard] extra excluded)"},
           {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution"},
           {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution"},
@@ -582,13 +595,14 @@
         ]
       },
       "form_b_control_planes": {
-        "name": "Experiment, Hyperparameter, Asset-Lineage, Safety Eval & Living ADR Control Planes",
+        "name": "Experiment, Hyperparameter, Asset-Lineage, Safety Eval, Test-Report & Living ADR Control Planes",
         "repos": [
           {"repo": "mlflow/mlflow", "version": "3.18.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:5000"},
           {"repo": "optuna/optuna-dashboard", "version": "0.21.0", "spdx": "MIT", "endpoint": "http://127.0.0.1:8080/dashboard"},
-          {"repo": "dagster-io/dagster", "version": "1.13.31", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:3000"},
+          {"repo": "dagster-io/dagster", "version": "1.13.31", "spdx": "Apache-2.0", "note": "OSS core only (commercial Dagster+ excluded)", "endpoint": "http://127.0.0.1:3000"},
           {"repo": "UKGovernmentBEIS/inspect_ai", "version": "0.3.292", "spdx": "MIT", "endpoint": "http://127.0.0.1:7575"},
-          {"repo": "zensical/zensical", "version": "0.1.3", "spdx": "MIT", "endpoint": "http://127.0.0.1:8010"}
+          {"repo": "zensical/zensical", "version": "0.1.3", "spdx": "MIT", "endpoint": "http://127.0.0.1:8010"},
+          {"repo": "allure-framework/allure3", "version": "3.33.0", "pytest_plugin": "allure-pytest==2.16.2", "spdx": "Apache-2.0", "license_evidence": "https://github.com/allure-framework/allure3/blob/a859ae4ddb9b5ca60ac81a07ca029b6d5ca60ac81/LICENSE.txt", "endpoint": "http://127.0.0.1:8793/test-reports/allure/"}
         ]
       },
       "form_c_institutional_terminal": {
@@ -605,22 +619,22 @@
       "form_d_observability_and_sql": {
         "name": "Live 24/5 Observability & Read-Only SQL Workbench",
         "repos": [
-          {"repo": "grafana/grafana", "version": "13.3.1", "spdx": "AGPL-3.0-only", "endpoint": "http://127.0.0.1:3001"},
+          {"repo": "grafana/grafana", "version": "13.3.1", "spdx": "AGPL-3.0-only", "deployment_policy": "Unmodified loopback-only on 127.0.0.1:3001 (never imported into src/, never network-exposed)", "license_evidence": "https://github.com/grafana/grafana/blob/2036e2ec87f4da921aeca540eb0d74df1b37f81e/LICENSE", "endpoint": "http://127.0.0.1:3001"},
           {"repo": "prometheus/prometheus", "version": "v3.16.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9090"},
           {"repo": "prometheus/alertmanager", "version": "v0.28.1", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9093"},
           {"repo": "open-telemetry/opentelemetry-collector-contrib", "version": "0.166.0", "spdx": "Apache-2.0", "endpoint": "http://127.0.0.1:9464"},
-          {"repo": "duckdb/duckdb-ui", "version": "2.0.1", "spdx": "MIT", "endpoint": "http://127.0.0.1:4213"}
+          {"repo": "duckdb/duckdb-ui", "version": "2.0.1", "spdx": "MIT", "endpoint": "http://127.0.0.1:4213", "proxy_note": "Origin-normalising reverse proxy in docker/Caddyfile (network_mode: host, bind 127.0.0.1 pinned by test_caddyfile_loopback_binding_and_duckdb_csrf_posture) forwarding ^http://(127\\.0\\.0\\.1|localhost):4213$ -> 127.0.0.1:4214 while preserving HTTP 401 CSRF rejection on foreign/missing Origins; native alternative http://localhost:4214"}
         ]
       },
       "form_e_frontier_watches": {
-        "name": "Earned-Trigger 2026 Frontier Backtest UI & Storage Workbenches (ADR-0018 4-Gate Watch)",
+        "name": "Earned-Trigger 2026 Frontier Backtest UI & Storage Workbenches (ADR-0018 4-Gate Watch; 0 triggers fired)",
         "repos": [
-          {"repo": "marimo-team/marimo", "spdx": "Apache-2.0", "role": "Reactive pure-.py notebook/app with native DuckDB/Polars SQL & PEP 723 metadata (zero .ipynb)"},
-          {"repo": "rerun-io/rerun", "spdx": "MIT OR Apache-2.0", "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog)"},
-          {"repo": "uwdata/mosaic", "spdx": "BSD-3-Clause", "role": "DuckDB/WASM v2 linked multi-view cross-filtering over millions/billions of ticks (v0.35+)"},
+          {"repo": "marimo-team/marimo", "spdx": "Apache-2.0", "role": "Reactive pure-.py notebook/app with native DuckDB/Polars SQL & PEP 723 metadata (zero .ipynb; trigger >= 3 manual sweeps/week)"},
+          {"repo": "rerun-io/rerun", "spdx": "MIT OR Apache-2.0", "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog; awaits L2/L3 feed)"},
+          {"repo": "uwdata/mosaic", "spdx": "BSD-3-Clause", "license_evidence": "https://github.com/uwdata/mosaic/blob/f0a2cfbba83c1408aafbc14ee068cd4e94abfaf3/LICENSE", "note": "GitHub API metadata reports NOASSERTION; BSD-3-Clause verified in repo LICENSE", "role": "DuckDB/WASM v2 linked multi-view cross-filtering over millions/billions of ticks (v0.35+)"},
           {"repo": "finos/FDC3", "spdx": "Apache-2.0", "role": "Cross-widget fdc3.instrument context bus inside FINOS Workspace"},
           {"repo": "evidence-dev/evidence", "spdx": "MIT", "role": "SQL+Markdown static Stage-5 dossiers served via Caddy (Core only)"},
-          {"repo": "vortex-data/vortex", "spdx": "Apache-2.0", "role": "Linux Foundation columnar successor to Parquet for DuckDB/Arrow when lake > 100 GB/run"}
+          {"repo": "vortex-data/vortex", "spdx": "Apache-2.0", "role": "Linux Foundation columnar successor to Parquet for DuckDB/Arrow when lake > 100 GB/run (currently ~28.5-29.1 GiB)"}
         ]
       }
     },
@@ -629,8 +643,10 @@
       {"repo": "barter-rs/barter-rs", "spdx": "MIT", "decision": "watch_excluded_l3_overlap", "reason": "Modular pure-Rust trading/backtest crates without Python ML/research parity; overlaps NautilusTrader v2"},
       {"repo": "ml4t/backtest", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Pure-Python event backtester overlapping Rust-core NautilusTrader v2 (retain ml4t/diagnostic, ml4t/engineer, ml4t/skills)"},
       {"repo": "ml4t/live", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Python live broker runner overlapping NautilusTrader v2 LiveNode/SANDBOX"},
-      {"repo": "microsoft/qlib", "spdx": "MIT", "decision": "excluded_l2_l3_overlap", "reason": "Daily ML quant research framework lacking 24/5 Rust tick/queue Sim==Paper==Live parity; companion rd-agent banned"},
-      {"repo": "microsoft/MarS", "spdx": "MIT", "decision": "earned_trigger_l13_watch", "reason": "Generative LMM L2/L3 order-book market simulator (OSI winner replacing unlicensed peernagy/LOBS5)"},
+      {"repo": "microsoft/qlib", "spdx": "MIT", "decision": "excluded_l2_l3_overlap", "reason": "MIT-licensed daily research framework lacking L1/L2 queue execution or 24/5 Sim==Paper==Live parity; companion MIT microsoft/RD-Agent excluded for Qlib coupling & LLM-in-loop look-ahead risk (arXiv:2309.17322), borrowing outer hypothesis->backtest->feedback loop pattern only"},
+      {"repo": "microsoft/MarS", "spdx": "MIT", "decision": "earned_trigger_l13_watch", "reason": "Generative LMM L2/L3 order-book market simulator (OSI winner replacing unlicensed peernagy/LOBS5); awaits L3 data"},
+      {"repo": "bashtage/arch", "version": "9.0.0", "spdx": "NCSA", "license_evidence": "https://github.com/bashtage/arch/blob/d3e858fc1c99932bb6936cbaf0d1b45b136266e5/LICENSE.md", "decision": "active_l5_winner", "reason": "Hansen SPA reality check (GitHub API reports NOASSERTION; NCSA verified in repo LICENSE.md)"},
+      {"repo": "nkaz001/hftbacktest", "version": "2.4.4", "spdx": "MIT", "decision": "active_l3_l5_winner", "maintenance_freshness_note": "Last PyPI release 2025-12-10 (>11 months idle); monitor upstream maintenance", "reason": "Rust L1/L2/L3 queue & latency simulation"},
       {"repo": "polakowo/vectorbt", "spdx": "Apache-2.0 (Pro commercial)", "decision": "banned_l3", "reason": "Vectorized bar engine breaking Sim==Paper==Live parity; commercial Pro fails OSI firewall"},
       {"repo": "mementum/backtrader", "spdx": "GPL-3.0", "decision": "banned_l3", "reason": "Unmaintained bar-loop engine banned in upstream-map.toml and ast-grep"},
       {"repo": "stefan-jansen/zipline-reloaded", "spdx": "Apache-2.0", "decision": "banned_l3", "reason": "Legacy daily-centric engine banned in upstream-map.toml and ast-grep"},
@@ -644,7 +660,39 @@
       {"repo": "neosun100/lean-allinone", "decision": "excluded_l3_ui_overlap", "reason": "Third-party Lean Docker/WebUI bundle for rejected L3 engine"},
       {"repo": "aarjaneiro/QtLean", "decision": "excluded_desktop_ui_overlap", "reason": "Qt desktop GUI for rejected L3 engine"},
       {"repo": "ml4t/diagnostic[dashboard]", "decision": "excluded_streamlit_extra", "reason": "Optional extra pulls banned streamlit; use ml4t-diagnostic pure Plotly HTML tearsheet API served via Caddy :8793"},
-      {"repo": "ranaroussi/quantstats", "decision": "banned_l5", "reason": "Pulls banned yfinance and omits CPCV/DSR/PBO/SPA/HAC multiple-testing falsification"}
+      {"repo": "ranaroussi/quantstats", "decision": "banned_l5", "reason": "Pulls banned yfinance and omits CPCV/DSR/PBO/SPA/HAC multiple-testing falsification"},
+      {"repo": "ReportPortal", "spdx": "Apache-2.0", "decision": "excluded_resource_bloat", "reason": "~9 Docker services and >= 6 GB RAM violates ADR-0026 resource budget and duplicates Allure Report 3 + Grafana"},
+      {"repo": "pytest-html", "spdx": "MPL-2.0", "decision": "excluded_l6_overlap", "reason": "Overlaps single-file Apache-2.0 Allure Report 3 (just test-report)"},
+      {"repo": "Arize-ai/phoenix", "spdx": "ELv2", "decision": "excluded_spdx_firewall", "reason": "Elastic License 2.0 is non-OSI and rejected in spdx_license_firewall"}
     ]
+  },
+  "test_engine_and_dashboard_stratum_audit": {
+    "verified_date": "2026-11-27",
+    "authoritative_adrs": ["ADR-0021", "ADR-0024", "ADR-0026"],
+    "serial_baseline": {"passed": 210, "duration_secs": 298.33, "top8_slowest_secs": 160.8, "vcpus": 8},
+    "active_strata": {
+      "s1_core_runner": {"tool": "pytest==9.2.0", "spdx": "MIT", "ci_junitxml": "test-results/junit.xml via actions/upload-artifact v7.0.2"},
+      "s2_formal_symbolic_mutation": [
+        {"tool": "Hypothesis==6.170.17", "spdx": "MPL-2.0", "note": "File-level weak copyleft, unmodified"},
+        {"tool": "z3-solver==5.4.1.0", "spdx": "MIT", "proof_kind": "exhaustive_smt_unsat_refutation", "recipe": "just z3"},
+        {"tool": "pschanely/CrossHair", "spdx": "MIT", "proof_kind": "bounded_symbolic_path_exploration", "recipe": "just crosshair", "isolated_uvx": true},
+        {"tool": "boxed/mutmut==3.8.1", "spdx": "BSD-3-Clause", "proof_kind": "isolated_wsl_mktemp_report_only", "recipe": "just mutate-risk", "never_mutates_tracked_risk_py": true}
+      ],
+      "s3_llm_and_agent_evals": ["UKGovernmentBEIS/inspect_ai==0.3.292 (:7575)", "mlflow/mlflow==3.18.0 (:5000)", "stanfordnlp/dspy==3.5.0 + gepa==0.1.4", "NVIDIA/SkillEvaluator"],
+      "s4_test_dashboard": {"tool": "allure-framework/allure3==3.33.0 + allure-pytest==2.16.2", "spdx": "Apache-2.0", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "junit_url": "http://127.0.0.1:8793/test-reports/junit.xml", "custom_html_js_mjs": false},
+      "s5_static_supply_chain": ["ruff", "ty", "deptry", "ast-grep (21 rules)", "prek (10/10)", "gitleaks", "zizmor", "trivy", "syft", "shellcheck", "CodeQL (Default Setup)", "Dependabot"]
+    },
+    "not_applicable": [
+      {"tool": "cargo-nextest / proptest / kani", "reason": "not_applicable_no_owned_rust — repository owns zero Rust crates (consumes NautilusTrader and hftbacktest as wheels)"}
+    ],
+    "watches_with_triggers": [
+      {"tool": "promptfoo/promptfoo", "spdx": "MIT", "note": "Retained MIT post-OpenAI acquisition; quarterly license & neutrality check required"},
+      {"tool": "harbor-framework/harbor", "spdx": "Apache-2.0", "trigger": "Containerized agent harness benchmarking"},
+      {"tool": "schemathesis/schemathesis", "spdx": "MIT", "trigger": "Repo owns an HTTP/OpenAPI service (0 owned servers today)"},
+      {"tool": "microsoft/playwright", "spdx": "Apache-2.0", "trigger": "Repo authors an owned FINOS plugin or UI"},
+      {"tool": "pytest-dev/pytest-xdist", "spdx": "MIT", "trigger": "Passes -n 4 --dist loadfile 3 consecutive runs under ADR-0026 thread caps cleanly"},
+      {"tool": "ctrf-io/ctrf", "spdx": "MIT", "trigger": "Upstream Grafana test-health panel consumes CTRF without custom glue"}
+    ],
+    "rejected": ["Arize-ai/phoenix (ELv2)", "DeepEval (Inspect overlap)", "ReportPortal (>=6 GB / ~9 containers)", "pytest-html (Allure 3 overlap)", "boxed/cosmic-ray (mutmut overlap)"]
   }
 }

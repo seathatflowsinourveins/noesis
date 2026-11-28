@@ -6,6 +6,7 @@ import hashlib
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -328,9 +329,13 @@ def test_six_gate_falsification_and_hftbacktest(tmp_path: Path) -> None:
     assert too_short["verdict"] == "DISCARD_INSUFFICIENT_TRADES" and too_short["promoted"] is False
 
     rng = np.random.default_rng(7)
-    strong = 0.012 + 0.003 * rng.standard_normal(40)
+    strong = 0.012 + 0.003 * rng.standard_normal(64)
     ok = falsify_trade_returns(strong, n_trials_total=10, pbo=0.10)
-    assert ok["promoted"] is True and ok["verdict"] == "PROMOTE" and ok["cpcv_splits"] > 0
+    assert ok["promoted"] is True and ok["verdict"] == "PROMOTE"
+    assert ok["cpcv_splits"] == 56 and ok["cpcv_oos_paths"] >= MIN_CPCV_SAMPLES
+    # 40 trades can no longer support >= 16 OOS CPCV paths -> explicit fail-closed verdict.
+    thin = falsify_trade_returns(strong[:40], n_trials_total=10, pbo=0.10)
+    assert thin["verdict"] == "DISCARD_INSUFFICIENT_PATHS" and thin["promoted"] is False
 
     closes = [100.0 + (0.4 * (i % 3)) for i in range(50)]
     bars = _synth_bars("AAPL", closes)
@@ -355,6 +360,133 @@ def test_six_gate_falsification_and_hftbacktest(tmp_path: Path) -> None:
         "6_hac_t_stat_significant",
     }
     assert "mlflow_run_id" in rep
+
+
+def test_cpcv_21_oos_paths_insufficient_paths_and_explicit_hac_gate6() -> None:
+    """CPCV yields >= 16 OOS paths, thin samples fail closed, Gate 6 is an explicit HAC check."""
+    from types import SimpleNamespace
+
+    from tier0_sota.research import _cpcv, cpcv_min_samples, hlz_t_hurdle
+
+    cv = _cpcv()
+    assert (cv.n_folds, cv.n_test_folds, cv.purged_size, cv.embargo_size) == (8, 3, 2, 2)
+    assert cv.n_splits == 56 and cv.n_test_paths == 21 >= MIN_CPCV_SAMPLES
+    min_n = cpcv_min_samples()
+    assert min_n == 48
+
+    rng = np.random.default_rng(11)
+    thin = falsify_trade_returns(
+        0.012 + 0.003 * rng.standard_normal(min_n - 1), n_trials_total=10, pbo=0.10
+    )
+    assert thin["verdict"] == "DISCARD_INSUFFICIENT_PATHS" and thin["promoted"] is False
+    assert thin["cpcv_splits"] == 0 and thin["cpcv_oos_paths"] == 0
+    assert thin["cpcv_min_samples"] == min_n
+    # Remaining statistics stay honestly reported even when CPCV paths are insufficient.
+    assert thin["hac_t"] > thin["hlz_t_hurdle"] > 0.0
+    enough = falsify_trade_returns(
+        0.012 + 0.003 * rng.standard_normal(min_n), n_trials_total=10, pbo=0.10
+    )
+    assert enough["cpcv_splits"] == 56 and enough["cpcv_oos_paths"] == 21
+    assert enough["cpcv_oos_splits_min_bps"] <= enough["cpcv_oos_splits_median_bps"]
+    assert enough["cpcv_oos_splits_min_bps"] <= enough["cpcv_oos_mean_bps"]
+    assert enough["cpcv_oos_splits_min_bps"] <= enough["cpcv_oos_splits_p05_bps"]
+    assert thin["cpcv_oos_splits_min_bps"] == 0.0 and thin["cpcv_oos_splits_median_bps"] == 0.0
+
+    def _six_gate(
+        returns: np.ndarray,
+        *,
+        pbo: float,
+        n_trials: int = 211,
+        l1: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        bt = SimpleNamespace(trade_returns=returns.tolist(), total_return_pct=0.5)
+        return evaluate_six_gate_falsification(
+            bars_df=pl.DataFrame(),
+            signals_by_ts=None,
+            n_trials_total=n_trials,
+            pbo=pbo,
+            precomputed_bt_1x=bt,
+            precomputed_bt_2x=bt,
+            precomputed_l1_markout=l1,
+        )
+
+    strong = 0.012 + 0.003 * rng.standard_normal(96)
+    hurdle_raw = hlz_t_hurdle(211)
+    hurdle = round(hurdle_raw, 4)
+    assert hurdle == pytest.approx(4.3636, abs=1e-4)
+
+    # PBO 0.9 fails Gate 4 only; explicit HAC Gate 6 passes independently of `promoted`.
+    rep_pbo = _six_gate(strong, pbo=0.9)
+    assert rep_pbo["gates"]["4_dsr_pbo_credible"] is False
+    assert rep_pbo["gates"]["6_hac_t_stat_significant"] is True
+    assert rep_pbo["gates"]["2_cost_1x_2x_survival"] is True
+    assert rep_pbo["falsification_1x"]["promoted"] is False
+    assert rep_pbo["promoted"] is False and rep_pbo["verdict"] == "DISCARD"
+    assert rep_pbo["hlz_t_hurdle"] == hurdle
+    assert rep_pbo["gate6_hurdle"] == hurdle_raw
+    assert rep_pbo["gate6_hac_t_1x"] == rep_pbo["falsification_1x"]["hac_t_raw"] >= hurdle_raw
+    assert rep_pbo["gate6_hac_t_2x"] == rep_pbo["falsification_2x"]["hac_t_raw"] >= hurdle_raw
+
+    # Zero-mean noise fails Gate 6 on the HAC t-stat itself.
+    rep_noise = _six_gate(0.003 * rng.standard_normal(96), pbo=0.1)
+    assert rep_noise["gates"]["6_hac_t_stat_significant"] is False
+    assert rep_noise["gate6_hac_t_1x"] < hurdle_raw
+
+    # Rounding-flip regression (#322): at 1 trial (hurdle ~2.999977), raw HAC t=2.99996 rounds to
+    # 3.0000 for display but MUST fail Gate 6 on raw unrounded floats (zero display rounding flip).
+    import statsmodels.api as sm
+
+    z = 0.003 * rng.standard_normal(64)
+    z = z - float(np.mean(z))
+    nw = max(1, int(4 * (z.size / 100.0) ** (2.0 / 9.0)))
+    se_nw = float(
+        sm.OLS(z, np.ones((z.size, 1))).fit(cov_type="HAC", cov_kwds={"maxlags": nw}).bse[0]
+    )
+    hurdle_1 = hlz_t_hurdle(1)
+    assert 2.99996 < hurdle_1 < 2.99999
+    borderline_fail = z + 2.99996 * se_nw
+    rep_flip = _six_gate(borderline_fail, pbo=0.1, n_trials=1)
+    assert rep_flip["falsification_1x"]["hac_t"] == 3.0  # display-rounded to 3.0000
+    assert rep_flip["gate6_hac_t_1x"] == pytest.approx(2.99996, abs=1e-9)
+    assert rep_flip["gate6_hac_t_1x"] < rep_flip["gate6_hurdle"]
+    assert rep_flip["falsification_1x"]["gate_checks"]["6_hac_t_stat_significant"] is False
+    assert rep_flip["gates"]["6_hac_t_stat_significant"] is False
+    assert rep_flip["promoted"] is False
+
+    borderline_pass = z + 2.99999 * se_nw
+    rep_pass = _six_gate(borderline_pass, pbo=0.1, n_trials=1)
+    assert rep_pass["gate6_hac_t_1x"] == pytest.approx(2.99999, abs=1e-9)
+    assert rep_pass["gate6_hac_t_1x"] >= rep_pass["gate6_hurdle"]
+    assert rep_pass["gates"]["6_hac_t_stat_significant"] is True
+
+    # Gate 1 L1 fill-count enforcement (#322): supplied L1 evidence with < 16 fills fails closed.
+    rep_l1_single = _six_gate(
+        strong,
+        pbo=0.1,
+        l1={"passive_order_submitted": True, "passive_filled": True, "markout_bps": 5.0},
+    )
+    assert rep_l1_single["gates"]["1_hftbacktest_l1_markout"] is False
+    assert rep_l1_single["gate1_passive_fills"] == 1
+    assert rep_l1_single["gate1_min_l1_fills"] == MIN_CPCV_SAMPLES
+
+    rep_l1_15 = _six_gate(strong, pbo=0.1, l1={"passive_fills": 15, "mean_markout_bps": 12.0})
+    assert rep_l1_15["gates"]["1_hftbacktest_l1_markout"] is False
+
+    rep_l1_16 = _six_gate(strong, pbo=0.1, l1={"passive_fills": 16, "mean_markout_bps": 12.0})
+    assert rep_l1_16["gates"]["1_hftbacktest_l1_markout"] is True
+    assert rep_l1_16["gate1_passive_fills"] == 16
+
+    rep_l1_bad_mk = _six_gate(strong, pbo=0.1, l1={"passive_fills": 35, "mean_markout_bps": -25.0})
+    assert rep_l1_bad_mk["gates"]["1_hftbacktest_l1_markout"] is False
+
+    # All six independent gates passing implies both legs' full `promoted` (no relaxation).
+    rep_ok = _six_gate(strong, pbo=0.1)
+    assert rep_ok["gates"]["1_hftbacktest_l1_markout"] is True  # absent-L1 path preserved
+    assert rep_ok["promoted"] is all(rep_ok["gates"].values())
+    if rep_ok["promoted"]:
+        assert rep_ok["falsification_1x"]["promoted"] and rep_ok["falsification_2x"]["promoted"]
+    assert rep_ok["gates"]["3_cpcv_oos_positive"] is True
+    assert rep_ok["gates"]["6_hac_t_stat_significant"] is True
 
 
 def test_dagster_definitions_load_cleanly() -> None:

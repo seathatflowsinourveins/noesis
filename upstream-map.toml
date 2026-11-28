@@ -147,13 +147,13 @@ rejected_overlaps = ["pyportfolioopt", "riskfolio-lib", "alphalens-reloaded", "m
 
 [layers.L6]
 name = "Hosted Research Portals, Orchestration, Observability & ADR Docs"
-winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy"]
-rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html"]
+winners = ["mlflow", "dagster", "dagster-webserver", "optuna", "optuna-dashboard", "zensical", "prometheus", "prometheus-client", "opentelemetry-sdk", "opentelemetry-exporter-otlp", "otel-collector-contrib", "grafana", "caddy", "allure-report"]
+rejected_overlaps = ["mkdocs", "mkdocs-material", "wandb", "clearml", "neptune", "prefect", "custom-fastapi-html", "reportportal", "pytest-html"]
 
 [layers.L7]
 name = "Static Quality, AST, Formal SMT, Fuzzing & Supply-Chain Security"
-winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
-rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner", "pre-commit", "semgrep"]
+winners = ["ruff", "ty", "ast-grep", "gitleaks", "hypothesis", "pytest", "prek", "z3-solver", "crosshair", "mutmut", "deptry", "trivy", "syft", "shellcheck", "zizmor", "codeql", "dependabot"]
+rejected_overlaps = ["black", "isort", "flake8", "bandit", "mypy", "pyright", "osv-scanner", "pre-commit", "semgrep", "cosmic-ray"]
 
 [layers.L8]
 name = "Agent Evals, Sandboxes & Prompt Optimization"
@@ -194,14 +194,14 @@ why = "Delegates backtest matching, risk pacing & LiveNode/SANDBOX parity direct
 how = "integrate"
 upstream = "polars"
 secondary_upstreams = ["exchange_calendars", "ml4t-engineer", "river", "ruptures", "stumpy-dev/stumpy", "lightgbm", "catboost", "shap", "fredapi", "duckdb", "sqlglot", "edgartools", "skchange", "shapiq"]
-feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), sqlglot AST PIT DuckDB SQL guard, offline-first edgartools SEC & FRED vintages, skchange PELT/MovingWindow/CAPA regime anomalies, 5-tier extreme-mover taxonomy, per-symbol microstructure min_trailing_pct, LightGBM/CatBoost/SHAP ranker & shapiq k-SII order-2 interactions"
+feature = "Causal PIT (<=2026-10-15, t_ns+60s, XNYS), sqlglot AST PIT DuckDB SQL guard, offline-first edgartools SEC & FRED vintages, skchange PELT/MovingWindow/CAPA regime anomalies, Sim/Live RVOL parity (compute_causal_session_rvol_frame matching scanner.py ToD U-shape & 09:30 auction exclusion), 5-tier extreme-mover taxonomy, per-symbol microstructure min_trailing_pct, LightGBM/CatBoost/SHAP ranker & shapiq k-SII order-2 interactions"
 why = "Delegates causal data transforms, PIT SQL AST validation, SEC/FRED vintages, calendar ops, drift, changepoint/anomaly detection, motif, early-mover calibration & GBDT+SHAP/shapiq attribution to pinned upstreams"
 
 [files."src/tier0_sota/research.py"]
 how = "integrate"
 upstream = "skfolio"
 secondary_upstreams = ["clarabel", "hftbacktest", "ml4t-diagnostic", "arch", "statsmodels", "mlflow", "optuna", "nautilus_trader", "duckdb", "mapie"]
-feature = "6-gate statistical falsification (hftbacktest markout, 1x/2x costs, CPCV >= 16, DSR/PBO, Hansen SPA, HAC), skfolio+Clarabel.rs portfolio optimization, MAPIE SplitConformalRegressor distribution-free excursion intervals (clamped <=2.00%) & Optuna/MLflow/NautilusTrader v2 calibration CLI"
+feature = "6-gate statistical falsification (hftbacktest L1 markout min_l1_fills=16, 1x/2x costs, skfolio 8/3 CPCV 21 OOS paths >=16 with cpcv_min_samples=48 DISCARD_INSUFFICIENT_PATHS, DSR/PBO, Hansen SPA, raw-float Newey-West HAC Gate 6 vs HLZ-inspired Bonferroni hurdle), skfolio+Clarabel.rs portfolio optimization, MAPIE SplitConformalRegressor distribution-free excursion intervals (clamped <=2.00%) & Optuna/MLflow/NautilusTrader v2 calibration CLI"
 why = "Delegates validation gates, conformal UQ, convex portfolio sizing, Optuna/Nautilus calibration and experiment ledger strictly to pinned upstreams"
 
 [files."src/tier0_sota/definitions.py"]
@@ -360,9 +360,9 @@ why = "Renders live momentum, lossless trailing and order-preset telemetry stric
 [files."evals/symbolic_risk_crosshair.py"]
 how = "integrate"
 upstream = "pschanely/CrossHair"
-secondary_upstreams = ["z3-solver"]
-feature = "Isolated uvx CrossHair PEP-316 symbolic contract harness (5 contracts + 30 runtime parity cases) verifying immutable risk.py Rule-612 stop <=2.00%, position sizing, -1.50% fuse, >=10% exit reserve & engine non-noise min-trail parity with zero mypy in uv.lock"
-why = "Adds complementary symbolic contract verification alongside Z3 SMT proofs via isolated uvx execution without introducing banned mypy into uv.lock"
+secondary_upstreams = ["z3-solver", "boxed/mutmut"]
+feature = "Isolated uvx CrossHair PEP-316 bounded symbolic exploration harness (5 contracts + 30 runtime parity cases) complementing exhaustive Z3 SMT UNSAT proofs and isolated WSL report-only mutmut 3.8.1 audit (just mutate-risk) on immutable risk.py with zero mypy in uv.lock"
+why = "Adds bounded symbolic contract exploration and mutation testing via isolated temporary environments without introducing banned mypy into uv.lock"
 
 [files."docker/prometheus_rules.yml"]
 how = "integrate"

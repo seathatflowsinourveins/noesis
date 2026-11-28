@@ -515,17 +515,16 @@ services:
     cpus: "0.5"
     mem_limit: 256m
     user: "1000:1000"
+    network_mode: host
     command:
       - caddy
-      - file-server
-      - --listen
-      - :8793
-      - --root
-      - /mnt/z/sota-data/manifests
-      - --browse
-    ports:
-      - "127.0.0.1:8793:8793"
+      - run
+      - --config
+      - /etc/caddy/Caddyfile
+      - --adapter
+      - caddyfile
     volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${TIER0_DATA_ROOT:-/mnt/z/sota-data}/manifests:/mnt/z/sota-data/manifests:ro
     environment:
       - HOME=/tmp

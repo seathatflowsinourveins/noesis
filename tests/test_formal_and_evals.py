@@ -165,7 +165,10 @@ def test_compounding_reflection_cross_leg_empirical_pbo_and_no_hardcoded_pbo(
 ) -> None:
     import re
 
+    import numpy as np
     from scripts.run_compounding_reflection import run_compounding_reflection
+
+    from tier0_sota.research import cpcv_min_samples, falsify_trade_returns
 
     src = (REPO_ROOT / "scripts" / "run_compounding_reflection.py").read_text(encoding="utf-8")
     assert not re.search(r"\bpbo\s*=\s*0\.\d+", src), "Hardcoded numeric pbo= must be absent"
@@ -175,6 +178,8 @@ def test_compounding_reflection_cross_leg_empirical_pbo_and_no_hardcoded_pbo(
     assert rep["safety"]["risk_sha256_match"] is True
     assert rep["safety"]["live_execution_enabled"] is False
 
+    min_cpcv_n = cpcv_min_samples()
+    assert min_cpcv_n == 48
     cross_leg = rep["cross_leg_falsification"]
     assert set(cross_leg.keys()) == {"LONG", "SHORT", "COMBINED"}
     for leg in ("LONG", "SHORT", "COMBINED"):
@@ -182,9 +187,33 @@ def test_compounding_reflection_cross_leg_empirical_pbo_and_no_hardcoded_pbo(
         f2 = cross_leg[leg]["falsification_2x"]
         assert f1["n_trades"] >= 16, f"{leg} leg had fewer than 16 trades: {f1['n_trades']}"
         assert f2["n_trades"] >= 16
-        assert isinstance(f1["pbo"], float) and 0.0 <= f1["pbo"] <= 1.0, (
-            f"{leg} leg missing empirical PBO: {f1}"
-        )
+        if f1["n_trades"] < min_cpcv_n:
+            assert f1["verdict"] == "DISCARD_INSUFFICIENT_PATHS"
+            assert f1["promoted"] is False
+            assert f1["cpcv_oos_paths"] == 0
+            assert f1["pbo"] is None
+        else:
+            assert f1["cpcv_oos_paths"] == 21
+            assert f1["pbo"] is None or (isinstance(f1["pbo"], float) and 0.0 <= f1["pbo"] <= 1.0)
+
+    # Explicit CPCV/PBO contract around cpcv_min_samples=48 (8/3 -> 56 splits, 21 OOS paths):
+    # (a) < 48 trades fails closed with pbo=None and DISCARD_INSUFFICIENT_PATHS;
+    # (b) >= 48 trades (64 trades) computes true empirical non-hardcoded CPCV PBO across 21 paths.
+    rng = np.random.default_rng(17)
+    arms_64 = [
+        0.008 + 0.004 * rng.standard_normal(64),
+        0.002 + 0.005 * rng.standard_normal(64),
+        -0.003 + 0.004 * rng.standard_normal(64),
+    ]
+    arms_40 = [a[:40] for a in arms_64]
+    thin = falsify_trade_returns(arms_40[0], n_trials_total=10, trial_returns=arms_40)
+    assert thin["pbo"] is None
+    assert thin["verdict"] == "DISCARD_INSUFFICIENT_PATHS"
+    assert thin["cpcv_oos_paths"] == 0 and thin["promoted"] is False
+
+    full = falsify_trade_returns(arms_64[0], n_trials_total=10, trial_returns=arms_64)
+    assert full["cpcv_splits"] == 56 and full["cpcv_oos_paths"] == 21
+    assert isinstance(full["pbo"], float) and 0.0 <= full["pbo"] <= 1.0
 
     skf = rep["skfolio_portfolio"]
     assert skf["solver"] == "clarabel"

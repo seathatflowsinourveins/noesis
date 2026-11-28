@@ -627,3 +627,109 @@ def test_fnox_live_profile_physical_key_isolation_and_tv_confirm_paper_recipe() 
     for live_port in ("4001", "7496", "8798", "8796"):
         assert live_port in by_os["unix"], f"Unix tv-confirm-paper must guard live port {live_port}"
     assert "ALPACA_LIVE_API_KEY" in just_txt and "ALPACA_LIVE_SECRET_KEY" in just_txt
+
+
+def test_caddyfile_loopback_binding_and_duckdb_csrf_posture() -> None:
+    """Pin loopback-only Caddy binding and anchored DuckDB Origin CSRF guard under host net."""
+    compose_raw = (REPO_ROOT / "docker" / "compose.sota.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(compose_raw)
+    ts = compose["services"]["tearsheets"]
+    assert ts["image"] == "caddy:2.11.9-alpine"
+    assert ts.get("network_mode") == "host"
+    assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in ts.get("volumes", [])
+    assert ts.get("command") == [
+        "caddy",
+        "run",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+    ]
+
+    caddy_path = REPO_ROOT / "docker" / "Caddyfile"
+    assert caddy_path.is_file(), "docker/Caddyfile must exist"
+    raw = caddy_path.read_text(encoding="utf-8")
+    active_lines = [
+        line.strip()
+        for line in raw.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    active_text = "\n".join(active_lines)
+
+    assert not re.search(r"\b0\.0\.0\.0\b", active_text), (
+        "Caddyfile must never bind wildcard all-interfaces IPv4"
+    )
+    assert "bind ::" not in active_text, "Caddyfile must never bind wildcard ::"
+    for bad_port in (*LIVE_PORTS, "9223"):
+        assert f":{bad_port}" not in active_text, f"Caddyfile must never reference port {bad_port}"
+
+    # Parse top-level blocks (global options + site blocks) by brace depth.
+    blocks: list[tuple[str, str]] = []
+    header = ""
+    buf: list[str] = []
+    depth = 0
+    for line in active_lines:
+        if depth == 0:
+            if line.endswith("{"):
+                header = line[:-1].strip()
+                buf = []
+                depth = 1
+            continue
+        depth += line.count("{") - line.count("}")
+        if depth == 0:
+            blocks.append((header, "\n".join(buf)))
+            header = ""
+            buf = []
+        else:
+            buf.append(line)
+
+    assert depth == 0, "Unbalanced braces in docker/Caddyfile"
+    global_blocks = [body for hdr, body in blocks if hdr == ""]
+    site_blocks = [(hdr, body) for hdr, body in blocks if hdr != ""]
+    assert global_blocks and "admin off" in global_blocks[0], "Caddy admin API must be disabled"
+    assert len(site_blocks) >= 2, f"Expected :8793 and :4213 site blocks, got {len(site_blocks)}"
+
+    by_port: dict[str, str] = {}
+    for hdr, body in site_blocks:
+        assert re.search(r"(?m)^bind 127\.0\.0\.1$", body), (
+            f"Site block {hdr!r} under network_mode=host must explicitly declare `bind 127.0.0.1`"
+        )
+        assert not re.search(r"(?m)^bind\s+(?!127\.0\.0\.1$)", body), (
+            f"Site block {hdr!r} has non-loopback bind directive"
+        )
+        if ":8793" in hdr:
+            by_port["8793"] = body
+        if ":4213" in hdr:
+            by_port["4213"] = body
+
+    assert set(by_port.keys()) == {"8793", "4213"}, f"Missing required ports: {sorted(by_port)}"
+    assert "file_server browse" in by_port["8793"]
+    assert "/mnt/z/sota-data/manifests" in by_port["8793"]
+
+    duck_body = by_port["4213"]
+    expected_origin_rx = r"^http://(127\.0\.0\.1|localhost):4213$"
+    assert f"@loopback_origin header_regexp Origin {expected_origin_rx}" in duck_body
+    assert "handle @loopback_origin {" in duck_body
+    assert "reverse_proxy 127.0.0.1:4214 {" in duck_body
+    assert "header_up Origin http://localhost:4214" in duck_body
+
+    # Fallback `handle` must NOT rewrite Origin so foreign/missing Origins still hit DuckDB 401.
+    fallback_match = re.search(r"(?ms)^handle \{(.*?)\n\}$", duck_body)
+    assert fallback_match is not None, "Missing fallback handle block for non-loopback Origins"
+    fallback_body = fallback_match.group(1)
+    assert "reverse_proxy 127.0.0.1:4214" in fallback_body
+    assert "header_up Origin" not in fallback_body
+
+    compiled = re.compile(expected_origin_rx)
+    for allowed in ("http://127.0.0.1:4213", "http://localhost:4213"):
+        assert compiled.match(allowed), f"Expected loopback origin allowed: {allowed}"
+    for blocked in (
+        "https://evil.example",
+        "http://127.0.0.1:4213.evil.example",
+        "http://localhost:42130",
+        "http://127.0.0.1:4213/extra",
+        "https://127.0.0.1:4213",
+        "null",
+        "",
+    ):
+        assert not compiled.match(blocked), f"Expected origin rejected: {blocked}"

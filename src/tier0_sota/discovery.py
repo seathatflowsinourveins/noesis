@@ -1858,6 +1858,151 @@ def _load_causal_t1_short_vol(
     return out
 
 
+# Pre-wall (<= 2026-10-15) monotone U-shape ToD cumulative-volume curve (ADR-0028,
+# sim_tod_rvol_prewall_study.json). Mirrors `tier0_sota.live.scanner` (bb0eb23) exactly;
+# parity is pinned by tests/test_extreme_mover_calibration.py.
+TOD_RVOL_RTH_CDF_ONE_MINUS_B: float = 0.823262
+TOD_RVOL_RTH_CDF_B: float = 0.176738
+TOD_RVOL_RTH_CDF_P: float = 0.596474
+TOD_RVOL_RTH_SHARE_OF_FULLDAY: float = 0.83018
+TOD_RVOL_PM_SHARE_OF_FULLDAY: float = 0.01871
+TOD_RVOL_EARLY_CLOSE_SCALE: float = 0.4026
+RTH_OPEN_AUCTION_CLOSE_M: int = 571  # 09:30 ET 1m bar closes at 09:31 ET
+
+
+@lru_cache(maxsize=2048)
+def xnys_rth_close_minute_et(day: date) -> int:
+    """XNYS RTH close in ET minutes (960 regular, 780 on 13:00 ET early closes)."""
+    from exchange_calendars.errors import DateOutOfBounds
+
+    xnys = get_xnys_calendar()
+    try:
+        if not (xnys.first_session.date() <= day <= xnys.last_session.date()):
+            return 960
+        iso = day.isoformat()
+        if not xnys.is_session(iso):
+            return 960
+        close_et = xnys.session_close(iso).to_pydatetime().astimezone(_NY_TZ)
+        return close_et.hour * 60 + close_et.minute
+    except (DateOutOfBounds, ValueError, TypeError, KeyError):
+        return 960
+
+
+def tod_expected_volume_fraction_expr(
+    close_m: pl.Expr, sess: pl.Expr, *, rth_close_m: int
+) -> pl.Expr:
+    """Polars expected cumulative full-day volume fraction at bar close (scanner parity)."""
+    sess_mins = float(max(60, int(rth_close_m) - 570))
+    ec_scale = TOD_RVOL_EARLY_CLOSE_SCALE if int(rth_close_m) < 960 else 1.0
+    mins = close_m.cast(pl.Float64)
+    u = ((mins - 570.0) / sess_mins).clip(1.0 / sess_mins, 1.0)
+    cdf = (
+        TOD_RVOL_RTH_CDF_ONE_MINUS_B * u.pow(TOD_RVOL_RTH_CDF_P) + TOD_RVOL_RTH_CDF_B * u.pow(6)
+    ).clip(1e-6, 1.0)
+    rth_frac = (
+        ec_scale * (TOD_RVOL_PM_SHARE_OF_FULLDAY + TOD_RVOL_RTH_SHARE_OF_FULLDAY * cdf)
+    ).clip(1e-4, 1.0)
+    pm_frac = pl.max_horizontal(
+        pl.lit(0.002),
+        TOD_RVOL_PM_SHARE_OF_FULLDAY * ((mins - 240.0) / 330.0).clip(0.10, 1.0),
+    )
+    if int(rth_close_m) < 960:
+        ah_progress = ((mins - float(rth_close_m)) / 240.0).clip(0.0, 1.0)
+        ah_frac = pl.min_horizontal(pl.lit(1.0), TOD_RVOL_EARLY_CLOSE_SCALE + 0.06 * ah_progress)
+    else:
+        ah_frac = pl.lit(1.0)
+    return (
+        pl.when(sess == "RTH")
+        .then(rth_frac)
+        .when(sess == "PRE_MARKET")
+        .then(pm_frac)
+        .when(sess == "AFTER_HOURS")
+        .then(ah_frac)
+        .otherwise(pl.lit(0.25))
+    )
+
+
+def compute_causal_session_rvol_frame(
+    bars: pl.DataFrame,
+    *,
+    rth_close_m: int = 960,
+    early_fallback_rvol: float = 1.5,
+) -> pl.DataFrame:
+    """Add live-scanner-parity RVOL columns to causal 1m bars (one trading day).
+
+    Requires `symbol`, `t_ns`, `v`, `close_m` (ET minute at bar close) and `sess`; uses the
+    optional causal T-1 `mean_20d_vol` baseline for ToD pace RVOL. Adds:
+
+    - `rvol_same_session`: `scanner._compute_same_session_rvol` incl. the 09:30 ET
+      opening-auction exclusion from the RTH prior baseline.
+    - `tod_rvol`: cumulative day volume / baseline / pre-wall U-shape expected fraction.
+    - `rvol_blend`: scanner rule — ToD pace RVOL dominates during the first 60 RTH minutes,
+      otherwise `max(rvol_same_session, tod_rvol)`.
+    """
+    c = pl.col
+    has_base = "mean_20d_vol" in bars.columns
+    grp = ["symbol", "sess"]
+    is_open = (c("close_m") == RTH_OPEN_AUCTION_CLOSE_M).cast(pl.Float64)
+    out = bars.sort(["symbol", "t_ns"]).with_columns(
+        pl.int_range(0, pl.len()).over(grp).cast(pl.Float64).alias("_rv_idx"),
+        c("v").cum_sum().over(grp).alias("_rv_cum"),
+        c("v").rolling_sum(5, min_samples=1).over(grp).alias("_rv_rec5"),
+        (c("v") * is_open).cum_sum().shift(5).over(grp).fill_null(0.0).alias("_rv_open_v"),
+        is_open.cum_sum().shift(5).over(grp).fill_null(0.0).alias("_rv_open_n"),
+        c("v").cum_sum().over("symbol").alias("_rv_day_cum"),
+        (c("mean_20d_vol").cast(pl.Float64) if has_base else pl.lit(None, dtype=pl.Float64)).alias(
+            "_rv_base"
+        ),
+    )
+    prior_n = c("_rv_idx") - 4.0
+    prior_v = c("_rv_cum") - c("_rv_rec5")
+    excl = (
+        (c("sess") == "RTH")
+        & (prior_n >= 3.0)
+        & (c("_rv_open_n") >= 1.0)
+        & ((prior_n - c("_rv_open_n")) >= 2.0)
+    )
+    prior_v_x = pl.when(excl).then(prior_v - c("_rv_open_v")).otherwise(prior_v)
+    prior_n_x = pl.when(excl).then(prior_n - c("_rv_open_n")).otherwise(prior_n)
+    early_prior = c("_rv_cum") - c("v")
+    expected = tod_expected_volume_fraction_expr(c("close_m"), c("sess"), rth_close_m=rth_close_m)
+    out = out.with_columns(
+        pl.when(c("_rv_idx") >= 5.0)
+        .then(
+            pl.when(prior_v_x > 0.0)
+            .then((c("_rv_rec5") / 5.0) / (prior_v_x / prior_n_x))
+            .otherwise(0.0)
+        )
+        .when(c("_rv_idx") >= 1.0)
+        .then(pl.when(early_prior > 0.0).then(c("v") / (early_prior / c("_rv_idx"))).otherwise(0.0))
+        .otherwise(pl.when(c("v") > 0.0).then(float(early_fallback_rvol)).otherwise(0.0))
+        .alias("rvol_same_session"),
+        pl.when(
+            (c("_rv_day_cum") > 0.0)
+            & c("_rv_base").is_not_null()
+            & (c("_rv_base") > 0.0)
+            & (c("sess") != "CLOSED")
+        )
+        .then((c("_rv_day_cum") / c("_rv_base")) / expected)
+        .otherwise(0.0)
+        .alias("tod_rvol"),
+    )
+    elapsed_rth = c("close_m").cast(pl.Float64) - 570.0
+    return out.with_columns(
+        pl.when(
+            (c("sess") == "RTH")
+            & (c("tod_rvol") > 0.0)
+            & (elapsed_rth >= 0.0)
+            & (elapsed_rth < 60.0)
+        )
+        .then(c("tod_rvol"))
+        .otherwise(pl.max_horizontal(c("rvol_same_session"), c("tod_rvol")))
+        .alias("rvol_blend")
+    ).drop(
+        ["_rv_idx", "_rv_cum", "_rv_rec5", "_rv_open_v", "_rv_open_n", "_rv_day_cum", "_rv_base"]
+    )
+
+
 def build_prewall_early_mover_session_panel(
     days: Sequence[date | str],
     *,
@@ -1957,12 +2102,15 @@ def build_prewall_early_mover_session_panel(
         else:
             bars = bars.with_columns(pl.lit(0.0, dtype=pl.Float64).alias("t1_trf_proxy"))
 
+        rth_close_m = xnys_rth_close_minute_et(date.fromisoformat(d_iso))
         bars = bars.sort(["symbol", "t_ns"]).with_columns(
             c("prev_raw_close").fill_null(c("o").first().over("symbol")).alias("ref_close"),
             c("t1_trf_proxy").fill_null(0.0).alias("t1_trf_proxy"),
             pl.when(c("close_m") <= 570)
             .then(pl.lit("PRE_MARKET"))
-            .otherwise(pl.lit("RTH"))
+            .when(c("close_m") <= rth_close_m)
+            .then(pl.lit("RTH"))
+            .otherwise(pl.lit("AFTER_HOURS"))
             .alias("sess"),
         )
 
@@ -2053,7 +2201,8 @@ def build_prewall_early_mover_session_panel(
         # Strictly causal running features over bars (ONLY backward-looking over symbol/sess)
         tp = (c("h") + c("l") + c("c")) / 3.0
         bars_feat = (
-            bars.with_columns(
+            compute_causal_session_rvol_frame(bars, rth_close_m=rth_close_m)
+            .with_columns(
                 c("v").cum_sum().over("symbol").alias("cum_vol"),
                 (c("c") * c("v")).cum_sum().over("symbol").alias("cum_dvol"),
                 (tp * c("v")).cum_sum().over("symbol").alias("cum_pv"),
@@ -2069,10 +2218,6 @@ def build_prewall_early_mover_session_panel(
                 .alias("atr14"),
                 pl.int_range(0, pl.len()).over(["symbol", "sess"]).alias("sess_idx"),
                 c("v").cum_sum().over(["symbol", "sess"]).alias("sess_cum_vol"),
-                c("v")
-                .rolling_sum(5, min_samples=1)
-                .over(["symbol", "sess"])
-                .alias("sess_rec5_sum"),
                 c("v").rolling_mean(3, min_samples=1).over(["symbol", "sess"]).alias("v_rec3"),
                 c("v")
                 .shift(3)
@@ -2090,25 +2235,9 @@ def build_prewall_early_mover_session_panel(
                 .otherwise(c("c"))
                 .alias("vwap"),
                 ((c("c") / c("ref_close") - 1.0) * 100.0).alias("move_pct"),
-                # Causal same-session RVOL matching scanner._compute_same_session_rvol
-                pl.when(c("sess_idx") >= 5)
-                .then(
-                    pl.when((c("sess_cum_vol") - c("sess_rec5_sum")) > 0.0)
-                    .then(
-                        (c("sess_rec5_sum") / 5.0)
-                        / ((c("sess_cum_vol") - c("sess_rec5_sum")) / (c("sess_idx") - 4.0))
-                    )
-                    .otherwise(0.0)
-                )
-                .when(c("sess_idx") >= 1)
-                .then(
-                    pl.when((c("sess_cum_vol") - c("v")) > 0.0)
-                    .then(c("v") / ((c("sess_cum_vol") - c("v")) / c("sess_idx").cast(pl.Float64)))
-                    .otherwise(0.0)
-                )
-                .otherwise(pl.when(c("v") > 0.0).then(1.5).otherwise(0.0))
-                .clip(0.0, 25.0)
-                .alias("rvol"),
+                # Live-scanner parity RVOL (bb0eb23): 09:30 auction-excluded same-session RVOL
+                # blended with pre-wall U-shape ToD pace RVOL (compute_causal_session_rvol_frame).
+                c("rvol_blend").clip(0.0, 25.0).alias("rvol"),
                 # Causal same-session volume buildup ratio matching scanner._compute_volume_buildup
                 pl.when(c("v_prior12").is_not_null() & (c("v_prior12") > 0.0))
                 .then(c("v_rec3") / c("v_prior12"))
@@ -3075,6 +3204,13 @@ __all__ = [
     "POTENTIAL_CATEGORIES",
     "PreWallViolationError",
     "REGIME_BENCHMARK_SYMBOLS",
+    "RTH_OPEN_AUCTION_CLOSE_M",
+    "TOD_RVOL_EARLY_CLOSE_SCALE",
+    "TOD_RVOL_PM_SHARE_OF_FULLDAY",
+    "TOD_RVOL_RTH_CDF_B",
+    "TOD_RVOL_RTH_CDF_ONE_MINUS_B",
+    "TOD_RVOL_RTH_CDF_P",
+    "TOD_RVOL_RTH_SHARE_OF_FULLDAY",
     "WARMUP_BARS",
     "assert_pre_wall_date",
     "assert_pre_wall_ns",
@@ -3082,6 +3218,7 @@ __all__ = [
     "classify_extreme_mover_category",
     "classify_potential_category",
     "compute_causal_market_regime",
+    "compute_causal_session_rvol_frame",
     "compute_causal_technical_alignment",
     "compute_shapiq_interactions",
     "detect_skchange_regime_anomalies",
@@ -3105,6 +3242,8 @@ __all__ = [
     "score_early_mover_candidate",
     "score_early_mover_features",
     "step_rth_5m_bar",
+    "tod_expected_volume_fraction_expr",
     "validate_causal_bars",
     "validate_pit_duckdb_sql",
+    "xnys_rth_close_minute_et",
 ]

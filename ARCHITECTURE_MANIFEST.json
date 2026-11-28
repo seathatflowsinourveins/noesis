@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 187,
+    "repository_files_count": 188,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -353,7 +353,7 @@
     },
     "fitness_bound_accepted_ratio": "24/24",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "cfb9ba6d54cd37031606fabb96b03fc2f21837b9ef16641e8a890eef04f9d386"
+    "corpus_sha256": "c95e56d6fc7be359fb39c549e5e0090adb7594e18f52ae793868c6225adfdece"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -553,7 +553,8 @@
         "opentelemetry-exporter-otlp",
         "otel-collector-contrib",
         "grafana",
-        "caddy"
+        "caddy",
+        "allure-report"
       ],
       "rejected_overlaps": [
         "mkdocs",
@@ -562,7 +563,9 @@
         "clearml",
         "neptune",
         "prefect",
-        "custom-fastapi-html"
+        "custom-fastapi-html",
+        "reportportal",
+        "pytest-html"
       ],
       "repo_artifacts": [
         "src/tier0_sota/definitions.py",
@@ -627,6 +630,8 @@
         "pytest",
         "prek",
         "z3-solver",
+        "crosshair",
+        "mutmut",
         "deptry",
         "trivy",
         "syft",
@@ -644,7 +649,8 @@
         "pyright",
         "osv-scanner",
         "pre-commit",
-        "semgrep"
+        "semgrep",
+        "cosmic-ray"
       ],
       "repo_artifacts": [
         ".github/workflows/ci.yml",
@@ -871,6 +877,7 @@
     "README.md",
     "SOTA_STARRED_AND_BEYOND_MANIFEST.json",
     "UPSTREAM_SKILLS_LOCK.json",
+    "docker/Caddyfile",
     "docker/Dockerfile.research",
     "docker/Dockerfile.sandbox",
     "docker/Dockerfile.xerj",
