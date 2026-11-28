@@ -35,7 +35,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
-          version: "0.13.9"
+          version: "0.13.10"
           enable-cache: false
 
       - name: Sync locked environment
@@ -62,7 +62,7 @@ jobs:
           path: "."
           format: "cyclonedx-json"
           output-file: "dist/noesis.sbom.cdx.json"
-          syft-version: "v1.55.0"
+          syft-version: "v1.57.2"
           upload-artifact: false
           upload-release-assets: false
 
