@@ -1211,3 +1211,29 @@ def test_7role_multi_runtime_worker_parity_and_read_only_gatekeeper(tmp_path: Pa
         )
         with pytest.raises(ValueError, match="READ_ONLY_TOOL_NAMES"):
             sync_mod._verify_runtime_worker_parity(tmp_path, expected_roles, opencode_cfg)
+
+
+def test_zizmor_gates_use_pedantic_persona() -> None:
+    """ADR-0018: the just recipe, the prek hook and both CI jobs run zizmor's pedantic persona."""
+    justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^\s+zizmor --offline --persona=pedantic \.\s*$", justfile)
+    hooks = yaml.safe_load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    (zizmor_hook,) = [
+        hook
+        for repo in hooks["repos"]
+        if repo["repo"] == "https://github.com/zizmorcore/zizmor-pre-commit"
+        for hook in repo["hooks"]
+    ]
+    assert "--persona=pedantic" in zizmor_hook["args"]
+    assert "--offline" in zizmor_hook["args"]
+    security = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
+    )
+    steps = [
+        step
+        for job in security["jobs"].values()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("zizmorcore/zizmor-action@")
+    ]
+    assert len(steps) == 2
+    assert all(step["with"]["persona"] == "pedantic" for step in steps)

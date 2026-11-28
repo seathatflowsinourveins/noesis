@@ -83,11 +83,35 @@ jobs:
       - name: Run zizmor offline audit
         uses: zizmorcore/zizmor-action@1b4550e929643b8b26a62303c6bd64814271a4f1 # v0.9.2
         with:
-          inputs: ".github/workflows"
+          inputs: "."
           online-audits: "false"
+          persona: "pedantic"
           advanced-security: "false"
           strict-collection: "true"
-          version: "1.32.0"
+          version: "1.33.1"
+
+  zizmor-online:
+    name: Workflow Security Audit, online (zizmor)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor online audits (impostor-commit, known-vulnerable-actions)
+        uses: zizmorcore/zizmor-action@1b4550e929643b8b26a62303c6bd64814271a4f1 # v0.9.2
+        with:
+          inputs: "."
+          online-audits: "true"
+          persona: "pedantic"
+          advanced-security: "false"
+          strict-collection: "true"
+          version: "1.33.1"
 
   trivy-license-audit:
     name: SPDX License Audit (Trivy)

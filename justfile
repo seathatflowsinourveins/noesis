@@ -211,9 +211,9 @@ prek-run:
 gitleaks:
     gitleaks detect --no-git --source . --config .gitleaks.toml --no-banner
 
-# Audit GitHub Actions workflows with zizmor (offline)
+# Audit the GitHub Actions setup with zizmor (offline, pedantic): workflows, dependabot.yml, hooks
 zizmor:
-    zizmor --offline .github/workflows
+    zizmor --offline --persona=pedantic .
 
 # Scan repository misconfigurations & secrets with Trivy
 trivy:
