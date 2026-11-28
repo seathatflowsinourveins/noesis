@@ -62,10 +62,11 @@ jobs:
         with:
           scan-type: "fs"
           scan-ref: "."
+          scanners: "vuln,secret"
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           format: "table"
-          skip-dirs: ".venv,.git,site,.claude/skills"
+          skip-dirs: ".venv,.git,site,.claude/skills,.cache,.ruff_cache,.pytest_cache,.hypothesis"
           version: "v0.76.2"
 
   zizmor:
