@@ -9,10 +9,31 @@ updates:
       timezone: "UTC"
     cooldown:
       default-days: 7
+    # Declared ranges in pyproject.toml stay authoritative: no pull request rewrites a bound.
+    versioning-strategy: "lockfile-only"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "python"
+    ignore:
+      # 2026-11-27: hftbacktest 2.4.4 requires numpy<2.3,>=2.0 (requires_dist, https://pypi.org/pypi/hftbacktest/2.4.4/json); re-open when an hftbacktest release allows numpy>=2.3
+      - dependency-name: "numpy"
+        versions: [">=2.3"]
+      # 2026-11-27: edgartools 6.4.0 [ai] requires mcp<2.0.0,>=1.28.1 (requires_dist, https://pypi.org/pypi/edgartools/6.4.0/json); re-open when edgartools ships its MCP server on mcp 2
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Patches get their own group: fetch-metadata reports the highest semver change of a pull
+      # request, so one minor in a shared group would make the whole pull request a minor.
+      uv-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+      uv-minor:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -24,9 +45,28 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "github-actions"
+    groups:
+      # First match wins: the actions that the four required checks run (ci.yml, security.yml).
+      actions-in-required-checks:
+        applies-to: version-updates
+        patterns:
+          - "actions/checkout"
+          - "actions/upload-artifact"
+          - "astral-sh/setup-uv"
+          - "gitleaks/gitleaks-action"
+          - "aquasecurity/trivy-action"
+          - "zizmorcore/zizmor-action"
+        update-types:
+          - "minor"
+          - "patch"
+      # Actions used only by release.yml, docs.yml or multi-model-sota.yml: no required check runs them.
+      actions-elsewhere:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "docker"
     directory: "/docker"
@@ -38,6 +78,69 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
+    ignore:
+      # 2026-11-27: python images follow this repository's pyproject.toml requires-python ">=3.13,<3.14"; re-open when requires-python admits 3.14
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      docker-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      docker-compose-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      # The ruff, gitleaks and zizmor hooks move with their mise.toml minor in the toolchain pull
+      # request (ADR-0032 section 4). A minor bump of one of them is red until then, so they get a
+      # group of their own and cannot hold back the other hooks.
+      hooks-with-mise-pins:
+        applies-to: version-updates
+        patterns:
+          - "https://github.com/astral-sh/ruff-pre-commit"
+          - "https://github.com/gitleaks/gitleaks"
+          - "https://github.com/zizmorcore/zizmor-pre-commit"
+        update-types:
+          - "minor"
+          - "patch"
+      hooks-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "https://github.com/astral-sh/ruff-pre-commit"
+          - "https://github.com/gitleaks/gitleaks"
+          - "https://github.com/zizmorcore/zizmor-pre-commit"
+        update-types:
+          - "minor"
+          - "patch"

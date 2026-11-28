@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,14 @@ FULL_SHA = re.compile(r"[0-9a-f]{40}")
 USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<ref>[^\s#]+)(?:\s+#\s*(?P<comment>.*?))?\s*$")
 USES_KEY = re.compile(r"\buses\s*:")
 PRE_COMMIT_REV = re.compile(r"^\s*rev:\s*(?P<rev>\S+)(?:\s+#\s*(?:frozen:\s*)?(?P<tag>\S+))?")
+# The hooks that test_pre_commit_hooks_are_sha_pinned_and_match_mise ties to a mise.toml minor.
+MISE_PINNED_HOOKS = frozenset(
+    {
+        "https://github.com/astral-sh/ruff-pre-commit",
+        "https://github.com/gitleaks/gitleaks",
+        "https://github.com/zizmorcore/zizmor-pre-commit",
+    }
+)
 # (workflow file, job id) -> the only write scopes that job may hold.
 WRITE_GRANTS: dict[tuple[str, str], frozenset[str]] = {
     ("release.yml", "draft-release"): frozenset({"contents"}),
@@ -216,3 +225,95 @@ def test_pre_commit_hooks_are_sha_pinned_and_match_mise() -> None:
         tool = hook_tool.get(repo["repo"])
         if tool is not None:
             assert match["tag"].removeprefix("v").startswith(f"{mise_tools[tool]}."), repo["repo"]
+
+
+def _dependabot_ignore_lines(config_text: str) -> list[tuple[int, str]]:
+    """Return (line index, line) of every `- dependency-name:` entry inside an `ignore:` block."""
+    lines = config_text.splitlines()
+    entries: list[tuple[int, str]] = []
+    block_indent: int | None = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if block_indent is not None and indent <= block_indent:
+            block_indent = None
+        if re.fullmatch(r"ignore:", stripped):
+            block_indent = indent
+        elif block_indent is not None and re.match(r"-\s+dependency-name:", stripped):
+            entries.append((idx, line))
+    return entries
+
+
+def test_dependabot_covers_every_pinned_ecosystem() -> None:
+    config_text = (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    config = yaml.safe_load(config_text)
+    updates = config["updates"]
+    ecosystems = {update["package-ecosystem"] for update in updates}
+    assert {"uv", "github-actions", "docker", "docker-compose", "pre-commit"} <= ecosystems
+    directories = {(u["package-ecosystem"], u["directory"]) for u in updates}
+    assert {
+        ("uv", "/"),
+        ("github-actions", "/"),
+        ("docker", "/docker"),
+        ("docker-compose", "/docker"),
+        ("pre-commit", "/"),
+    } <= directories
+    for update in updates:
+        assert update["schedule"]["interval"] == "weekly", update["package-ecosystem"]
+        assert update["cooldown"]["default-days"] >= 7, update["package-ecosystem"]
+        assert update.get("groups"), update["package-ecosystem"]
+    (uv,) = [update for update in updates if update["package-ecosystem"] == "uv"]
+    assert uv["versioning-strategy"] == "lockfile-only"
+    # fetch-metadata reports the highest semver change of a pull request: patches need a group
+    # of their own for the uv-patch auto-merge rule to ever apply.
+    assert uv["groups"]["uv-patch"]["update-types"] == ["patch"]
+    assert "patch" not in uv["groups"]["uv-minor"]["update-types"]
+    # Holds: every ignore entry carries, on the comment line just above it, a date, a reason that
+    # names the held dependency and its source, and the trigger that re-opens it.
+    ignores = [(u["package-ecosystem"], i) for u in updates for i in u.get("ignore", [])]
+    held = {(eco, str(entry["dependency-name"])) for eco, entry in ignores}
+    assert {("uv", "numpy"), ("uv", "mcp"), ("docker", "python")} <= held
+    for eco, entry in ignores:
+        assert entry.get("versions") or entry.get("update-types"), (eco, entry)
+    config_lines = config_text.splitlines()
+    ignore_lines = _dependabot_ignore_lines(config_text)
+    assert len(ignore_lines) == len(ignores)
+    for (eco, entry), (idx, line) in zip(ignores, ignore_lines, strict=True):
+        reason = re.fullmatch(r"#\s*(\d{4}-\d{2}-\d{2}): (\S.*)", config_lines[idx - 1].strip())
+        assert reason is not None, f"ignore entry without a dated reason above it: {line.strip()!r}"
+        date.fromisoformat(reason[1])
+        text = reason[2]
+        assert str(entry["dependency-name"]) in text, (eco, text)
+        assert "https://" in text or "pyproject.toml" in text, (eco, text)
+        assert "re-open when" in text, (eco, text)
+    # Dependabot resolves a SHA-pinned hook through its `# frozen:` comment; without one it moves
+    # the hook to the HEAD of the hook repository's default branch.
+    hook_config = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    rev_lines = [line for line in hook_config.splitlines() if line.lstrip().startswith("rev:")]
+    assert rev_lines
+    assert all("# frozen: " in line for line in rev_lines), rev_lines
+    # A minor bump of a hook that mise.toml pins is red until the toolchain pull request, so those
+    # hooks get the first pre-commit group and every other group excludes them.
+    (hooks,) = [u for u in updates if u["package-ecosystem"] == "pre-commit"]
+    hook_groups = list(hooks["groups"].values())
+    assert set(hook_groups[0]["patterns"]) == MISE_PINNED_HOOKS
+    for group in hook_groups[1:]:
+        assert set(group.get("exclude-patterns", [])) >= MISE_PINNED_HOOKS, group
+    # The auto-merge group must name exactly the actions that the four required jobs run.
+    workflows = _load_workflows()
+    required_workflow_actions = {
+        str(step["uses"]).split("@", 1)[0]
+        for file_name in ("ci.yml", "security.yml")
+        for job_id, job in workflows[file_name]["jobs"].items()
+        if str(job.get("name", job_id)) in REQUIRED_CHECKS
+        for step in job.get("steps", [])
+        if "uses" in step
+    }
+    (actions,) = [u for u in updates if u["package-ecosystem"] == "github-actions"]
+    assert next(iter(actions["groups"])) == "actions-in-required-checks"
+    assert (
+        set(actions["groups"]["actions-in-required-checks"]["patterns"])
+        == required_workflow_actions
+    )
