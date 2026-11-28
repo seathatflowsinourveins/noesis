@@ -255,6 +255,13 @@ secondary_upstreams = ["duckdb", "prometheus-client", "opentelemetry-sdk", "open
 feature = "Paper Farm live performance & TCA manifest aggregator, FINOS/OpenBB JSON export & unitless OTel/Prometheus telemetry (combined equity, momentum top-score/RVOL/TRF/ignition/climax, profit-lock tier, fast-sell armed & active/stale staged alerts)"
 why = "Aggregates Paper Farm metrics and emits declarative JSON & OTel/Prometheus metrics without custom UI servers"
 
+[files."src/tier0_sota/live/merit.py"]
+how = "integrate"
+upstream = "duckdb"
+secondary_upstreams = ["pydantic", "exchange_calendars"]
+feature = "Tier-3 Key A per-leg (LONG/SHORT) paper-merit record, latched demotion and capital ladder from read-only DuckDB ledger snapshots, the pre-wall dossier and drill/reconciliation receipts (not wired: no caller yet)"
+why = "Reads each paper ledger once into a private read-only DuckDB snapshot (SHA-256 of the evaluated bytes) and validates the record with Pydantic v2 models; XNYS session days from exchange_calendars; no broker call, no network"
+
 [files."src/tier0_sota/tv/__init__.py"]
 how = "integrate"
 upstream = "pydantic"

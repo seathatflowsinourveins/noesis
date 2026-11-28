@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 208,
+    "repository_files_count": 210,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -373,7 +373,7 @@
     "cross_layer_duplicate_winners": [],
     "zero_pre_commit_overlap": true,
     "spdx_firewall_count": 7,
-    "src_files_mapped_ratio": "15/15",
+    "src_files_mapped_ratio": "16/16",
     "zero_paper_winners_audit": {
       "ok": true,
       "checked_default_packages": 50,
@@ -1021,6 +1021,7 @@
     "src/tier0_sota/engine.py",
     "src/tier0_sota/live/__init__.py",
     "src/tier0_sota/live/execution.py",
+    "src/tier0_sota/live/merit.py",
     "src/tier0_sota/live/paper_farm.py",
     "src/tier0_sota/live/performance.py",
     "src/tier0_sota/live/runner.py",
@@ -1043,6 +1044,7 @@
     "tests/test_formal_and_evals.py",
     "tests/test_grand_reset_kit.py",
     "tests/test_live_automation.py",
+    "tests/test_live_merit.py",
     "tests/test_mcp_server.py",
     "tests/test_ml4t_shap_tearsheets.py",
     "tests/test_nonstop_compounding_loop.py",
