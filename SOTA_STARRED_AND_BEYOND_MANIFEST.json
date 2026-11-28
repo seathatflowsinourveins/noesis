@@ -419,10 +419,10 @@
     },
     "L14": {
       "name": "Interactive Notebooks, Durable Workflows, Observability & LLM Tracing",
-      "graduated_or_admitted_entries": ["prometheus/alertmanager", "allure-framework/allure3"],
-      "unadmitted_watch_candidates": ["marimo-team/marimo", "temporalio/temporal", "grafana/loki", "grafana/tempo", "grafana/pyroscope", "langfuse/langfuse"],
+      "graduated_or_admitted_entries": ["prometheus/alertmanager", "allure-framework/allure3", "marimo-team/marimo"],
+      "unadmitted_watch_candidates": ["temporalio/temporal", "grafana/loki", "grafana/tempo", "grafana/pyroscope", "langfuse/langfuse"],
       "candidates": [
-        {"slug": "marimo-team/marimo", "status": "earned_trigger_watch", "trigger": "reactive Python research apps"},
+        {"slug": "marimo-team/marimo", "spdx": "Apache-2.0", "status": "admitted_off_repo_interactive_workbench", "version": "0.26.0", "url": "http://127.0.0.1:2718/", "pure_py_pep723": true, "zero_ipynb": true, "adr": "ADR-0021", "trigger": "Live 5-tab reactive pure-.py interactive quant & DuckDB SQL workbench (/mnt/z/sota-data/hosted-research-frameworks/marimo-tier0-workbench/tier0_sota_workbench.py, strictly off-repo, zero raw HTML/JS/Plotly, zero uv.lock bloat)"},
         {"slug": "temporalio/temporal", "alias": "Temporal", "status": "earned_trigger_watch", "trigger": "durable multi-hour loops"},
         {"slug": "grafana/loki", "status": "earned_trigger_watch", "trigger": "24/5 centralized logs"},
         {"slug": "grafana/tempo", "status": "earned_trigger_watch", "trigger": "distributed OTel trace storage"},
@@ -478,7 +478,9 @@
         "pinecoders/awesome-pinescript",
         "pinecoders/pynescript",
         "trugurpala/pinescriptv6",
-        "TradersPost/pine-mcp"
+        "TradersPost/pine-mcp",
+        "optuna/optuna-mcp",
+        "mlflow/mlflow-mcp"
       ],
       "candidates": [
         {"slug": "pschanely/CrossHair", "spdx": "MIT", "version": "0.0.114", "status": "admitted_isolated_uvx_cli", "recipe": "just crosshair", "zero_mypy_in_uv_lock": true, "artifacts": ["evals/symbolic_risk_crosshair.py"], "adr": "ADR-0028", "trigger": "bounded symbolic exploration on risk.py (ADMITTED via isolated uvx crosshair-tool==0.0.114 in ADR-0028: 5 PEP-316 contracts + 30 parity cases, 0 counterexamples, 0 mypy in uv.lock)"},
@@ -570,6 +572,8 @@
         {"slug": "trugurpala/pinescriptv6", "spdx": "MIT", "zero_cdp": true, "status": "reference_only_defer", "trigger": "reference-only Pine Script v6 Markdown docs repo (PyPI/npm unpublished; defer unless runnable package ships)"},
         {"slug": "paulieb89/pinescript-mcp", "spdx": "MIT", "status": "admitted_on_demand_companion", "zero_cdp": true, "pypi": "pinescript-mcp==0.7.7", "invocation": "uvx pinescript-mcp", "role": "zero_cdp_local_pine_v6_companion_mcp", "trigger": "on-demand zero-CDP MIT Pine Script v6 local docs/syntax companion MCP via uvx pinescript-mcp (outside pyproject.toml and repo 4-stdio-MCP parity configs)"},
         {"slug": "TradersPost/pine-mcp", "spdx": "MIT", "status": "earned_trigger_watch", "zero_cdp": true, "npm": "pinescript-mcp-server", "invocation": "npx -y pinescript-mcp-server", "role": "zero_cdp_local_pine_v6_docs_companion_mcp", "scope_boundary": "MIT Pine Script docs MCP ONLY; TradersPost proprietary commercial SaaS webhook relay remains excluded under SPDX OSI firewall", "trigger": "on-demand zero-CDP MIT Node Pine Script v6 docs companion MCP via npx -y pinescript-mcp-server (Pine docs MCP only; commercial SaaS relay excluded)"},
+        {"slug": "optuna/optuna-mcp", "spdx": "MIT", "status": "earned_trigger_watch", "trigger": "Official Optuna MCP server for outer-loop HPO study inspection & parameter-plateau queries (strictly off execution hot path; ADR-0018)"},
+        {"slug": "mlflow/mlflow-mcp", "alias": "mlflow[mcp]", "spdx": "Apache-2.0", "status": "earned_trigger_watch", "trigger": "Official MLflow 3 MCP server extra (mlflow[mcp]) for outer-loop experiment/run/artifact queries (strictly off execution hot path; ADR-0018)"},
         {
           "slug": "tradingview/mcp-official",
           "spdx": "Platform-OAuth-2.1",
@@ -675,7 +679,7 @@
       "form_a_static_tearsheets": {
         "name": "Upstream Report Functions (one upstream call per file, run data only)",
         "repos": [
-          {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "status": "release_candidate", "spdx": "LGPL-3.0-only", "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark')"},
+          {"repo": "nautechsystems/nautilus_trader", "version": "2.0.0rc9", "status": "release_candidate", "spdx": "LGPL-3.0-only", "license_evidence": "https://github.com/nautechsystems/nautilus_trader/blob/b4c86589876551b9f2422defbc42c61c156a0d76/LICENSE", "api": "nautilus_trader.analysis.tearsheet.create_tearsheet(theme='nautilus_dark') & create_bars_with_fills(theme='nautilus_dark')"},
           {"repo": "skfolio/skfolio", "version": "1.14.6", "spdx": "BSD-3-Clause", "api": "skfolio.model_selection.CombinatorialPurgedCV.plot_train_test_folds + skfolio.population.Population.plot_distribution (the upstream Plotly figures written with write_html)"}, {"repo": "ml4t/diagnostic", "version": "0.2.1", "spdx": "MIT", "api": "ml4t.diagnostic.visualization.backtest.generate_backtest_tearsheet(template='full', interactive=True) + ml4t.diagnostic.visualization.FeatureImportanceDashboard (Streamlit [dashboard] extra excluded; the earlier combine_figures_to_html page composition was retired 2026-11-27; hand-built figures blocked by ast-grep no-handbuilt-plotly-chart)"},
           {"repo": "shap/shap", "version": "0.54.1", "spdx": "MIT", "api": "TreeExplainer exact additivity attribution (values feed the ml4t dashboards and DuckDB tables)"},
           {"repo": "mmschlk/shapiq", "version": "1.8.0", "spdx": "MIT", "api": "k-SII order-2 interaction attribution (DuckDB interaction table)"},
@@ -715,10 +719,10 @@
         ]
       },
       "form_e_frontier_watches": {
-        "name": "Earned-Trigger 2026 Frontier Backtest UI Watches (ADR-0018 4-Gate Watch; 0 triggers fired)",
+        "name": "Earned-Trigger 2026 Frontier Backtest UI Watches (ADR-0018 4-Gate Watch; 4 remaining watches after marimo 0.26.0 off-repo admission)",
+        "admitted_off_repo_workbench_note": "marimo-team/marimo (0.26.0, Apache-2.0) promoted to admitted_off_repo_interactive_workbench live on http://127.0.0.1:2718/ (PEP 723 pure .py, 5 reactive tabs incl. live read-only DuckDB SQL, zero .ipynb, zero uv.lock bloat; ADR-0021)",
         "storage_watch_cross_reference": "L11 high-volume storage watch (vortex-data/vortex for lake > 100 GB/run) lives canonically under earned_trigger_frontier_l11_to_l15.L11",
         "repos": [
-          {"repo": "marimo-team/marimo", "spdx": "Apache-2.0", "role": "Reactive pure-.py notebook/app with native DuckDB/Polars SQL & PEP 723 metadata (zero .ipynb; trigger >= 3 manual sweeps/week)"},
           {"repo": "rerun-io/rerun", "spdx": "MIT OR Apache-2.0", "role": "Rust/C++ multimodal time-travel L2/L3 order-book debugger (v0.44+ with MCP catalog; awaits L2/L3 feed)"},
           {"repo": "uwdata/mosaic", "spdx": "BSD-3-Clause", "license_evidence": "https://github.com/uwdata/mosaic/blob/f0a2cfbba83c1408aafbc14ee068cd4e94abfaf3/LICENSE", "note": "GitHub API metadata reports NOASSERTION; BSD-3-Clause verified in repo LICENSE", "role": "DuckDB/WASM v2 linked multi-view cross-filtering over millions/billions of ticks (v0.35+)"},
           {"repo": "finos/FDC3", "spdx": "Apache-2.0", "role": "Cross-widget fdc3.instrument context bus inside FINOS Workspace"},
@@ -727,7 +731,7 @@
       }
     },
     "evaluated_backtest_engine_peers": [
-      {"repo": "QuantConnect/Lean", "spdx": "Apache-2.0", "decision": "rejected_l3_overlap", "reason": "C#/Python engine duplicating NautilusTrader v2 single-engine SSOT; cloud/data commercial"},
+      {"repo": "QuantConnect/Lean", "companion_mcp": "QuantConnect/mcp-server (Apache-2.0, 60+ cloud MCP tools)", "spdx": "Apache-2.0", "decision": "rejected_l3_overlap", "reason": "Strong turnkey cloud multi-asset data & QuantConnect/mcp-server workflow, but C#/.NET/pythonnet runtime split & commercial cloud credit model lose to local-first Python 3.13 + Rust NautilusTrader v2 + hftbacktest + Disk-Z prewall-lake + local stdio MCPs (ADR-0016)", "earned_reconsideration_trigger": "Only if noesis expands into non-US-equity multi-asset options/futures/FX/crypto requiring vendor-hosted point-in-time institutional cloud data feeds unobtainable locally"},
       {"repo": "barter-rs/barter-rs", "spdx": "MIT", "decision": "watch_excluded_l3_overlap", "reason": "Modular pure-Rust trading/backtest crates without Python ML/research parity; overlaps NautilusTrader v2"},
       {"repo": "ml4t/backtest", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Pure-Python event backtester overlapping Rust-core NautilusTrader v2 (retain ml4t/diagnostic, ml4t/engineer, ml4t/skills)"},
       {"repo": "ml4t/live", "spdx": "MIT", "decision": "excluded_l3_overlap", "reason": "Python live broker runner overlapping NautilusTrader v2 LiveNode/SANDBOX"},
