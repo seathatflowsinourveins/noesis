@@ -7,7 +7,7 @@
   "git_metadata": {
     "branch": "main",
     "is_git_repo": true,
-    "repository_files_count": 215,
+    "repository_files_count": 217,
     "vendored_skills_count": 46
   },
   "risk_kernel": {
@@ -172,9 +172,9 @@
   ],
   "adr_graph": {
     "schema_version": "tier0.adr-graph.v1",
-    "total_adrs": 29,
+    "total_adrs": 30,
     "counts_by_status": {
-      "accepted": 25,
+      "accepted": 26,
       "superseded": 4
     },
     "supersession_edges": [
@@ -212,7 +212,8 @@
         "ADR-0023",
         "ADR-0025",
         "ADR-0026",
-        "ADR-0032"
+        "ADR-0032",
+        "ADR-0033"
       ],
       "L1": [
         "ADR-0001",
@@ -342,7 +343,8 @@
         "ADR-0025",
         "ADR-0026",
         "ADR-0028",
-        "ADR-0032"
+        "ADR-0032",
+        "ADR-0033"
       ],
       "L8": [
         "ADR-0001",
@@ -362,12 +364,13 @@
         "ADR-0025",
         "ADR-0026",
         "ADR-0027",
-        "ADR-0032"
+        "ADR-0032",
+        "ADR-0033"
       ]
     },
-    "fitness_bound_accepted_ratio": "25/25",
+    "fitness_bound_accepted_ratio": "26/26",
     "catalog_and_zensical_in_sync": true,
-    "corpus_sha256": "d7e74e45dadcbd289d37fe053e9756ece301d3f5147a78389a0579aa1e9bf92e"
+    "corpus_sha256": "2f28ba91acea248c25165da05b4dbc8dc965e3665fc7a5cbb81744b7cc49d198"
   },
   "clean_sota_harness": {
     "ok": true,
@@ -635,7 +638,8 @@
         "docs/adr/ADR-0026.md",
         "docs/adr/ADR-0027.md",
         "docs/adr/ADR-0028.md",
-        "docs/adr/ADR-0032.md"
+        "docs/adr/ADR-0032.md",
+        "docs/adr/ADR-0033.md"
       ]
     },
     "L7": {
@@ -975,6 +979,7 @@
     "docs/adr/ADR-0027.md",
     "docs/adr/ADR-0028.md",
     "docs/adr/ADR-0032.md",
+    "docs/adr/ADR-0033.md",
     "docs/adr/CATALOG.md",
     "docs/index.md",
     "evals/__init__.py",
@@ -1043,6 +1048,7 @@
     "src/tier0_sota/tv/tickets.py",
     "tests/alpaca_sim.py",
     "tests/conftest.py",
+    "tests/test_agent_runtime.py",
     "tests/test_alpaca_sim.py",
     "tests/test_architecture_manifest.py",
     "tests/test_ast_grep_no_handbuilt_plotly_chart.py",
