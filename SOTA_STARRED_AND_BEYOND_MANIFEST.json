@@ -934,6 +934,7 @@
           "slug": "snyk/agent-scan",
           "spdx": "Apache-2.0",
           "status": "admitted_offline_cli",
+          "pypi": "snyk-agent-scan==0.7.1",
           "recipe": "just agent-scan",
           "telemetry_disabled": true,
           "trigger": "static MCP & skill supply-chain audit"

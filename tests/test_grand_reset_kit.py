@@ -31,6 +31,8 @@ BANNED_IMPORT_RE = re.compile(
     r"(?m)^\s*(?:import|from)\s+(?:yfinance|backtrader|vectorbt|talib|mlfinlab)\b"
 )
 LIVE_ENABLE_RE = re.compile(r"live_execution_enabled\s*[:=]\s*(?:true|True|1)\b")
+ISOLATED_CLI_SPEC_RE = re.compile(r"--(?:from|with)[ =](\S+)")
+EXACT_PYPI_PIN_RE = re.compile(r"[A-Za-z0-9._-]+==\d+(?:\.\d+)+")
 
 
 def test_zero_self_invented_hooks_and_native_uv_mcps() -> None:
@@ -580,6 +582,90 @@ def test_fnox_age_secret_profiles_and_wsl_bootstrap_convergence() -> None:
         "SNYK_TOKEN",
     ):
         assert token in just_txt, f"justfile missing {token!r}"
+
+
+def _just_recipe_bodies(just_txt: str, name: str) -> dict[str, str]:
+    """Return the ``[unix]`` / ``[windows]`` bodies of one justfile recipe, keyed by OS."""
+    lines = just_txt.splitlines()
+    bodies: dict[str, str] = {}
+    for idx, line in enumerate(lines[:-1]):
+        attr = re.fullmatch(r"\[(unix|windows)\]", line)
+        if attr and re.fullmatch(rf"{re.escape(name)}(?: [^:]*)?:", lines[idx + 1]):
+            body: list[str] = []
+            for nxt in lines[idx + 2 :]:
+                if nxt and not nxt.startswith("    "):
+                    break
+                body.append(nxt)
+            bodies[attr.group(1)] = "\n".join(body)
+    return bodies
+
+
+def test_isolated_cli_recipes_pin_versions_and_guards() -> None:
+    """On-demand isolated CLIs (uvx / uv --with / npx) run exact pinned versions behind guards."""
+    just_txt = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    specs = ISOLATED_CLI_SPEC_RE.findall(just_txt)
+    for spec in specs:
+        assert EXACT_PYPI_PIN_RE.fullmatch(spec), f"isolated CLI {spec!r} lacks an exact == pin"
+    pinned = {spec.split("==", 1)[0] for spec in specs}
+    assert {"crosshair-tool", "mutmut", "allure-pytest", "snyk-agent-scan"} <= pinned
+    npx_specs = re.findall(r"\bnpx --yes (\S+)", just_txt)
+    assert npx_specs, "expected the pinned npx Allure report CLI"
+    for spec in npx_specs:
+        assert re.fullmatch(r"[A-Za-z0-9@/._-]+@\d+(?:\.\d+)+", spec), f"npx {spec!r} unpinned"
+
+    crosshair = _just_recipe_bodies(just_txt, "crosshair")
+    assert set(crosshair) == {"unix", "windows"}
+    crosshair_pins = {
+        pin for text in crosshair.values() for pin in re.findall(r"crosshair-tool==\S+", text)
+    }
+    assert len(crosshair_pins) == 1, f"crosshair pins differ across platforms: {crosshair_pins}"
+
+    mutate = _just_recipe_bodies(just_txt, "mutate-risk")
+    assert set(mutate) == {"unix"}
+    mutate_body = mutate["unix"]
+    assert 'tmp_work="$(mktemp -d)"' in mutate_body
+    assert mutate_body.index('cd "$tmp_work"') < mutate_body.index("--with mutmut==")
+    assert len(set(re.findall(r"mutmut==\S+", mutate_body))) == 1
+
+    starred = json.loads(
+        (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
+    )
+    frontier = {
+        str(cand["slug"]): cand
+        for layer_doc in starred["earned_trigger_frontier_l11_to_l15"].values()
+        for cand in layer_doc.get("candidates", [])
+    }
+    scan_pin = frontier["snyk/agent-scan"]["pypi"]
+    assert EXACT_PYPI_PIN_RE.fullmatch(scan_pin)
+    agent_scan = _just_recipe_bodies(just_txt, "agent-scan")
+    assert set(agent_scan) == {"unix", "windows"}
+    # The credentials the scanner must never see are cleared by real statements, not just named.
+    unix_unset = re.findall(r"(?m)^\s*unset ([^\n]+)$", agent_scan["unix"])
+    win_cleared = re.findall(
+        r"foreach \(\$v in @\(([^)]*)\)\) \{ Remove-Item \"Env:\$v\"", agent_scan["windows"]
+    )
+    cleared = {
+        "unix": set(" ".join(unix_unset).split()),
+        "windows": set(re.findall(r"'([A-Z0-9_]+)'", " ".join(win_cleared))),
+    }
+    clear_marker = {"unix": "unset ", "windows": "Remove-Item"}
+    must_clear = {
+        "SNYK_TOKEN",
+        "APCA_API_KEY_ID",
+        "APCA_API_SECRET_KEY",
+        "ALPACA_LIVE_API_KEY",
+        "ALPACA_LIVE_SECRET_KEY",
+    }
+    for os_name, text in agent_scan.items():
+        assert text.count(f"--from {scan_pin} ") == 2, os_name
+        missing = must_clear - cleared[os_name]
+        assert not missing, f"{os_name} agent-scan must clear {sorted(missing)} before scanning"
+        assert text.index(clear_marker[os_name]) < text.index(f"--from {scan_pin} ")
+
+    tv_ps1 = (REPO_ROOT / "scripts" / "tv_console.ps1").read_text(encoding="utf-8")
+    hints = re.findall(r"uvx --from (\S+)", tv_ps1)
+    assert hints == [frontier["paulieb89/pinescript-mcp"]["pypi"]]
+    assert all(EXACT_PYPI_PIN_RE.fullmatch(hint) for hint in hints)
 
 
 def test_fnox_live_profile_physical_key_isolation_and_tv_confirm_paper_recipe() -> None:

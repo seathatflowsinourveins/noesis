@@ -127,7 +127,7 @@ function tv-mcp-status {
     Invoke-Tier0Python -Arguments @('-B', (Join-Path $script:Tier0RepoRoot 'scripts\nautilus_mcp_server.py'), '--smoke')
     if ($LASTEXITCODE -ne 0) { throw "nautilus_mcp_server --smoke exited with code $LASTEXITCODE" }
     Write-Host "[MCP-TV-OFFICIAL] Streamable HTTP + OAuth 2.1 (user scope): https://mcp.tradingview.com/mcp" -ForegroundColor Cyan
-    Write-Host "[MCP-PINE-LOCAL]  Zero-CDP MIT Pine v6 docs/validator: uvx --from pinescript-mcp pinescript-mcp" -ForegroundColor Cyan
+    Write-Host "[MCP-PINE-LOCAL]  Zero-CDP MIT Pine v6 docs/validator: uvx --from pinescript-mcp==0.7.7 pinescript-mcp" -ForegroundColor Cyan
 }
 
 function tv-watchlist-payload {
