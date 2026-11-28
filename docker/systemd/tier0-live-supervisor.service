@@ -1,0 +1,37 @@
+[Unit]
+Description=Tier-0 SOTA 24/5 Alpaca Live Lossless Trailing Supervisor (ALPACA_LIVE_PRO_LINE_1000, Frozen Release, WSL2 Native)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sota
+# The code is the frozen release cut by `just live-release` ($HOME/tier0-live-releases/current),
+# never the working tree. Every command below enters that directory first; PYTHONPATH is its src/.
+WorkingDirectory=~
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TIER0_VENUE_PROFILE=ALPACA_LIVE_PRO_LINE_1000
+Environment=TIER0_DATA_ROOT=/mnt/z/sota-data
+Environment=OMP_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+MemoryHigh=2G
+MemoryMax=4G
+CPUQuota=200%
+Restart=on-failure
+RestartSec=5
+# Pre-start checks: no IBKR live port is listening; every file under the release's src/ matches
+# the release hash manifest and no file was added; risk.py is the pinned kernel; tier0_sota is
+# imported from this release.
+ExecStartPre=/usr/bin/env bash -c 'test -z "$(ss -lntH | grep -E ":(4001|7496|8798|8796)\\b" || true)"'
+ExecStartPre=/usr/bin/env bash -c 'cd "$HOME/tier0-live-releases/current" && sha256sum --quiet --strict -c RELEASE_MANIFEST.sha256 && test -z "$(find src ! -type f ! -type d)" && test "$(find src -type f | LC_ALL=C sort)" = "$(grep -v "^#" RELEASE_MANIFEST.sha256 | cut -c67- | LC_ALL=C sort)"'
+ExecStartPre=/usr/bin/env bash -c 'cd "$HOME/tier0-live-releases/current" && test "$(sha256sum src/tier0_sota/risk.py | cut -d" " -f1)" = "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"'
+ExecStartPre=/usr/bin/env bash -c 'cd "$HOME/tier0-live-releases/current" && PYTHONPATH="$(pwd -P)/src" "$HOME/noesis/.venv/bin/python" -P -B -c "import importlib.util as u, os, sys; sys.exit(not os.path.realpath(u.find_spec(sys.argv[1]).origin).startswith(os.path.realpath(sys.argv[2]) + os.sep))" tier0_sota src'
+# The release path is resolved once (pwd -P), so a later `just live-release` cannot change the
+# code of a running supervisor. Only the live age identity is offered to fnox; --no-defaults keeps
+# the top-level (paper data) secrets out, and env -u drops the paper data-key pair if inherited.
+ExecStart=/usr/bin/env bash -c 'cd "$HOME/tier0-live-releases/current" && export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" PYTHONPATH="$(pwd -P)/src" FNOX_AGE_KEY_FILE="$HOME/.config/fnox/live-age.txt" && exec fnox exec --profile live --no-defaults -- env -u APCA_API_KEY_ID -u APCA_API_SECRET_KEY "$HOME/noesis/.venv/bin/python" -P -B -m tier0_sota.live.runner --supervise-live'
+
+[Install]
+WantedBy=multi-user.target

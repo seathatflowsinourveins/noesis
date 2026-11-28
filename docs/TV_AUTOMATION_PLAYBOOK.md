@@ -1,22 +1,22 @@
 # Tier-0 SOTA TradingView Automation Playbook
 
-Display-only 4-script Pine v6 cockpit + Half-Automation order ticket staging & paper-only confirmation bridge (`semi_auto_confirmed = false`, `qty = 1`, `paper_only = true`, `live_execution_enabled = false`, zero CDP `:9223`, zero live broker endpoints). Governed by [ADR-0010](adr/ADR-0010.md), [ADR-0020](adr/ADR-0020.md), [ADR-0021](adr/ADR-0021.md), [ADR-0023](adr/ADR-0023.md), and [ADR-0027](adr/ADR-0027.md).
+Display-only 4-script Pine v6 cockpit + Half-Automation order ticket staging & operator confirmation bridge (staged `semi_auto_confirmed = false` / `qty = 1` until the operator confirms via `just tv-confirm-paper`, or on the live lane via the planned `just tv-confirm-live`, which is not yet a recipe; zero CDP `:9223`; live operations follow the three tiers of [ADR-0029](adr/ADR-0029.md), where `live_execution_enabled = false` means tier 3 is off; IBKR live ports are not wired). Governed by [ADR-0010](adr/ADR-0010.md), [ADR-0020](adr/ADR-0020.md), [ADR-0021](adr/ADR-0021.md), [ADR-0023](adr/ADR-0023.md), [ADR-0027](adr/ADR-0027.md), and [ADR-0029](adr/ADR-0029.md).
 
 ---
 
-## 1. Compliance, Paper-Only & Stage-5 Venue Posture
+## 1. Compliance & Venue Posture (Paper Lanes, Tiered Live)
 
 - **Non-Repainting Pine v6:** All 4 scripts in `pine/` enforce `barstate.isconfirmed`, `gaps=barmerge.gaps_off`, and `lookahead=barmerge.lookahead_off`.
 - **Fail-Closed Alert Bridge:** Every inbound alert validates against Draft 2020-12 `src/tier0_sota/tv/schema_v1.json` in `src/tier0_sota/tv/bridge.py` (`TvAlertV1`, `extra="forbid"`) with `qty = 1`, `semi_auto_confirmed = false`, `60s` re-entry cooldown, exact `Decimal` Rule-612 inward stops (`<= 2.00%` cap, Z3-proven in `evals/formal_risk_z3.py`), `MAX_INPUT_AGE_MS = 900_000` (15m) on `--live-intake`, and fail-closed live endpoint refusal (`paper-api` / Paper `:4002` only).
 - **Zero Custom HTTP Server & Zero CDP Boundary:** `rules/zero_self_invention.yml` (`no-custom-dashboard-server`, `no-raw-http-socket-in-src`) prohibits custom Python HTTP webhook servers, and [ADR-0027](adr/ADR-0027.md) blocks TradingView Desktop CDP attachment (`:9223`), unofficial scrapers, and proprietary SaaS webhook relays (including TradersPost's commercial SaaS relay). For official first-party watchlist CRUD, alert management, and Pine v6 compilation/backtesting without CDP, connect TradingView's hosted Streamable HTTP + OAuth 2.1 MCP (`https://mcp.tradingview.com/mcp`) at the user/IDE level (see Section 7). Live auto-refreshing analytics run via upstream `L10` portals (`FINOS Workspace :1420`, `OpenBB :6900`, `Caddy :8793/tv_sota_pack/`, `DuckDB SQL UI :4213`, `Grafana :3001`, `Dagster :3000`).
-- **Paper-Only Capacity vs Dormant Stage-5 Reference Spec (`src/tier0_sota/engine.py:EXECUTION_VENUE_PROFILES`, [ADR-0020](adr/ADR-0020.md)):**
+- **Paper Capacity vs Tiered Live Venue Spec (`src/tier0_sota/engine.py:EXECUTION_VENUE_PROFILES`, [ADR-0020](adr/ADR-0020.md), [ADR-0029](adr/ADR-0029.md)):**
 
 | Venue Profile | Environment | Rate Limit | Exit Reserve | Status |
 |---|---|---:|---:|---|
 | `ALPACA_PAPER_200` (`PA1..PA3`) | `PAPER` | `200 rpm` / lane (`600 rpm` total) | `20 rpm` / lane | Active default (`paper_only = true`, `fnox --profile paper`) |
 | `ALPACA_PAPER_1000` (`PA1..PA3`) | `PAPER` | `1,000 rpm` / `25 rps` / lane (`3,000 rpm` total) | `100 rpm` / lane | Opt-in paper (`TIER0_ALPACA_RPM=1000`, `6,000 rpm` combined Paper Farm, `paper_only = true`) |
 | `IBKR_PAPER_4002` (`IBKR_DU_4002`) | `PAPER` | `3,000 rpm` (`50 rps`) | `300 rpm` | Active 24/5 overnight paper (`3,600 rpm` default / `6,000 rpm` with `ALPACA_PAPER_1000`) |
-| `ALPACA_LIVE_PRO_LINE_1000` | `LIVE` (SANDBOX spec) | `1,000 rpm` (`25 rps`) | `100 rpm` | **LIVE REFUSED** (`live_execution_enabled = false`, `LIVE_REFUSED_PAPER_ONLY_SANDBOX_SPEC`, dormant `~/.config/fnox/live-age.txt` per [ADR-0023](adr/ADR-0023.md)) |
+| `ALPACA_LIVE_PRO_LINE_1000` | `LIVE` | `1,000 rpm` (`25 rps`) | `100 rpm` | **Tiered per [ADR-0029](adr/ADR-0029.md)**: tier 1 protective trailing and exits; tier 2 operator-confirmed via the planned `just tv-confirm-live` (not yet a recipe); tier 3 only on the owner's standing opt-in and proven paper merit (`live_execution_enabled = false` means tier 3 is off; isolated `~/.config/fnox/live-age.txt` per [ADR-0023](adr/ADR-0023.md)) |
 
 ---
 
@@ -37,7 +37,7 @@ Every 60s via WSL2 systemd `tier0-paper-farm-observe.timer` (or on demand via `j
 
 1. `tier0_sota_tv_watchlists_live.txt` — TradingView-importable `EXCHANGE:SYMBOL` sectioned watchlist (`###01_MACRO_REGIME_BREADTH` through `###06_OVERNIGHT_24X5_LEADERS`, plus manual staged preservation).
 2. `live_half_auto_tickets.json` + `LIVE_HALF_AUTO_ORDER_TICKETS.md` — Active extreme-mover tickets (strict `<60s` bar freshness + XNYS session match, `TvAlertV1`-validated) + standby Rule-612 presets + manual Pine staged section.
-3. `tv_order_presets.json` + `TV_ORDER_PRESET_CARDS.md` — `3 x 4` NATR×Session matrix, 8 Omni presets, 4-tier R-lock ladder, copy-ready TV Order Panel cards, and venue order-handle parity metadata (`3,600 rpm` default / `6,000 rpm` with `ALPACA_PAPER_1000` Paper Farm; `1,000 rpm` SANDBOX-refused live spec).
+3. `tv_order_presets.json` + `TV_ORDER_PRESET_CARDS.md` — `3 x 4` NATR×Session matrix, 8 Omni presets, 4-tier R-lock ladder, copy-ready TV Order Panel cards, and venue order-handle parity metadata (`3,600 rpm` default / `6,000 rpm` with `ALPACA_PAPER_1000` Paper Farm; `1,000 rpm` `ALPACA_LIVE_PRO_LINE_1000` live venue spec, tiered per [ADR-0029](adr/ADR-0029.md)).
 4. `staged_scan_presets.json` — Scanner-owned `tier0.staged-tv-presets.v1` snapshot (isolated from manual history).
 5. `staged_tv_presets.json` — Manual/Pine alert bridge history (`alert_id`-deduplicated, `semi_auto_confirmed = false`, `qty = 1`).
 6. `finos_tv_cockpit.json` — Zero-import live cockpit export (`@finos-workspace/plotly-charts@2.5.0`, `openbb_rows`, `tradingview/lightweight-charts` v5 markers & rungs) consumed by FINOS (`http://localhost:1420/`) and OpenBB (`http://127.0.0.1:6900/widgets.json`).
@@ -125,6 +125,8 @@ bash scripts/tv_console.sh portals
 just tv-e2e
 ```
 
+The `tv-confirm-paper` / `confirm-paper` commands above hand off to the paper farm only; operator-confirmed tickets on the live lane (tier 2 of [ADR-0029](adr/ADR-0029.md)) will use `just tv-confirm-live`, which is planned and not yet a recipe.
+
 ### Windows PowerShell (`scripts/tv_console.ps1`)
 
 ```powershell
@@ -153,7 +155,7 @@ tv-e2e                                         # Run ruff, ty, and pytest tests/
   - **Watchlists CRUD:** `list_watchlists`, `get_watchlist`, `get_active_watchlist`, `create_watchlist`, `delete_watchlist`, `add_to_watchlist`, `remove_from_watchlist`, `update_watchlist` (syncs exchange-qualified watchlists directly alongside `tier0_sota_tv_watchlists_live.txt` import).
   - **Alerts CRUD + Logs:** Create, read, update, delete TradingView alerts and inspect trigger logs.
   - **Official Pine v6 Compiler & Backtest Lifecycle:** `validate_pine_script`, `run_pine_indicator`, `run_pine_backtest` (including **Deep Backtesting**), `search_pine_scripts`, `get_pine_script_source`, `create_pine_script`, `update_pine_script`.
-- **Explicit Execution & Order-Preset Boundary:** TradingView's official MCP does **NOT** expose native Supercharts Order Panel Presets or direct broker order execution. Executable multi-situation 24/5 lossless trailing order presets therefore remain locked inside our local `nautilus-engine` + `src/tier0_sota/tv/tickets.py` + `src/tier0_sota/live/execution.py` (`paper_only = True`, `live_execution_enabled = False`, `qty = 1`, `semi_auto_confirmed = False`).
+- **Explicit Execution & Order-Preset Boundary:** TradingView's official MCP does **NOT** expose native Supercharts Order Panel Presets or direct broker order execution. Executable multi-situation 24/5 lossless trailing order presets therefore remain locked inside our local `nautilus-engine` + `src/tier0_sota/tv/tickets.py` + `src/tier0_sota/live/execution.py` (staged `qty = 1` / `semi_auto_confirmed = False` until the operator confirms; live operations follow the three tiers of [ADR-0029](adr/ADR-0029.md), where `live_execution_enabled = False` means tier 3 is off).
 
 ### 7.2 Exact 1-Step OAuth Connector Setup (Preserving 4-Stdio-MCP Parity)
 

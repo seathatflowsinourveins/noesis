@@ -41,6 +41,7 @@ nav = [
   { "ADR-0026: Workstation CPU, 9p I/O, Thread Bounds & Dev-Loop" = "adr/ADR-0026.md" },
   { "ADR-0027: Full-Landscape SOTA TradingView 24/5 Practice & Cockpit" = "adr/ADR-0027.md" },
   { "ADR-0028: Starred Repos & L10-L15 Frontier Convergence" = "adr/ADR-0028.md" },
+  { "ADR-0029: Lossless Trailing Harness, Three-Tier Live Operations & Owner Intent" = "adr/ADR-0029.md" },
 ]
 
 [project.theme]

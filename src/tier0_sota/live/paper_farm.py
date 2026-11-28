@@ -1,9 +1,16 @@
-"""3-lane non-overlapping Alpaca Paper + IBKR :4002 adapter (`paper_only=True`)."""
+"""3-lane non-overlapping Alpaca Paper + IBKR :4002 adapter (`paper_only=True`).
+
+The same lane class also runs the one tiered live venue (`paper_only=False`,
+`ALPACA_LIVE_LANE_PROFILES`). Every broker mutation of a lane goes through its four
+`broker_*` methods, the single choke point where lane integrity and the order intent are checked.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import math
 import os
 import tempfile
 import threading
@@ -23,6 +30,7 @@ import alpaca.data as ad
 import alpaca.trading as at
 import duckdb
 import polars as pl
+from alpaca.common.enums import BaseURL
 from alpaca.data.enums import DataFeed
 from alpaca.data.requests import StockQuotesRequest
 from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
@@ -39,6 +47,7 @@ from tier0_sota import risk as rk
 
 __all__ = [
     "ALPACA_LANE_PROFILES",
+    "ALPACA_LIVE_LANE_PROFILES",
     "ALPACA_PAPER_DEFAULT_MAX_RPM",
     "ALPACA_PAPER_PRO_LINE_MAX_RPM",
     "EXPECTED_RISK_SHA256",
@@ -46,6 +55,7 @@ __all__ = [
     "IBKR_PAPER_ACCOUNT",
     "IBKR_PAPER_MAX_RPM",
     "INVERSE_HEDGE_SYMBOLS",
+    "LIVE_LINEAGE_ENTRIES_ENABLED",
     "MAX_RTH_ENTRY_COLLAR_PCT",
     "PAPER_ALPACA_ENDPOINT",
     "RTH_ENTRY_COLLAR_PCT",
@@ -54,9 +64,12 @@ __all__ = [
     "STAGE4_DRILLS_SCHEMA_VERSION",
     "TIGHT_NATR_MAX",
     "WIDE_NATR_MIN",
+    "AlpacaLiveClients",
+    "AlpacaLiveVenueCoordinator",
     "AlpacaPaperLane",
     "BorrowTier",
     "CrossLaneSymbolLock",
+    "EntryAuthority",
     "ExtendedHoursStopSupervision",
     "IbkrPaperAdapter",
     "PaperFarmCoordinator",
@@ -64,12 +77,15 @@ __all__ = [
     "TcaFillRecord",
     "TcaSide",
     "borrow_accrual_days",
+    "build_alpaca_live_clients",
     "build_alpaca_rth_trailing_stop_request",
+    "build_live_venue_coordinator",
     "build_symbol_24x5_session_presets",
     "compute_fast_reverse_trigger",
     "compute_short_borrow_accrual",
     "compute_symbol_min_trailing_pct",
     "compute_tca_record",
+    "default_live_manifest_dir",
     "default_manifest_dir",
     "duckdb_connect_config",
     "ensure_tca_table",
@@ -80,6 +96,7 @@ __all__ = [
     "persist_tca_record_duckdb",
     "preferred_situation_lane_order",
     "reconcile_three_way_positions",
+    "resolve_alpaca_live_env_creds",
     "resolve_alpaca_paper_venue_profile",
     "round_lot_up",
     "run_all_stage4_drills",
@@ -100,6 +117,12 @@ ALPACA_PAPER_PRO_LINE_MAX_RPM = 1000
 RTH_ENTRY_COLLAR_PCT = Decimal("0.0005")
 MAX_RTH_ENTRY_COLLAR_PCT = Decimal("0.0010")
 _NY_TZ = ZoneInfo("America/New_York")
+# Tier-1 lineage reverse / re-entry on the live lane is a quiet HOLD until the owner-lineage
+# resolver and its tests land; that change flips this constant.
+LIVE_LINEAGE_ENTRIES_ENABLED = False
+_NON_PAPER_REFUSAL = "Refused non-paper execution; paper_only=True required."
+_LIVE_KEY_ID_PREFIX = "AK"
+_LIVE_CREDENTIAL_ENV_NAMES = ("ALPACA_LIVE_API_KEY", "ALPACA_LIVE_SECRET_KEY")
 
 
 def resolve_alpaca_paper_venue_profile(
@@ -165,6 +188,93 @@ def _assert_paper_trading_client(client: Any) -> None:
             )
 
 
+def _normalized_endpoint(value: Any) -> str:
+    return str(getattr(value, "value", value)).strip().rstrip("/").lower()
+
+
+def _assert_live_trading_client(client: Any) -> None:
+    """Fail closed unless ``client`` positively identifies as alpaca-py's live trading client.
+
+    Strict sibling of ``_assert_paper_trading_client``: a missing attribute, a URL override or a
+    key id without the live prefix refuses. No credential value ever reaches a message.
+    """
+    if getattr(client, "_sandbox", None) is not False or getattr(client, "paper", None) is True:
+        raise PermissionError("Refused non-live trading client; a paper=False client is required.")
+    live_endpoint = _normalized_endpoint(BaseURL.TRADING_LIVE)
+    for attr in ("_base_url", "base_url", "_url_override", "url_override"):
+        val = getattr(client, attr, None)
+        if (val is None and attr != "_base_url") or _normalized_endpoint(val) == live_endpoint:
+            continue
+        raise PermissionError(
+            "Refused non-live trading endpoint; alpaca-py's own live endpoint is required."
+        )
+    key_id = getattr(client, "_api_key", None)
+    if not isinstance(key_id, str) or not key_id.startswith(_LIVE_KEY_ID_PREFIX):
+        raise PermissionError(
+            f"Refused trading client without a live ({_LIVE_KEY_ID_PREFIX}-prefixed) key id."
+        )
+
+
+def resolve_alpaca_live_env_creds(env: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """Read the live Alpaca credential strictly from process env (never opens .env*).
+
+    Fails closed and names variables only: no credential value is ever put in an exception.
+    """
+    source = os.environ if env is None else env
+    key_name, secret_name = _LIVE_CREDENTIAL_ENV_NAMES
+    key = str(source.get(key_name) or "").strip()
+    secret = str(source.get(secret_name) or "").strip()
+    if not key or not secret:
+        raise PermissionError(
+            f"Refused live credential: {key_name} and {secret_name} must both be set."
+        )
+    if not key.startswith(_LIVE_KEY_ID_PREFIX):
+        raise PermissionError(
+            f"Refused live credential: {key_name} is not a live key id "
+            f"({_LIVE_KEY_ID_PREFIX} prefix required)."
+        )
+    return key, secret
+
+
+@dataclass(frozen=True)
+class AlpacaLiveClients:
+    """Every Alpaca client of the live process, all built from the one live credential."""
+
+    trading: Any = field(repr=False)
+    data: Any = field(repr=False)
+    market_streams: Mapping[DataFeed, Any] = field(repr=False)
+    trade_updates: Any = field(repr=False)
+
+
+def build_alpaca_live_clients(key: str, secret: str) -> AlpacaLiveClients:
+    """Build the live trading, market-data and stream clients from the one live credential.
+
+    This is the single construction site of a non-paper Alpaca client. Building the clients
+    opens no connection: the streams connect only when their ``run`` is called.
+    """
+    from alpaca.data.live import StockDataStream
+
+    if not (
+        isinstance(key, str)
+        and key.startswith(_LIVE_KEY_ID_PREFIX)
+        and isinstance(secret, str)
+        and secret
+    ):
+        raise PermissionError(
+            "Refused live client build: a live key id and its secret are required."
+        )
+    trading = at.TradingClient(key, secret, paper=False)
+    _assert_live_trading_client(trading)
+    return AlpacaLiveClients(
+        trading=trading,
+        data=ad.StockHistoricalDataClient(key, secret),
+        market_streams={
+            feed: StockDataStream(key, secret, feed=feed) for feed in (DataFeed.SIP, DataFeed.BOATS)
+        },
+        trade_updates=at.TradingStream(key, secret, paper=False),
+    )
+
+
 _DEC_ZERO = Decimal("0")
 _DEC_ONE = Decimal("1")
 _BPS_SCALE = Decimal("10000")
@@ -205,6 +315,61 @@ ALPACA_LANE_PROFILES: dict[str, dict[str, Any]] = {
         "profit_lock_high": 0.75,
     },
 }
+
+EntryAuthority = Literal["AUTONOMOUS", "OWNER_LINEAGE"]
+_ENTRY_AUTHORITY_INTENTS: Mapping[str, eng.VenueOrderIntent] = {
+    "AUTONOMOUS": "AUTONOMOUS_ENTRY",
+    "OWNER_LINEAGE": "OWNER_LINEAGE_ENTRY",
+}
+_ENTRY_INTENTS: frozenset[str] = frozenset(
+    {"OWNER_LINEAGE_ENTRY", "OPERATOR_CONFIRMED_ENTRY", "AUTONOMOUS_ENTRY"}
+)
+_LIVE_PROFILE_RISK_KEYS = ("risk_per_trade_pct", "max_notional_pct")
+
+
+def _risk_sizing_default(name: str) -> Decimal:
+    """Keyword default of ``rk.size_position_by_risk``: the bound for a live lane profile."""
+    default = inspect.signature(rk.size_position_by_risk).parameters[name].default
+    if not isinstance(default, Decimal) or not default.is_finite() or default <= 0:
+        raise RuntimeError(f"risk.size_position_by_risk has no positive Decimal default: {name}")
+    return default
+
+
+_RISK_SIZING_DEFAULTS: Mapping[str, Decimal] = {
+    name: _risk_sizing_default(name) for name in _LIVE_PROFILE_RISK_KEYS
+}
+
+# The one live lane sizes with risk.py's own defaults, never with a paper lane's wider profile.
+ALPACA_LIVE_LANE_PROFILES: dict[str, dict[str, Any]] = {
+    "ALPACA_LIVE1": {
+        "lane_id": "LV1_LOSSLESS_TRAIL",
+        "risk_per_trade_pct": _RISK_SIZING_DEFAULTS["risk_per_trade_pct"],
+        "max_notional_pct": _RISK_SIZING_DEFAULTS["max_notional_pct"],
+    },
+}
+
+
+def _assert_live_lane_profiles_within_risk_defaults() -> None:
+    """Fail closed if a live lane profile is malformed or sizes beyond risk.py's defaults."""
+    if ALPACA_LIVE_LANE_PROFILES.keys() & ALPACA_LANE_PROFILES.keys():
+        raise ValueError("A lane account cannot be both a paper and a live lane profile")
+    for account, profile in ALPACA_LIVE_LANE_PROFILES.items():
+        if not str(profile.get("lane_id") or "").strip():
+            raise ValueError(f"Live lane profile {account} has no lane_id")
+        for name, bound in _RISK_SIZING_DEFAULTS.items():
+            value = profile.get(name)
+            if (
+                not isinstance(value, Decimal)
+                or not value.is_finite()
+                or not (_DEC_ZERO < value <= bound)
+            ):
+                raise ValueError(
+                    f"Live lane profile {account} {name}={value!r} outside (0, {bound}] "
+                    "(risk.size_position_by_risk default)"
+                )
+
+
+_assert_live_lane_profiles_within_risk_defaults()
 
 TIGHT_NATR_MAX = Decimal("0.015")
 WIDE_NATR_MIN = Decimal("0.030")
@@ -689,6 +854,21 @@ def persist_tca_record_duckdb(duckdb_path: Path, record: TcaFillRecord) -> bool:
         return inserted
 
 
+# Tier-model ledger columns. A NULL entry_authority (rows written before the tier model, or by a
+# writer that does not state one) is never an owner lineage.
+_ENTRY_DECISION_TIER_COLUMN_DDL: tuple[str, ...] = (
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS entry_authority VARCHAR",
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS lineage_root_id VARCHAR",
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS lineage_parent_id VARCHAR",
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS lineage_depth INTEGER DEFAULT 0",
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS entry_qty DECIMAL(18,6)",
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS close_cause VARCHAR",
+    "ALTER TABLE paper_entry_decisions ADD COLUMN IF NOT EXISTS macro_regime INTEGER",
+    "ALTER TABLE paper_entry_decisions "
+    "ADD COLUMN IF NOT EXISTS adoption_anchor_price DECIMAL(18,6)",
+)
+
+
 def _ensure_entry_decisions_table(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS paper_entry_decisions ("
@@ -703,6 +883,8 @@ def _ensure_entry_decisions_table(conn: duckdb.DuckDBPyConnection) -> None:
         "ALTER TABLE paper_entry_decisions "
         "ADD COLUMN IF NOT EXISTS adopted_external BOOLEAN DEFAULT false"
     )
+    for add_column in _ENTRY_DECISION_TIER_COLUMN_DDL:
+        conn.execute(add_column)
 
 
 def _ensure_supervised_stops_table(conn: duckdb.DuckDBPyConnection) -> None:
@@ -762,6 +944,11 @@ def default_manifest_dir() -> Path:
     """Resolve manifest directory via TIER0_DATA_ROOT (default Z:/sota-data)."""
     root = os.environ.get("TIER0_DATA_ROOT", "").strip() or r"Z:\sota-data"
     return Path(root) / "manifests"
+
+
+def default_live_manifest_dir() -> Path:
+    """Manifest directory of the live venue: ``<data root>/live/manifests``, never the paper one."""
+    return default_manifest_dir().parent / "live" / "manifests"
 
 
 def _duckdb_filename(account: str) -> str:
@@ -1155,12 +1342,19 @@ class AlpacaPaperLane:
         }
     )
     venue_profile: str = ""
+    # Epoch seconds at which ``start_equity`` was last read from the broker account. A live lane
+    # holds every entry while this is None: the dataclass default equity is a placeholder.
+    equity_verified_at: float | None = None
 
     def __post_init__(self) -> None:
+        if not self.paper_only:
+            # Anything but a complete live lane is refused with the pre-existing text.
+            self._init_live_lane()
+            return
         if self.account not in ALPACA_LANE_PROFILES:
             raise ValueError(f"Unsupported Alpaca Paper lane: {self.account!r}")
         if not self.paper_only or self.live_execution_enabled:
-            raise PermissionError("Refused non-paper execution; paper_only=True required.")
+            raise PermissionError(_NON_PAPER_REFUSAL)
         _assert_paper_trading_client(self.trading_client)
         explicit_vp = self.venue_profile.strip().upper()
         if explicit_vp:
@@ -1191,6 +1385,172 @@ class AlpacaPaperLane:
             self.venue_profile = inferred_vp
         self.breaker = rk.DailyDrawdownBreaker(start_equity=self.start_equity)
 
+    def _init_live_lane(self) -> None:
+        """``paper_only=False`` path: live lane account, tiered venue and live client, or refuse.
+
+        ``live_execution_enabled`` keeps its one meaning here: the owner's standing tier-3 opt-in.
+        """
+        if isinstance(self.venue_profile, str):
+            self.venue_profile = self.venue_profile.strip().upper()
+        self._assert_live_integrity()
+        if not isinstance(self.live_execution_enabled, bool):
+            raise PermissionError(_NON_PAPER_REFUSAL)
+        try:
+            _assert_live_lane_profiles_within_risk_defaults()
+        except ValueError as exc:
+            raise PermissionError(_NON_PAPER_REFUSAL) from exc
+        prof = eng.validate_venue_order_capability(self.venue_profile, intent="PROTECTIVE")
+        if self.rate_budget.max_rpm == ALPACA_PAPER_DEFAULT_MAX_RPM:
+            # The dataclass default is the paper-env budget; a live lane takes the venue's own.
+            self.rate_budget = rk.ProtectiveExitRateBudget(
+                prof.max_rpm, prof.min_exit_reserve_fraction
+            )
+        elif self.rate_budget.max_rpm > prof.max_rpm:
+            eng.validate_venue_order_capability(
+                self.venue_profile, intent="PROTECTIVE", requested_rpm=self.rate_budget.max_rpm
+            )
+        self.breaker = rk.DailyDrawdownBreaker(start_equity=self.start_equity)
+
+    @property
+    def environment(self) -> Literal["PAPER", "LIVE"]:
+        """``LIVE`` for a live lane account, else ``PAPER``: from the account, not from a flag."""
+        return "LIVE" if self.account in ALPACA_LIVE_LANE_PROFILES else "PAPER"
+
+    def _assert_live_integrity(self) -> None:
+        try:
+            if (
+                self.paper_only is not False
+                or self.account not in ALPACA_LIVE_LANE_PROFILES
+                or self.venue_profile != eng.LIVE_TIERED_VENUE_ID
+            ):
+                raise PermissionError("Live lane account, venue and paper flag do not match")
+            _assert_live_trading_client(self.trading_client)
+            prof = eng.validate_venue_order_capability(self.venue_profile, intent="PROTECTIVE")
+            if prof.broker != "ALPACA" or prof.environment != "LIVE":
+                raise PermissionError("Live lane venue is not the tiered Alpaca live venue")
+        except (PermissionError, ValueError) as exc:
+            raise PermissionError(_NON_PAPER_REFUSAL) from exc
+
+    def assert_integrity(self) -> None:
+        """Raise ``PermissionError`` unless the lane still is what it was constructed as.
+
+        Paper: the flag check every mutating path has always made. Live: the construction
+        discriminator (live lane account, tiered venue, live client, ``paper_only`` False). The
+        entry-side state (tier-3 flag, sizing profile, verified equity) is not part of it: a
+        fault there holds entries and must never block a protective order.
+        """
+        if self.environment == "LIVE":
+            self._assert_live_integrity()
+        elif not self.paper_only or self.live_execution_enabled:
+            raise PermissionError(_NON_PAPER_REFUSAL)
+
+    def entry_hold_reason(
+        self, intent: eng.VenueOrderIntent, *, leg_merit: bool = False
+    ) -> str | None:
+        """Why an entry with ``intent`` must be held on this lane; ``None`` = permitted.
+
+        Never raises and never calls the broker. A paper lane permits every entry, as before.
+        A live lane permits an entry intent only when its tier grants it: ``AUTONOMOUS_ENTRY``
+        needs the owner opt-in (``live_execution_enabled``) and the leg's merit,
+        ``OWNER_LINEAGE_ENTRY`` needs ``LIVE_LINEAGE_ENTRIES_ENABLED``, and every live entry
+        needs a broker-verified equity (``equity_verified_at``).
+        """
+        try:
+            self.assert_integrity()
+        except Exception:
+            return "HOLD_LANE_INTEGRITY"
+        if self.environment == "PAPER":
+            return None
+        try:
+            if not isinstance(intent, str) or intent not in _ENTRY_INTENTS:
+                return "HOLD_NOT_AN_ENTRY_INTENT"
+            if not isinstance(self.live_execution_enabled, bool):
+                return "HOLD_TIER_FLAG_NOT_BOOL"
+            if intent == "OWNER_LINEAGE_ENTRY" and LIVE_LINEAGE_ENTRIES_ENABLED is not True:
+                return "HOLD_LIVE_LINEAGE_ENTRIES_DISABLED"
+            eng.validate_venue_order_capability(
+                self.venue_profile,
+                intent=intent,
+                autonomous_opt_in=self.live_execution_enabled,
+                leg_merit=leg_merit,
+            )
+        except PermissionError:
+            return "HOLD_TIER_NOT_GRANTED"
+        except Exception:
+            return "HOLD_ENTRY_CHECK_FAILED"
+        try:
+            _assert_live_lane_profiles_within_risk_defaults()
+        except Exception:
+            return "HOLD_LIVE_PROFILE_OUTSIDE_RISK_DEFAULTS"
+        verified_at = self.equity_verified_at
+        if (
+            isinstance(verified_at, bool)
+            or not isinstance(verified_at, (int, float))
+            or not math.isfinite(verified_at)
+            or verified_at <= 0
+        ):
+            return "HOLD_LIVE_EQUITY_UNVERIFIED"
+        return None
+
+    def _authorize_broker_mutation(self, intent: Any, *, leg_merit: bool = False) -> None:
+        """Gate of the choke point: lane integrity, then the order intent.
+
+        ``PROTECTIVE`` is always granted on a valid lane. Any other intent must be an entry intent
+        that ``entry_hold_reason`` permits; a refusal here means a caller skipped that check.
+        """
+        self.assert_integrity()
+        if isinstance(intent, str) and intent == "PROTECTIVE":
+            return
+        if not isinstance(intent, str) or intent not in _ENTRY_INTENTS:
+            raise PermissionError(
+                f"Refused broker mutation on {self.account}: {intent!r} is not a mutating intent"
+            )
+        if self.environment == "LIVE":
+            # A tier refusal keeps the engine's own refusal text.
+            eng.validate_venue_order_capability(
+                self.venue_profile,
+                intent=intent,
+                autonomous_opt_in=self.live_execution_enabled,
+                leg_merit=leg_merit,
+            )
+        reason = self.entry_hold_reason(intent, leg_merit=leg_merit)
+        if reason is not None:
+            raise PermissionError(f"Refused {intent} on {self.account}: {reason}")
+
+    def broker_submit(
+        self, request: Any, *, intent: eng.VenueOrderIntent, leg_merit: bool = False
+    ) -> Any:
+        """Choke point: the only place this lane sends a new order to its broker."""
+        self._authorize_broker_mutation(intent, leg_merit=leg_merit)
+        return self.trading_client.submit_order(request)
+
+    def broker_replace(
+        self, order_id: Any, request: Any, *, intent: eng.VenueOrderIntent = "PROTECTIVE"
+    ) -> Any:
+        """Choke point: the only place this lane replaces a working order."""
+        self._authorize_broker_mutation(intent)
+        return self.trading_client.replace_order_by_id(order_id, request)
+
+    def broker_cancel(self, order_id: Any, *, intent: eng.VenueOrderIntent = "PROTECTIVE") -> Any:
+        """Choke point: the only place this lane cancels one order."""
+        self._authorize_broker_mutation(intent)
+        return self.trading_client.cancel_order_by_id(order_id)
+
+    def broker_flatten(
+        self, *, intent: eng.VenueOrderIntent = "PROTECTIVE"
+    ) -> tuple[list[Any], list[Any]]:
+        """Choke point of the K4 flatten: cancel every order, then close every position.
+
+        Returns ``(cancel responses, close responses)``. The close is attempted even when the
+        cancel raises (it cancels resting orders itself); the cancel error then propagates.
+        """
+        self._authorize_broker_mutation(intent)
+        try:
+            canceled = list(self.trading_client.cancel_orders() or ())
+        finally:
+            closed = list(self.trading_client.close_all_positions(cancel_orders=True) or ())
+        return canceled, closed
+
     def order_handle_spec(
         self, session: str = "RTH", trailing_schedule: str = "baseline"
     ) -> dict[str, Any]:
@@ -1210,6 +1570,8 @@ class AlpacaPaperLane:
 
     @property
     def profile(self) -> dict[str, Any]:
+        if self.account in ALPACA_LIVE_LANE_PROFILES:
+            return ALPACA_LIVE_LANE_PROFILES[self.account]
         return ALPACA_LANE_PROFILES[self.account]
 
     @property
@@ -1277,10 +1639,34 @@ class AlpacaPaperLane:
         origin: str = "AUTO_ENTRY",
         now_s: float | None = None,
         rth_entry_collar_pct: Decimal = RTH_ENTRY_COLLAR_PCT,
+        entry_authority: EntryAuthority = "AUTONOMOUS",
+        leg_merit: bool = False,
+        max_qty: int | None = None,
+        lineage_root_id: str | None = None,
+        lineage_parent_id: str | None = None,
+        lineage_depth: int = 0,
+        macro_regime: int | None = None,
     ) -> dict[str, Any] | None:
-        """Submit a Rule-612 stop-protected Paper entry if lock, breaker, and RPM allow."""
-        if not self.paper_only or self.live_execution_enabled:
-            raise PermissionError("Live execution disabled; paper_only=True enforced.")
+        """Submit a Rule-612 stop-protected entry if tier, lock, breaker, and RPM allow.
+
+        ``entry_authority`` states who originated the entry: ``AUTONOMOUS`` (scanner, the
+        default and the most restrictive) or ``OWNER_LINEAGE`` (reverse / re-entry of a position
+        the owner opened). Anything else is treated as ``AUTONOMOUS``. A tier refusal is a quiet
+        HOLD: it returns ``None`` before the symbol lock, the rate budget and the ledger.
+        """
+        self.assert_integrity()
+        authority: EntryAuthority = (
+            "OWNER_LINEAGE" if entry_authority == "OWNER_LINEAGE" else "AUTONOMOUS"
+        )
+        intent = _ENTRY_AUTHORITY_INTENTS[authority]
+        if self.entry_hold_reason(intent, leg_merit=leg_merit) is not None:
+            self.counters["entry_holds"] = self.counters.get("entry_holds", 0) + 1
+            return None
+        if max_qty is not None:
+            if isinstance(max_qty, bool) or not isinstance(max_qty, int):
+                raise ValueError(f"max_qty must be an integer share count, got {max_qty!r}")
+            if max_qty < 1:
+                return None
         if session == "OVERNIGHT" and (side == "SHORT" or not overnight_tradable):
             return None
         if (
@@ -1326,6 +1712,8 @@ class AlpacaPaperLane:
             risk_per_trade_pct=self.profile["risk_per_trade_pct"],
             max_notional_pct=self.profile["max_notional_pct"],
         )
+        if max_qty is not None:
+            qty = min(qty, max_qty)
         if qty < 1:
             self.symbol_lock.release(sym, self.account)
             return None
@@ -1363,12 +1751,19 @@ class AlpacaPaperLane:
             prior_close,
             stop_d,
             natr_pct,
+            authority,
+            lineage_root_id,
+            lineage_parent_id,
+            lineage_depth,
+            qty,
+            macro_regime,
         )
         entry_sql = (
             "INSERT INTO paper_entry_decisions "
             "(client_order_id,symbol,side,decision_price,arrival_price,session,origin,"
-            "annual_rate,prior_close,initial_stop,natr_pct) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "annual_rate,prior_close,initial_stop,natr_pct,entry_authority,lineage_root_id,"
+            "lineage_parent_id,lineage_depth,entry_qty,macro_regime) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         if self._batch_conn is not None:
             self._batch_conn.execute(entry_sql, entry_params)
@@ -1377,7 +1772,7 @@ class AlpacaPaperLane:
             with open_bounded_duckdb(self.duckdb_path) as conn:
                 _ensure_entry_decisions_table(conn)
                 conn.execute(entry_sql, entry_params)
-        order = self.trading_client.submit_order(request)
+        order = self.broker_submit(request, intent=intent, leg_merit=leg_merit)
         now_iso = datetime.now(UTC).isoformat()
         broker_order_id = str(getattr(order, "id", ""))
         order_status = str(getattr(order, "status", "SUBMITTED"))
@@ -1466,8 +1861,7 @@ class AlpacaPaperLane:
         sup = self.supervised_stops.get(broker_order_id)
         if sup is None or sup.status != "ARMED":
             return None
-        if not self.paper_only or self.live_execution_enabled:
-            raise PermissionError("Supervision requires a paper-only lane")
+        self.assert_integrity()
         parent = self.trading_client.get_order_by_id(broker_order_id)
         filled = Decimal(str(parent.filled_qty or "0"))
         if filled <= 0:
@@ -1528,7 +1922,7 @@ class AlpacaPaperLane:
         state = str(getattr(parent.status, "value", parent.status))
         if state not in {"filled", "canceled", "expired"}:
             if state != "pending_cancel":
-                self.trading_client.cancel_order_by_id(broker_order_id)
+                self.broker_cancel(broker_order_id, intent="PROTECTIVE")
             return None
         position = self.trading_client.get_open_position(sup.symbol)
         position_qty = Decimal(str(position.qty))
@@ -1538,7 +1932,7 @@ class AlpacaPaperLane:
         if qty <= 0:
             return None
         exit_side = OrderSide.SELL if sup.side == "LONG" else OrderSide.BUY
-        order = self.trading_client.submit_order(
+        order = self.broker_submit(
             LimitOrderRequest(
                 symbol=sup.symbol,
                 qty=qty,
@@ -1547,7 +1941,8 @@ class AlpacaPaperLane:
                 limit_price=float(sup.stop_limit_price),
                 time_in_force=TimeInForce.DAY,
                 extended_hours=True,
-            )
+            ),
+            intent="PROTECTIVE",
         )
         exit_id = str(getattr(order, "id", ""))
         now_iso = datetime.now(UTC).isoformat()
@@ -1616,7 +2011,7 @@ class AlpacaPaperLane:
         resolved_route = route or (
             "ALPACA_EXTENDED"
             if session in ("PRE_MARKET", "AFTER_HOURS", "OVERNIGHT")
-            else "ALPACA_PAPER"
+            else ("ALPACA_PAPER" if self.environment == "PAPER" else "ALPACA_LIVE")
         )
         record = compute_tca_record(
             account=self.account,
@@ -1689,8 +2084,7 @@ class AlpacaPaperLane:
         limit: int = 100,
     ) -> dict[str, Any]:
         """Idempotently sync live Paper account equity, positions, and SIP-quoted fill TCA."""
-        if not self.paper_only or self.live_execution_enabled:
-            raise PermissionError("Refused non-paper sync; paper_only=True required.")
+        self.assert_integrity()
 
         acct_obj = self.trading_client.get_account()
         live_equity = float(getattr(acct_obj, "equity", self.start_equity) or self.start_equity)
@@ -1907,9 +2301,12 @@ class AlpacaPaperLane:
             if open_positions_count is None
             else int(open_positions_count)
         )
+        is_paper = self.environment == "PAPER"
         payload = {
             **prior,
-            "schema_version": "tier0.alpaca-paper-lane.v1",
+            "schema_version": (
+                "tier0.alpaca-paper-lane.v1" if is_paper else "tier0.alpaca-live-lane.v1"
+            ),
             "generated_at_utc": datetime.now(UTC).isoformat(),
             "account_alias": self.account,
             "lane_id": self.profile["lane_id"],
@@ -1917,9 +2314,10 @@ class AlpacaPaperLane:
             "rate_budget_max_rpm": self.rate_budget.max_rpm,
             "exit_reserve_rpm": self.rate_budget.exit_reserve_rpm,
             "entry_modify_rpm_budget": self.rate_budget.max_rpm - self.rate_budget.exit_reserve_rpm,
-            "endpoint": PAPER_ALPACA_ENDPOINT,
-            "paper_only": True,
-            "live_execution_enabled": False,
+            # Stamps follow the lane's environment; on live the flag is the tier-3 opt-in.
+            "endpoint": PAPER_ALPACA_ENDPOINT if is_paper else str(BaseURL.TRADING_LIVE.value),
+            "paper_only": is_paper,
+            "live_execution_enabled": (not is_paper) and self.live_execution_enabled is True,
             "session_24x5": session,
             "equity": eq_val,
             "open_positions_count": pos_count,
@@ -2177,6 +2575,11 @@ class IbkrPaperAdapter:
 class PaperFarmCoordinator:
     """Coordinates 3 non-overlapping Alpaca Paper lanes + IBKR :4002 with claim lock."""
 
+    # A coordinator runs exactly one environment; status and manifest stamps derive from it.
+    environment: Literal["PAPER", "LIVE"] = "PAPER"
+    # The owner's standing tier-3 opt-in. Always False in paper.
+    autonomous_opt_in: bool = False
+
     def __init__(
         self,
         manifest_dir: Path,
@@ -2189,6 +2592,9 @@ class PaperFarmCoordinator:
         self.manifest_dir = manifest_dir
         self.symbol_lock = CrossLaneSymbolLock()
         self.data_client = data_client
+        # Accounts that must all be present and healthy before entries are allowed.
+        self.required_accounts: tuple[str, ...] = tuple(ALPACA_LANE_PROFILES)
+        self._trade_update_streams: dict[str, Any] | None = None
         self.alpaca_venue_profile, self.alpaca_max_rpm = resolve_alpaca_paper_venue_profile(
             alpaca_rate_budget_max_rpm
         )
@@ -2218,6 +2624,34 @@ class PaperFarmCoordinator:
         self.ibkr = IbkrPaperAdapter(
             manifest_dir=manifest_dir, port=ibkr_port, symbol_lock=self.symbol_lock
         )
+        self.assert_single_environment()
+
+    def assert_single_environment(self) -> None:
+        """Fail closed unless every lane trades in this coordinator's one environment."""
+        foreign = sorted(
+            acct for acct, lane in self.lanes.items() if lane.environment != self.environment
+        )
+        if foreign:
+            raise PermissionError(
+                f"Refused mixed-environment coordinator ({self.environment}): {', '.join(foreign)}"
+            )
+
+    def trade_update_streams(self) -> dict[str, Any]:
+        """Per-account Alpaca trade-update streams: built once, never started here.
+
+        Paper streams come from the same env credentials as the lanes; an account whose client
+        was injected without env credentials has no stream.
+        """
+        if self._trade_update_streams is None:
+            from tier0_sota.live.scanner import resolve_alpaca_env_creds
+
+            streams: dict[str, Any] = {}
+            for acct in self.lanes:
+                k, s = resolve_alpaca_env_creds(acct)
+                if k and s:
+                    streams[acct] = at.TradingStream(k, s, paper=True)
+            self._trade_update_streams = streams
+        return dict(self._trade_update_streams)
 
     def venue_order_handles(
         self, session: str = "RTH", trailing_schedule: str = "baseline"
@@ -2457,6 +2891,139 @@ class PaperFarmCoordinator:
             + sum(lane.rate_budget.exit_reserve_rpm for lane in self.lanes.values()),
             "admitted": admitted,
         }
+
+
+class AlpacaLiveVenueCoordinator(PaperFarmCoordinator):
+    """The one live Alpaca lane on the tiered venue: no IBKR adapter and no paper lane."""
+
+    environment = "LIVE"
+
+    def __init__(
+        self,
+        manifest_dir: Path,
+        *,
+        trading_client: Any,
+        data_client: Any | None = None,
+        autonomous_opt_in: bool = False,
+        market_streams: Mapping[DataFeed, Any] | None = None,
+        trade_updates_stream: Any | None = None,
+    ) -> None:
+        # PaperFarmCoordinator.__init__ is deliberately not run: it resolves paper credentials
+        # and builds the IBKR paper adapter, and neither exists on the live venue (so this
+        # coordinator has no ``ibkr`` attribute).
+        if not isinstance(autonomous_opt_in, bool):
+            raise PermissionError(_NON_PAPER_REFUSAL)
+        accounts = tuple(ALPACA_LIVE_LANE_PROFILES)
+        if len(accounts) != 1:
+            raise PermissionError("Exactly one live lane account is supported")
+        paper_ledgers = (*ALPACA_LANE_PROFILES, IBKR_PAPER_ACCOUNT)
+        if any((manifest_dir / _duckdb_filename(acct)).exists() for acct in paper_ledgers):
+            raise PermissionError(
+                "Refused live venue coordinator on a paper manifest directory; "
+                "live manifests are kept separate."
+            )
+        prof = eng.validate_venue_order_capability(eng.LIVE_TIERED_VENUE_ID, intent="PROTECTIVE")
+        self.manifest_dir = manifest_dir
+        self.symbol_lock = CrossLaneSymbolLock()
+        self.data_client = data_client
+        self.autonomous_opt_in = autonomous_opt_in
+        self.required_accounts = accounts
+        self.market_streams: dict[DataFeed, Any] = dict(market_streams or {})
+        self._trade_update_streams = (
+            {} if trade_updates_stream is None else {accounts[0]: trade_updates_stream}
+        )
+        self.alpaca_venue_profile, self.alpaca_max_rpm = prof.venue_id, prof.max_rpm
+        self.lanes = {
+            accounts[0]: AlpacaPaperLane(
+                account=accounts[0],
+                manifest_dir=manifest_dir,
+                trading_client=trading_client,
+                symbol_lock=self.symbol_lock,
+                paper_only=False,
+                live_execution_enabled=autonomous_opt_in,
+                rate_budget=rk.ProtectiveExitRateBudget(
+                    prof.max_rpm, prof.min_exit_reserve_fraction
+                ),
+                venue_profile=prof.venue_id,
+            )
+        }
+        self.assert_single_environment()
+
+    def venue_order_handles(
+        self, session: str = "RTH", trailing_schedule: str = "baseline"
+    ) -> dict[str, Any]:
+        """Return the live venue's order-handle spec and budgets (one lane, no IBKR)."""
+        per_account: dict[str, dict[str, Any]] = {
+            acct: lane.order_handle_spec(session=session, trailing_schedule=trailing_schedule)
+            for acct, lane in self.lanes.items()
+        }
+        combined_max_rpm = sum(lane.rate_budget.max_rpm for lane in self.lanes.values())
+        combined_exit_reserve_rpm = sum(
+            lane.rate_budget.exit_reserve_rpm for lane in self.lanes.values()
+        )
+        return {
+            "schema_version": "tier0.live-venue-handles.v1",
+            "session": session,
+            "trailing_schedule": trailing_schedule,
+            "paper_only": self.environment == "PAPER",
+            "live_execution_enabled": self.autonomous_opt_in is True,
+            "alpaca_venue_profile": self.alpaca_venue_profile,
+            "alpaca_per_lane_max_rpm": self.alpaca_max_rpm,
+            "ibkr_venue_profile": None,
+            "combined_max_rpm": combined_max_rpm,
+            "combined_exit_reserve_rpm": combined_exit_reserve_rpm,
+            "combined_entry_modify_rpm_budget": combined_max_rpm - combined_exit_reserve_rpm,
+            "venues": {
+                self.alpaca_venue_profile: eng.build_venue_order_handle_spec(
+                    self.alpaca_venue_profile, session=session, trailing_schedule=trailing_schedule
+                ),
+            },
+            "per_account": per_account,
+        }
+
+    def sync_all_lanes(
+        self, *, account: str = "ALL", limit: int = 100, ibkr_gateway_ready: bool = False
+    ) -> dict[str, Any]:
+        """Idempotently sync broker equity and fill TCA for the live lane (no IBKR status)."""
+        del ibkr_gateway_ready
+        return {
+            acct: lane.sync_broker_fills_and_status(data_client=self.data_client, limit=limit)
+            for acct, lane in self.lanes.items()
+            if account in ("ALL", acct)
+        }
+
+    def dispatch_high_throughput(
+        self,
+        entries: list[dict[str, Any]],
+        *,
+        macro_regime: int,
+        session: str,
+        include_ibkr: bool = True,
+        now_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Refuse: the high-rate burst dispatch is a paper-farm drill, never a live path."""
+        del entries, macro_regime, session, include_ibkr, now_s
+        raise PermissionError("High-throughput burst dispatch is paper-only")
+
+
+def build_live_venue_coordinator(
+    manifest_dir: Path, *, autonomous_opt_in: bool
+) -> AlpacaLiveVenueCoordinator:
+    """Build the live venue coordinator from the live credential in the process env.
+
+    ``autonomous_opt_in`` is the owner's standing tier-3 opt-in; ``False`` keeps every
+    scanner-originated entry out of the live account. Building it contacts no broker.
+    """
+    key, secret = resolve_alpaca_live_env_creds()
+    clients = build_alpaca_live_clients(key, secret)
+    return AlpacaLiveVenueCoordinator(
+        manifest_dir,
+        trading_client=clients.trading,
+        data_client=clients.data,
+        autonomous_opt_in=autonomous_opt_in,
+        market_streams=clients.market_streams,
+        trade_updates_stream=clients.trade_updates,
+    )
 
 
 def _default_stage4_receipt_path() -> Path:
@@ -2968,8 +3535,7 @@ def run_k4_broker_flatten_drill(*, work_dir: Path | None = None) -> dict[str, An
             )
             all_reserves_preserved = all_reserves_preserved and reserve_ok
 
-            canceled = client.cancel_orders()
-            closed = client.close_all_positions(cancel_orders=True)
+            canceled, closed = lane.broker_flatten()
             for item in closed:
                 coord.symbol_lock.release(str(item.symbol), acct)
             rem_orders = len(client.get_orders())

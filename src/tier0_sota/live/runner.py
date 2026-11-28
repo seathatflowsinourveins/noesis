@@ -1,4 +1,8 @@
-"""One authenticated Paper Farm observation and reconciliation cycle for a native scheduler."""
+"""One authenticated Paper Farm observation and reconciliation cycle for a native scheduler.
+
+The same entry point starts the live lane's supervisor (``--supervise-live``) and its read-only
+self-check (``--live-self-check``); the paper modes are unchanged by them.
+"""
 
 from __future__ import annotations
 
@@ -13,15 +17,18 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+import time
+import weakref
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from alpaca.common.enums import Sort
+import duckdb
+from alpaca.common.enums import BaseURL, Sort
 from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed
 from alpaca.data.requests import StockQuotesRequest
@@ -36,10 +43,13 @@ from tier0_sota.live.paper_farm import (
     IbkrPaperAdapter,
     PaperFarmCoordinator,
     _atomic_write_json,
+    _scan_forbidden_live_ports,
+    build_live_venue_coordinator,
     default_manifest_dir,
     ensure_tca_table,
     ensure_wire_table,
     open_bounded_duckdb,
+    resolve_alpaca_live_env_creds,
     resolve_alpaca_paper_venue_profile,
     round_lot_up,
     select_situation_lane,
@@ -87,6 +97,26 @@ def _parse_nonneg_float_env(name: str, default: float) -> float:
     except ValueError:
         return default
     return val if val >= 0.0 else default
+
+
+# Environment separation of the paper and the live process: names are matched, values never read
+# into a message. The live process states its venue in TIER0_VENUE_PROFILE.
+_LIVE_VENUE_ENV_NAME = "TIER0_VENUE_PROFILE"
+_LIVE_KEY_NAME_PREFIX = "ALPACA_LIVE_"
+_PAPER_ACCOUNT_KEY_NAME_PREFIX = "ALPACA_PA"
+_PAPER_MODE_FLAG_NAME = "ALPACA_PAPER"
+_PAPER_DATA_KEY_NAMES = frozenset({"APCA_API_KEY_ID", "APCA_API_SECRET_KEY"})
+# Account conditions that gate entries only (R9). Protective supervision starts from positions
+# and orders alone and never waits on any of them.
+ENTRY_GATE_ACCOUNT_RESTRICTED = "ACCOUNT_RESTRICTED"
+ENTRY_GATE_OPEN_ORDER_BOOK_FULL = "OPEN_ORDER_BOOK_FULL"
+ENTRY_GATE_EQUITY_UNVERIFIED = "EQUITY_UNVERIFIED"
+OPEN_ORDER_READ_LIMIT = 500
+LIVE_SELF_CHECK_SCHEMA = "tier0.live-self-check.v1"
+# Gates found by the latest ``refresh_accounts`` of each coordinator (account -> reasons).
+_ENTRY_GATES: weakref.WeakKeyDictionary[PaperFarmCoordinator, dict[str, tuple[str, ...]]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _validate_paper_du_account(raw: str) -> str:
@@ -295,12 +325,38 @@ def _resolve_pin_symbols(raw: str) -> tuple[str, ...]:
     return parsed
 
 
-def verify_paper_environment() -> None:
+def _assert_risk_kernel_digest(worker: str) -> None:
     with Path(risk.__file__).open("rb") as kernel:
         if hashlib.file_digest(kernel, "sha256").hexdigest() != (
             "ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847"
         ):
-            raise PermissionError("Paper worker risk kernel digest mismatch")
+            raise PermissionError(f"{worker} worker risk kernel digest mismatch")
+
+
+def _live_key_names(env: Mapping[str, str]) -> list[str]:
+    """Names (never values) of live-credential variables: any ``ALPACA_LIVE_*`` name."""
+    return sorted(name for name in env if name.upper().startswith(_LIVE_KEY_NAME_PREFIX))
+
+
+def _paper_key_names(env: Mapping[str, str]) -> list[str]:
+    """Names (never values) of paper-credential variables in ``env``.
+
+    The paper market-data pair and every ``ALPACA_PA*`` name. ``ALPACA_PAPER`` is the paper-mode
+    flag, not a key: its value is judged separately.
+    """
+    return sorted(
+        name
+        for name in env
+        if name.upper() in _PAPER_DATA_KEY_NAMES
+        or (
+            name.upper().startswith(_PAPER_ACCOUNT_KEY_NAME_PREFIX)
+            and name.upper() != _PAPER_MODE_FLAG_NAME
+        )
+    )
+
+
+def verify_paper_environment() -> None:
+    _assert_risk_kernel_digest("Paper")
     if (
         os.environ.get("ALPACA_PAPER", "").lower() != "true"
         or os.environ.get("LIVE_EXECUTION_ENABLED", "false").lower() != "false"
@@ -310,11 +366,74 @@ def verify_paper_environment() -> None:
         != PAPER_ALPACA_ENDPOINT
     ):
         raise PermissionError("Paper profile or loopback broker isolation check failed")
+    # A paper process never holds the live credential, dormant or not: only names are reported.
+    if live_names := _live_key_names(os.environ):
+        raise PermissionError(
+            "Paper profile check failed: live key name(s) present: " + ", ".join(live_names)
+        )
     for acct in ALPACA_LANE_PROFILES:
         if not os.environ.get(f"{acct}_API_KEY", "").startswith("PK") or not (
             os.environ.get(f"{acct}_SECRET") or os.environ.get(f"{acct}_SECRET_KEY")
         ):
             raise PermissionError(f"Missing account-specific paper credentials for {acct}")
+
+
+def verify_live_environment(env: Mapping[str, str] | None = None) -> bool:
+    """Fail closed unless this process is the live lane's; return the owner's tier-3 opt-in.
+
+    Sibling of ``verify_paper_environment``. Every environment value is read from ``env``
+    (default: the process environment); the risk digest and the port scan are host facts.
+    Checked, in this order: the pinned ``risk.py`` digest; ``TIER0_VENUE_PROFILE`` names the
+    tiered live venue and the engine grants it the protective tier; the live credential
+    (``AK`` key id and its secret) is set; no paper key name is present (the paper market-data
+    pair, any ``ALPACA_PA*`` name) and ``ALPACA_PAPER`` is unset or false; ``APCA_API_BASE_URL``
+    is unset or alpaca-py's own live trading endpoint; ``IBKR_PORT`` names no IBKR live port and
+    none is open on this host. A refusal names variables, never a value.
+
+    The return value is ``LIVE_EXECUTION_ENABLED`` read strictly: ``true`` is the owner's
+    standing opt-in to scanner-originated (tier-3) entries, unset or ``false`` is off, and
+    anything else refuses. Tiers 1 and 2 do not depend on it.
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    _assert_risk_kernel_digest("Live")
+    venue = str(source.get(_LIVE_VENUE_ENV_NAME) or "").strip().upper()
+    if venue != engine.LIVE_TIERED_VENUE_ID:
+        raise PermissionError(
+            f"Live profile check failed: {_LIVE_VENUE_ENV_NAME} must be "
+            f"{engine.LIVE_TIERED_VENUE_ID}"
+        )
+    profile = engine.validate_venue_order_capability(venue, intent="PROTECTIVE")
+    if profile.broker != "ALPACA" or profile.environment != "LIVE":
+        raise PermissionError("Live profile check failed: the tiered venue is not Alpaca live")
+    resolve_alpaca_live_env_creds(source)
+    if paper_names := _paper_key_names(source):
+        raise PermissionError(
+            "Live profile check failed: paper key name(s) present: " + ", ".join(paper_names)
+        )
+    if str(source.get(_PAPER_MODE_FLAG_NAME) or "").strip().lower() not in ("", "false"):
+        raise PermissionError(
+            f"Live profile check failed: {_PAPER_MODE_FLAG_NAME} must be unset or false"
+        )
+    base_url = str(source.get("APCA_API_BASE_URL") or "").strip().rstrip("/").lower()
+    if base_url and base_url != str(BaseURL.TRADING_LIVE.value).rstrip("/").lower():
+        raise PermissionError(
+            "Live profile check failed: APCA_API_BASE_URL must be unset or alpaca-py's own "
+            "live trading endpoint"
+        )
+    ibkr_port = str(source.get("IBKR_PORT") or "").strip()
+    if ibkr_port.isdecimal() and int(ibkr_port) in engine.FORBIDDEN_LIVE_IBKR_PORTS:
+        raise PermissionError("Live profile check failed: IBKR_PORT names an IBKR live port")
+    if open_ports := _scan_forbidden_live_ports():
+        raise PermissionError(
+            "Live profile check failed: IBKR live port(s) open on this host: "
+            + ", ".join(str(port) for port in open_ports)
+        )
+    opt_in = str(source.get("LIVE_EXECUTION_ENABLED") or "").strip().lower()
+    if opt_in not in ("", "false", "true"):
+        raise PermissionError(
+            "Live profile check failed: LIVE_EXECUTION_ENABLED must be true or false"
+        )
+    return opt_in == "true"
 
 
 def _persist_ibkr_health_status(
@@ -780,8 +899,60 @@ def _fetch_lane_broker_snapshot(lane: AlpacaPaperLane) -> tuple[Any, list[Any], 
     broker = lane.trading_client
     account = broker.get_account()
     positions = broker.get_all_positions()
-    orders = broker.get_orders(GetOrdersRequest(limit=500))
+    orders = broker.get_orders(GetOrdersRequest(limit=OPEN_ORDER_READ_LIMIT))
     return account, positions, orders
+
+
+def _finite_decimal(raw: Any) -> Decimal | None:
+    """``raw`` as a finite Decimal; ``None`` when it states no number."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return None
+    return value if value.is_finite() else None
+
+
+def _positive_decimal(raw: Any) -> Decimal | None:
+    """``raw`` as a finite Decimal above zero; ``None`` for anything else."""
+    value = _finite_decimal(raw)
+    return value if value is not None and value > 0 else None
+
+
+def _account_entry_gates(account: Any, open_orders: list[Any]) -> tuple[str, ...]:
+    """Why this account must take no new entry right now (R9); empty when it may.
+
+    A restricted account (not ACTIVE, blocked or suspended), an open-order read that came back
+    full (the inventory cannot be attested complete) and an equity or prior-day equity that is
+    not a positive number each gate entries. None of them says anything against protecting the
+    positions the account already holds.
+    """
+    gates: list[str] = []
+    status = getattr(account, "status", None)
+    if (
+        str(getattr(status, "value", status) or "").strip().upper() != "ACTIVE"
+        or getattr(account, "trading_blocked", None) is not False
+        or getattr(account, "account_blocked", None) is not False
+        or getattr(account, "trade_suspended_by_user", None) is True
+    ):
+        gates.append(ENTRY_GATE_ACCOUNT_RESTRICTED)
+    if len(open_orders) >= OPEN_ORDER_READ_LIMIT:
+        gates.append(ENTRY_GATE_OPEN_ORDER_BOOK_FULL)
+    if (
+        _positive_decimal(getattr(account, "equity", None)) is None
+        or _positive_decimal(getattr(account, "last_equity", None)) is None
+    ):
+        gates.append(ENTRY_GATE_EQUITY_UNVERIFIED)
+    return tuple(gates)
+
+
+def account_entry_gates(farm: PaperFarmCoordinator) -> dict[str, tuple[str, ...]]:
+    """Entry gates found by the latest ``refresh_accounts`` of ``farm``: account -> reasons.
+
+    Empty when every required account was healthy, or when ``farm`` was never refreshed.
+    """
+    return dict(_ENTRY_GATES.get(farm) or {})
 
 
 def refresh_accounts(
@@ -793,8 +964,28 @@ def refresh_accounts(
     data_client: Any = None,
     record_fuse: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    if farm.lanes.keys() != ALPACA_LANE_PROFILES.keys():
-        raise PermissionError("All three Alpaca paper accounts are required")
+    """Read every required account and return its positions (account -> symbol -> position).
+
+    Raises when the coordinator's own shape is wrong: a lane set that differs from
+    ``farm.required_accounts``, an account without an id or the same account behind two lanes,
+    one symbol held on two lanes, or a ledger that belongs to another broker account.
+
+    An account that is restricted, whose open-order read came back full, or whose equity or
+    prior-day equity is not a positive number gates **entries only** (R9): this function
+    returns the positions all the same, so protective supervision starts from positions and
+    orders alone. While any required account is gated, no lane of the coordinator admits an
+    entry: every lane's breaker reads tripped in memory (the gate every entry path already
+    asks, ``breaker.allow_entry()``) and ``equity_verified_at`` is ``None`` (the hold a live
+    lane's choke point asks). Neither is written to ``paper_daily_fuse``, so the gate lifts on
+    the first refresh that finds every account healthy. ``account_entry_gates`` states why.
+    """
+    if set(farm.lanes) != set(farm.required_accounts):
+        if tuple(farm.required_accounts) == tuple(ALPACA_LANE_PROFILES):
+            raise PermissionError("All three Alpaca paper accounts are required")
+        raise PermissionError(
+            "Coordinator lanes do not match its required accounts: "
+            + ", ".join(sorted(farm.required_accounts))
+        )
     lanes_list = list(farm.lanes.values())
     distinct_clients = len({id(lane.trading_client) for lane in lanes_list}) == len(lanes_list)
     if distinct_clients and len(lanes_list) > 1:
@@ -806,27 +997,39 @@ def refresh_accounts(
     ids = set()
     inventory = {}
     owners: dict[str, str] = {}
-    shared_data = data_client
+    gates: dict[str, tuple[str, ...]] = {}
     for lane, (account, positions, orders) in zip(lanes_list, snapshots, strict=True):
-        if (
-            not account.id
-            or account.id in ids
-            or account.status.value != "ACTIVE"
-            or account.trading_blocked is not False
-            or account.account_blocked is not False
-            or account.trade_suspended_by_user is True
-        ):
+        if not account.id or account.id in ids:
             raise PermissionError(f"{lane.account} is unavailable, blocked or duplicated")
         ids.add(account.id)
-        if len(orders) == 500:
-            raise RuntimeError("Cannot attest complete open-order inventory")
         for sym in {o.symbol for o in [*positions, *orders]}:
             if owners.setdefault(sym, lane.account) != lane.account:
                 raise PermissionError(f"Overlapping paper exposure for {sym}")
+        if reasons := _account_entry_gates(account, orders):
+            gates[lane.account] = reasons
+    entries_gated = bool(gates)
+    if gates != (_ENTRY_GATES.get(farm) or {}):
+        if gates:
+            LOG.warning("Entries gated by account state, protective supervision goes on: %s", gates)
+        else:
+            LOG.warning("Entry gate lifted: every required account is healthy")
+    _ENTRY_GATES[farm] = gates
+
+    shared_data = data_client
+    for lane, (account, positions, _orders) in zip(lanes_list, snapshots, strict=True):
         inventory[lane.account] = {p.symbol: p for p in positions}
-        equity, yesterday = Decimal(account.equity), Decimal(account.last_equity)
-        lane.start_equity = equity
-        lane.breaker = risk.DailyDrawdownBreaker(start_equity=yesterday)
+        equity = _positive_decimal(account.equity)
+        yesterday = _positive_decimal(account.last_equity)
+        if equity is not None:
+            lane.start_equity = equity
+        pnl: Decimal | None = None
+        if equity is not None and yesterday is not None:
+            pnl = equity - yesterday
+            lane.breaker = risk.DailyDrawdownBreaker(start_equity=yesterday)
+        else:
+            # Without both figures there is no day's PnL: the breaker stands on the last equity
+            # the lane knew, and the gate below holds entries.
+            lane.breaker = risk.DailyDrawdownBreaker(start_equity=lane.start_equity)
         day_et = now.astimezone(NY).date()
         day = day_et.isoformat()
         if record_fuse:
@@ -842,24 +1045,39 @@ def refresh_accounts(
                 ).fetchone()
                 if row and row[0] != account.id:
                     raise PermissionError(f"{lane.account} broker identity changed")
-                lane.breaker.update(realized_pnl=equity - yesterday)
-                tripped = conn.execute(
-                    "INSERT INTO paper_daily_fuse VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE "
-                    "SET tripped=paper_daily_fuse.tripped OR excluded.tripped RETURNING tripped",
-                    (day, account.id, lane.breaker.tripped),
-                ).fetchone()
+                if pnl is not None:
+                    lane.breaker.update(realized_pnl=pnl)
+                    tripped = conn.execute(
+                        "INSERT INTO paper_daily_fuse VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE "
+                        "SET tripped=paper_daily_fuse.tripped OR excluded.tripped "
+                        "RETURNING tripped",
+                        (day, account.id, lane.breaker.tripped),
+                    ).fetchone()
+                else:
+                    # No PnL to record: a fuse already tripped today still stands.
+                    tripped = conn.execute(
+                        "SELECT tripped FROM paper_daily_fuse WHERE day = ?", (day,)
+                    ).fetchone()
                 lane.breaker.tripped = bool(tripped and tripped[0])
         else:
-            lane.breaker.update(realized_pnl=equity - yesterday)
+            if pnl is not None:
+                lane.breaker.update(realized_pnl=pnl)
             if lane._persisted_daily_fuse_tripped(day_et):
                 lane.breaker.tripped = True
+        # The entries-only gate, after the fuse row is written and never through it: the fuse
+        # latches for the day, an account restriction must not.
+        if entries_gated:
+            lane.breaker.tripped = True
+        lane.equity_verified_at = None if entries_gated else now.timestamp()
         if publish:
             if shared_data is None:
                 shared_data = ExtremeMoverScanner.from_env(lane.account).data_client
             reconcile_fills(lane, shared_data)
             refresh_markouts(lane, shared_data)
+            stated_equity = _finite_decimal(account.equity)
             lane.write_status(
-                equity=float(equity),
+                # What the broker states, also when it is zero; the lane's last figure otherwise.
+                equity=None if stated_equity is None else float(stated_equity),
                 session=session,
                 open_positions_count=len(positions),
                 observation=True,
@@ -1409,6 +1627,386 @@ def run_cycle(manifest_dir: Path, *, top_k: int, pins: tuple[str, ...]) -> dict[
         return result
 
 
+def live_manifest_dir_for(shared_dir: Path) -> Path:
+    """Manifest directory of the live venue beside a paper one: ``<data root>/live/manifests``.
+
+    The data root is the parent of the paper (shared) manifest directory, so a run pointed at a
+    sandbox root keeps its live files inside that sandbox. For the default paper directory this
+    is ``paper_farm.default_live_manifest_dir()``.
+    """
+    return shared_dir.parent / "live" / "manifests"
+
+
+def _first_adoption_stop(
+    lane: AlpacaPaperLane,
+    *,
+    symbol: str,
+    side: risk.Side,
+    entry_px: Decimal,
+    curr_px: Decimal,
+    session: str,
+) -> dict[str, Any]:
+    """The stop a first adoption of this position starts with. Pure: no broker, no ledger.
+
+    Mirror of the stop arithmetic in ``execution.adopt_unmanaged_broker_positions`` as the
+    supervisor runs it at start (no scanner width: the default NATR, spread and archetype). A
+    position first seen under water is anchored at the price at which it is seen; one in profit
+    past the break-even trigger starts at the ratcheted stop, never at or through the price.
+    ``tests/test_live_runner_modes.py`` holds this equal to what the supervisor attaches.
+    """
+    is_long = side == "LONG"
+    better = max if is_long else min
+    behind = (lambda a, b: a < b) if is_long else (lambda a, b: a > b)
+    natr = Decimal("0.015")
+    spread = Decimal("5") if session == "RTH" else Decimal("8")
+    archetype = "PREMARKET_EARLY_IGNITION" if session == "PRE_MARKET" else "EARLY_EP_MOMENTUM_BURST"
+    under_water = behind(curr_px, entry_px)
+    ref_px = curr_px if under_water else entry_px
+    spec = engine.compute_non_noise_min_trail_spec(
+        symbol=symbol,
+        entry_price=ref_px,
+        side=side,
+        session=session,
+        natr_pct=natr,
+        spread_bps=spread,
+        archetype=archetype,
+        venue_profile=lane.venue_profile,
+    )
+    initial_stop: Decimal = spec["initial_stop_price"]
+    nn_pct: Decimal = spec["non_noise_min_trail_pct"]
+    peak_px = better(ref_px, curr_px)
+    stop = initial_stop
+    _, schedule = engine.select_pooled_trailing_schedule(natr)
+    profile = engine.get_session_protection_profile(session, schedule)
+    fav_gain = (peak_px - ref_px) if is_long else (ref_px - peak_px)
+    if fav_gain / ref_px >= profile.breakeven_trigger_pct:
+        prog_stop, _tier, _ = engine.compute_progressive_trailing_stop(
+            entry_price=ref_px,
+            side=side,
+            favorable_extreme=peak_px,
+            current_stop=initial_stop,
+            initial_stop=initial_stop,
+            natr_pct=natr,
+            profile=profile,
+        )
+        nn_raw = max(
+            risk.TICK_SUB_DOLLAR,
+            peak_px * (Decimal("1") - nn_pct if is_long else Decimal("1") + nn_pct),
+        )
+        nn_stop = risk.quantize_rule_612(nn_raw, side=side, is_stop=True)
+        cand_stop = better(prog_stop, nn_stop) if behind(nn_stop, peak_px) else prog_stop
+        if behind(cand_stop, curr_px):
+            stop = better(initial_stop, cand_stop)
+    return {
+        "under_water": under_water,
+        "reference_price": ref_px,
+        "adoption_anchor_price": curr_px if under_water else None,
+        "initial_stop_price": initial_stop,
+        "stop_price": stop,
+        "natr_pct": natr,
+        "non_noise_min_trail_pct": nn_pct,
+    }
+
+
+def _at_or_through(price: Decimal, stop: Decimal, *, long: bool) -> bool:
+    """True when ``price`` has reached ``stop`` from the side the position profits on."""
+    return price <= stop if long else price >= stop
+
+
+def _persisted_open_lifecycles(lane: AlpacaPaperLane) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Open lifecycles in the lane's ledger, read-only: symbol -> side, stop, exit_triggered.
+
+    The second value is False when a ledger file exists and could not be read. A missing
+    ledger is an empty, readable one; nothing is created.
+    """
+    if not lane.duckdb_path.is_file():
+        return {}, True
+    try:
+        with open_bounded_duckdb(lane.duckdb_path, read_only=True) as db:
+            if ("paper_entry_decisions",) not in db.execute("SHOW TABLES").fetchall():
+                return {}, True
+            rows = db.execute(
+                "SELECT symbol, side, coalesce(active_stop, initial_stop), exit_triggered "
+                "FROM paper_entry_decisions WHERE closed_at IS NULL"
+            ).fetchall()
+    except duckdb.Error as exc:
+        LOG.warning("Live self-check: ledger of %s unreadable: %s", lane.account, exc)
+        return {}, False
+    return {
+        str(sym or "").strip().upper(): {
+            "side": str(side or "").strip().upper(),
+            "stop_price": _positive_decimal(stop),
+            "exit_triggered": triggered is True,
+        }
+        for sym, side, stop, triggered in rows
+    }, True
+
+
+def run_live_self_check(manifest_dir: Path, *, shared_dir: Path) -> dict[str, Any]:
+    """What the live lane would find and do on a start now, from reads alone. Places nothing.
+
+    Through the live coordinator it reads the account, the positions, the open orders, the
+    broker clock and each held asset; from the lane's ledger, when one exists, the open
+    lifecycles (read-only). It sends no order, cancel or replace and writes no file. For every
+    position it states the resting cover the broker already holds, the stop the lane would use
+    (the persisted one of an open lifecycle, else the first-adoption stop) and the order the
+    stop-coverage reconciler would attach for the uncovered whole shares, and it marks a
+    position that would exit at once (``would_exit_immediately``, ``exit_reasons``):
+
+    * ``PERSISTED_EXIT_TRIGGERED`` / ``PERSISTED_STOP_AT_OR_THROUGH_PRICE``: the lane's open
+      lifecycle for the symbol is already triggered, or its stop is at or through the price;
+    * ``ADOPTION_STOP_AT_OR_THROUGH_PRICE``: the first-adoption stop is (checked, not assumed);
+    * ``RESTING_STOP_AT_OR_THROUGH_PRICE``: a working exit-side stop already rests at or through
+      the position's current price. The broker triggers it when the regular session trades,
+      whether the lane runs or not.
+
+    The first three are what the lane's own start would do (``would_exit_on_start``) and are
+    ``start_blockers``, as is a read that is incomplete (a full order read, an unreadable
+    ledger, a position stated without a price). A resting broker stop through the price is
+    marked and listed in ``notes``, which is informational. ``coverage`` is the lossless
+    coverage record of the same reads with no guard running: what the broker protects natively
+    today; every other share reads ``UNPROTECTED:NO_GUARD``. The account's id, number and
+    money amounts are not part of the report.
+    """
+    from tier0_sota.live import execution
+
+    opt_in = verify_live_environment()
+    execution._live_evidence_dir(manifest_dir, shared_dir)
+    farm = build_live_venue_coordinator(manifest_dir, autonomous_opt_in=opt_in)
+    farm.assert_single_environment()
+    if farm.environment != "LIVE" or len(farm.lanes) != 1:
+        raise PermissionError("Refused live self-check: not the live venue's coordinator")
+    (lane,) = farm.lanes.values()
+    lane.assert_integrity()
+    broker = lane.trading_client
+    account = broker.get_account()
+    positions = list(broker.get_all_positions() or ())
+    open_orders = execution._read_open_orders(broker)
+    if open_orders is None:
+        raise RuntimeError("Live self-check could not read the open orders")
+    # Sessions follow the broker clock when the host clock is off, as in the supervisor (R2).
+    skew = execution._measure_broker_clock_skew(broker)
+    skewed = skew is not None and abs(skew) > execution.CLOCK_SKEW_MAX_SECS
+    now = datetime.now(UTC)
+    session = engine.classify_us_equity_session_et(
+        time.time_ns() + (int(skew * 1_000_000_000) if skew is not None and skewed else 0)
+    )
+    persisted, ledger_readable = _persisted_open_lifecycles(lane)
+    coverage = execution.build_lossless_coverage_record(
+        farm,
+        {},
+        {lane.account: {str(getattr(pos, "symbol", "") or ""): pos for pos in positions}},
+        session=session,
+        now_utc=now,
+        last_feed_trade={},
+        open_orders={lane.account: open_orders},
+    )
+    native_by_symbol = {
+        row["symbol"]: int(row["natively_protected_shares"])
+        for row in coverage["share_protection_table"]
+    }
+
+    rows: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    notes: list[str] = []
+    for pos in positions:
+        raw_symbol = str(getattr(pos, "symbol", "") or "").strip().upper()
+        parsed = execution._parse_position_for_adoption(pos)
+        if parsed is None:
+            # The supervisor cannot put such a position under a guard either.
+            rows.append({"symbol": raw_symbol, "eligible": False, "action": "NONE_UNPARSEABLE"})
+            blockers.append(f"UNPARSEABLE_POSITION:{raw_symbol}")
+            continue
+        sym, side, abs_qty, entry_px, curr_px = parsed
+        is_long = side == "LONG"
+        whole = abs_qty.to_integral_value(rounding=ROUND_FLOOR)
+        exit_side, entry_side = ("sell", "buy") if is_long else ("buy", "sell")
+        ineligible = execution._adoption_ineligible_reason(pos, broker, abs_qty)
+        working = execution._exit_side_orders(open_orders, sym, exit_side)
+        # Cover as the stop-coverage reconciler counts it: resting GTC stops on the exit side,
+        # the harness's own fixed stops apart from everything else (a native trailing stop, an
+        # activated stop leg, a stop the owner placed).
+        own_stops = 0
+        own_qty = Decimal("0")
+        other_qty = Decimal("0")
+        for order in working:
+            if not execution._is_resting_cover_stop(order):
+                continue
+            remaining = execution._order_remaining_qty(order)
+            if execution._is_harness_stop(order):
+                own_stops += 1
+                own_qty += remaining if remaining is not None else Decimal("0")
+            else:
+                # A stop that states no quantity is taken to cover the whole position.
+                other_qty += remaining if remaining is not None else whole
+        target_own = max(Decimal("0"), whole - other_qty)
+        qty_available = execution._available_qty(pos, long=is_long)
+        available = (
+            qty_available.to_integral_value(rounding=ROUND_FLOOR)
+            if qty_available is not None
+            else whole
+        )
+        lifecycle = persisted.get(sym)
+        if lifecycle is not None and (lifecycle["side"] != side or lifecycle["stop_price"] is None):
+            # The other side, or no stop on record: the lane ends that lifecycle and adopts.
+            notes.append(f"PERSISTED_LIFECYCLE_NOT_REUSED:{sym}")
+            lifecycle = None
+        adoption = _first_adoption_stop(
+            lane, symbol=sym, side=side, entry_px=entry_px, curr_px=curr_px, session=session
+        )
+        stop_px: Decimal = adoption["stop_price"] if lifecycle is None else lifecycle["stop_price"]
+
+        # Why the position would exit at once. A resting broker stop that is already through the
+        # price fires at the broker whether the lane runs or not: it is marked and noted. The
+        # other reasons are what the lane's own start would do, and those block a start.
+        exit_reasons: list[str] = []
+        resting_levels = [
+            _positive_decimal(getattr(order, "stop_price", None)) for order in working
+        ]
+        if any(
+            level is not None and _at_or_through(curr_px, level, long=is_long)
+            for level in resting_levels
+        ):
+            exit_reasons.append("RESTING_STOP_AT_OR_THROUGH_PRICE")
+            notes.append(f"BROKER_STOP_AT_OR_THROUGH_PRICE:{sym}")
+        exit_on_start: str | None = None
+        if lifecycle is not None and lifecycle["exit_triggered"]:
+            exit_on_start = "PERSISTED_EXIT_TRIGGERED"
+        elif _at_or_through(curr_px, stop_px, long=is_long):
+            exit_on_start = (
+                "ADOPTION_STOP_AT_OR_THROUGH_PRICE"
+                if lifecycle is None
+                else "PERSISTED_STOP_AT_OR_THROUGH_PRICE"
+            )
+        if exit_on_start is not None:
+            exit_reasons.append(exit_on_start)
+            blockers.append(f"WOULD_EXIT_ON_START:{sym}")
+
+        would_attach: dict[str, Any] | None = None
+        if ineligible is not None:
+            action = "NONE_INELIGIBLE"
+            notes.append(f"INELIGIBLE:{sym}:{ineligible}")
+        elif lifecycle is not None and lifecycle["exit_triggered"]:
+            # The restored guard is already exiting: its exit state machine owns the shares.
+            action = "NONE_EXIT_TRIGGERED"
+        elif any(
+            str(getattr(order, "client_order_id", "") or "").startswith(
+                execution._HARNESS_EXIT_PREFIX
+            )
+            for order in working
+        ):
+            action = "NONE_EXIT_IN_FLIGHT"
+        elif own_stops:
+            # A stop of this harness from an earlier run: the reconciler sizes it to the target.
+            action = "LANE_STOP_PRESENT"
+        elif target_own == 0:
+            action = "NONE_COVERED"
+        elif min(target_own, available) < 1:
+            action = "NONE_NO_QTY_AVAILABLE"
+            notes.append(f"UNCOVERED_NO_QTY_AVAILABLE:{sym}")
+        else:
+            action = "ATTACH_STOP"
+            would_attach = {
+                "order_type": "stop",
+                "side": exit_side,
+                "time_in_force": "gtc",
+                "qty": int(min(target_own, available)),
+                "stop_price": str(stop_px),
+            }
+        rows.append(
+            {
+                "symbol": sym,
+                "side": side,
+                "position_qty": str(abs_qty),
+                "whole_shares": int(whole),
+                "fractional_remainder": str(abs_qty - whole),
+                "avg_entry_price": str(entry_px),
+                "current_price": str(curr_px),
+                "eligible": ineligible is None,
+                "ineligible_reason": ineligible,
+                "natively_protected_shares": native_by_symbol.get(sym, 0),
+                "lane_stop_shares": int(own_qty),
+                "lane_stop_target_shares": int(target_own),
+                "qty_available": None if qty_available is None else str(qty_available),
+                "opposite_side_working_orders": len(
+                    execution._exit_side_orders(open_orders, sym, entry_side)
+                ),
+                "stop_basis": "FIRST_ADOPTION" if lifecycle is None else "PERSISTED_LIFECYCLE",
+                "stop_price": str(stop_px),
+                "first_adoption": {
+                    key: value if isinstance(value, bool) or value is None else str(value)
+                    for key, value in adoption.items()
+                },
+                "action": action,
+                "would_attach": would_attach,
+                "would_exit_immediately": bool(exit_reasons),
+                "would_exit_on_start": exit_on_start is not None,
+                "exit_reasons": exit_reasons,
+            }
+        )
+    rows.sort(key=lambda row: str(row["symbol"]))
+
+    held = {str(row["symbol"]) for row in rows}
+    orphan_stops = sorted(
+        str(getattr(order, "symbol", "") or "").strip().upper()
+        for order in open_orders
+        if execution._is_harness_stop(order)
+        and str(getattr(order, "symbol", "") or "").strip().upper() not in held
+        and execution._enum_text(getattr(order, "status", "")) in execution._WORKING_ORDER_STATUSES
+    )
+    gates = _account_entry_gates(account, open_orders)
+    if len(open_orders) >= OPEN_ORDER_READ_LIMIT:
+        blockers.append("OPEN_ORDER_READ_INCOMPLETE")
+    if not ledger_readable:
+        blockers.append("LEDGER_UNREADABLE")
+    if skewed:
+        notes.append("HOST_CLOCK_SKEWED_ENTRIES_BLOCKED")
+    notes.extend(f"ENTRY_GATE:{gate}" for gate in gates)
+    notes.extend(f"ORPHAN_LANE_STOP_WOULD_BE_RELEASED:{sym}" for sym in orphan_stops)
+    status = getattr(account, "status", None)
+    return {
+        "schema_version": LIVE_SELF_CHECK_SCHEMA,
+        "generated_at_utc": now.isoformat(),
+        "mode": "READ_ONLY",
+        "environment": farm.environment,
+        "account_alias": lane.account,
+        "venue_profile": lane.venue_profile,
+        "paper_only": farm.environment == "PAPER",
+        "live_execution_enabled": farm.autonomous_opt_in is True,
+        "session": session,
+        "clock_skew": {
+            "status": "UNVERIFIED" if skew is None else "SKEWED" if skewed else "OK",
+            "skew_secs": None if skew is None else str(skew),
+            "max_skew_secs": str(execution.CLOCK_SKEW_MAX_SECS),
+            "session_clock": "BROKER" if skewed else "HOST",
+        },
+        "account": {
+            "status": str(getattr(status, "value", status) or ""),
+            "trading_blocked": getattr(account, "trading_blocked", None),
+            "account_blocked": getattr(account, "account_blocked", None),
+            "trade_suspended_by_user": getattr(account, "trade_suspended_by_user", None),
+            "entry_gates": list(gates),
+        },
+        "positions_count": len(rows),
+        "open_orders_count": len(open_orders),
+        "ledger_readable": ledger_readable,
+        "persisted_open_lifecycles": sorted(persisted),
+        "positions": rows,
+        "stops_to_attach": [
+            {"symbol": row["symbol"], **row["would_attach"]}
+            for row in rows
+            if row.get("would_attach")
+        ],
+        "would_exit_immediately": [
+            row["symbol"] for row in rows if row.get("would_exit_immediately")
+        ],
+        "orphan_lane_stops": orphan_stops,
+        "start_blockers": sorted(blockers),
+        "notes": sorted(notes),
+        "coverage": coverage,
+    }
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--manifest-dir", type=Path, default=default_manifest_dir())
@@ -1434,7 +2032,40 @@ def main() -> None:
     mode.add_argument("--confirm-paper", action="store_true")
     mode.add_argument("--confirm-tv-alert", metavar="ALERT_ID")
     mode.add_argument("--ibkr-health", action="store_true")
+    mode.add_argument(
+        "--supervise-live",
+        action="store_true",
+        help=(
+            f"Supervise the one live lane ({engine.LIVE_TIERED_VENUE_ID}); --manifest-dir is "
+            "the paper directory it reads, its own files go to <data root>/live/manifests"
+        ),
+    )
+    mode.add_argument(
+        "--live-self-check",
+        action="store_true",
+        help="Read the live account and print what a start would do; places nothing",
+    )
     args = p.parse_args()
+    if args.supervise_live or args.live_self_check:
+        # Before anything else: the paper options below change the process environment.
+        if args.account is not None or args.alpaca_rpm is not None:
+            raise PermissionError(
+                "Refused --account / --alpaca-rpm with a live mode: they select paper lanes "
+                "and paper rate profiles; the live lane has one account and one venue"
+            )
+        shared_dir: Path = args.manifest_dir
+        live_dir = live_manifest_dir_for(shared_dir)
+        if args.live_self_check:
+            report = run_live_self_check(live_dir, shared_dir=shared_dir)
+            print(json.dumps(report, indent=2))
+            raise SystemExit(1 if report["start_blockers"] else 0)
+        from tier0_sota.live.execution import run_execution
+
+        verify_live_environment()
+        run_execution(live_dir, venue_profile=engine.LIVE_TIERED_VENUE_ID, shared_dir=shared_dir)
+        # No stop was asked for, so a return means every market-data stream ended on its own:
+        # that is a failure of the supervisor, and the unit must restart it.
+        raise SystemExit("Live supervision ended: every market data stream stopped")
     target_account: str | None = None
     if args.account is not None:
         if not args.confirm_tv_alert:

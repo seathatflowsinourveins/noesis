@@ -2957,7 +2957,13 @@ def test_confirmed_tv_preset_paper_multi_situation_24x5_and_fail_closed(
     }
     for k, v in paper_env.items():
         monkeypatch.setenv(k, v)
-    # Dormant live key alone does not break strict paper dry-run when paper guards hold.
+    # A live key name in a paper process is refused, dormant or not, while every paper guard
+    # holds; with the name gone the same strict paper dry-run passes.
+    with pytest.raises(PermissionError, match="live key name"):
+        execution.submit_confirmed_tv_preset_paper(
+            dry_dir, alert_id=str(sqqq_staged["alert_id"]), qty=1, dry_run=True, now_utc=on_now
+        )
+    monkeypatch.delenv("ALPACA_LIVE_API_KEY")
     ok_preview = execution.submit_confirmed_tv_preset_paper(
         dry_dir, alert_id=str(sqqq_staged["alert_id"]), qty=1, dry_run=True, now_utc=on_now
     )

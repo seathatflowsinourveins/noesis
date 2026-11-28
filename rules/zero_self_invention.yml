@@ -18,7 +18,9 @@ rule:
     - { kind: string_content, regex: '(?i)(?:^|//|[^a-z0-9.-])api\.alpaca\.markets' }
     - { kind: string_content, regex: '(?i)(?:(?:https?|wss?|tcp)://[^\s"''`]*?:|(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]):|^:|--port=)(?:4001|7496|8798|8796)\b' }
     - all: [{ kind: string }, { has: { kind: string_content, regex: '^(?:4001|7496|8798|8796)$', stopBy: end } }, { follows: { kind: string, has: { kind: string_content, regex: '^--port$', stopBy: end }, stopBy: end } }]
-    - { kind: keyword_argument, regex: '(?i)^(?:(?:[A-Za-z0-9_]*_)?port\s*=\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))|(?:paper|paper_mode|is_paper|paper_trading)\s*=\s*(?:False|0))$' }
+    - { kind: keyword_argument, regex: '(?i)^(?:[A-Za-z0-9_]*_)?port\s*=\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))$' }
+    - all: [{ kind: keyword_argument, regex: '(?i)^(?:paper|paper_mode|is_paper|paper_trading)\s*=\s*(?:False|0)$' }, { not: { inside: { kind: function_definition, stopBy: end, has: { field: name, regex: '^build_alpaca_live_clients$' } } } }]
+    - all: [{ kind: keyword_argument }, { has: { field: name, regex: '(?i)^paper$' } }, { not: { has: { field: value, kind: 'true' } } }, { not: { inside: { kind: function_definition, stopBy: end, has: { field: name, regex: '^build_alpaca_live_clients$' } } } }]
     - all: [{ kind: assignment }, { not: { regex: '^FORBIDDEN_' } }, { regex: '(?i)(?:(?:[A-Za-z0-9_]*_)?port["'']?\]?\s*=\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))|(?:paper|paper_mode|is_paper|paper_trading)["'']?\]?\s*=\s*(?:False|0))$' }]
     - { kind: pair, regex: '(?i)^["''](?:(?:[A-Za-z0-9_]*_)?port["'']\s*:\s*(?:["'']?(?:4001|7496|8798|8796)["'']?|int\(["'']?(?:4001|7496|8798|8796)["'']?\))|(?:paper|paper_mode|is_paper|paper_trading)["'']\s*:\s*(?:False|0))$' }
     - { kind: call, regex: '(?i)(?:setdefault|setattr|__setattr__)\s*\([^)]*(?:port["'']\s*,\s*["'']?(?:4001|7496|8798|8796)["'']?|(?:paper|paper_mode|is_paper|paper_trading)["'']\s*,\s*(?:False|0))' }
@@ -198,3 +200,33 @@ rule:
     - { pattern: '$FIG.add_trace($$$)' }
     - { pattern: '$FRAME.to_html($$$)' }
 files: [src/**/*.py, scripts/**/*.py]
+---
+id: no-broker-mutation-outside-lane-choke-point
+language: python
+severity: error
+message: Broker order mutations go only through AlpacaPaperLane.broker_submit / broker_replace / broker_cancel / broker_flatten (the lane choke point).
+rule:
+  all:
+    - { kind: call }
+    - has:
+        field: function
+        kind: attribute
+        all:
+          - { has: { field: attribute, regex: '^(?:submit_order|replace_order_by_id|cancel_order_by_id|cancel_orders|close_position|close_all_positions)$' } }
+          - { not: { has: { field: object, kind: identifier, regex: '^self$' } } }
+    - not:
+        inside:
+          kind: function_definition
+          stopBy: end
+          has: { field: name, regex: '^broker_(?:submit|replace|cancel|flatten)$' }
+          inside: { kind: class_definition, stopBy: end, has: { field: name, regex: '^AlpacaPaperLane$' } }
+files: [src/tier0_sota/**/*.py, scripts/**/*.py]
+ignores: [scripts/run_stage4_drills.py]
+---
+id: single-live-broker-client-site
+language: python
+severity: error
+message: build_alpaca_live_clients (the one non-paper Alpaca client construction site) may be defined, imported, referenced or called only in src/tier0_sota/live/paper_farm.py.
+rule: { kind: identifier, regex: '^build_alpaca_live_clients$' }
+files: [src/**/*.py, scripts/**/*.py]
+ignores: [src/tier0_sota/live/paper_farm.py]

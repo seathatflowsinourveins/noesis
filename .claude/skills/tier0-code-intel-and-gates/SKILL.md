@@ -10,7 +10,7 @@ description: Run zero-overlap code intelligence (codebase-memory-mcp), structura
    - `uv run --no-sync ruff check .` (incl. Bandit `S`) & `uv run --no-sync ruff format --check src tests scripts evals` -> lint, formatting, and Python security hygiene.
    - `uv run --no-sync ty check` -> fast static type checking.
    - `uv run --no-sync deptry .` -> declared vs imported PEP 735 dependency hygiene.
-   - `uv run --no-sync ast-grep scan --config sgconfig.yml` -> 21 structural AST bans (`rules/zero_self_invention.yml`) blocking banned libraries, custom dashboard servers, raw HTTP/socket polling, LLMs on execution/risk paths, and live broker endpoints.
+   - `uv run --no-sync ast-grep scan --config sgconfig.yml` -> 24 structural AST bans (`rules/zero_self_invention.yml`) blocking banned libraries, custom dashboard servers, raw HTTP/socket polling, LLMs on execution/risk paths, and live broker endpoints.
    - `uv run --no-sync python scripts/sync_manifest.py --check` -> programmatic SSOT sync for `ARCHITECTURE_MANIFEST.json` & `LLM_HARNESS_MANIFEST.json` (`0` arbitrary LOC caps; `46/46` curated skills; living ADRs).
    - `shellcheck` -> strict POSIX/Bash verification across repository shell scripts.
    - `uv run --no-sync zensical build --clean --strict` -> strict static docs portal integrity.

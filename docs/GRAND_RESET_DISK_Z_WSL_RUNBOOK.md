@@ -6,7 +6,7 @@ This runbook executes a **standalone, non-destructive, zero-hook, fail-closed Gr
 
 - **Preserved Shared Data & Secrets (NEVER wiped or overwritten):** `$env:TIER0_DATA_ROOT\prewall-lake`, `$env:TIER0_DATA_ROOT\manifests`, `Z:\sota-cache`, `Z:\WSL`, `Z:\archive`, `~/Documents/upstream/` (`18` pins), and `.env*` secret files (`chmod 600`).
 - **Zero Self-Invented Runtime Hooks:** Static & security gates (`ruff`, `ty`, `ast-grep`, `gitleaks`, `z3`, `inspect_ai`) live strictly in upstream `.pre-commit-config.yaml`, `evals/`, and `pytest`/verifier. `.codex/hooks.json` does NOT exist, and `.claude/settings.json`, `.gemini/settings.json`, and `.codex/config.toml` contain zero `"hooks"` blocks.
-- **Forbidden Live Broker Endpoints (ALWAYS refused):** `:4001`, `:7496`, `:8798`, `:8796`, and `api.alpaca.markets`. `live_execution_enabled = False`, `paper_only = True`.
+- **Live Broker Endpoints:** IBKR live ports `:4001`, `:7496`, `:8798`, `:8796` are not wired and stay closed. `risk.py` invariants and lossless trailing coverage hold in every lane; live operations on `ALPACA_LIVE_PRO_LINE_1000` follow the three tiers of [ADR-0029](adr/ADR-0029.md) (`live_execution_enabled = False` means tier 3 is off).
 - **Forbidden Destructive Host Ops:** Never format/wipe disks or run `wsl --shutdown`.
 
 ---

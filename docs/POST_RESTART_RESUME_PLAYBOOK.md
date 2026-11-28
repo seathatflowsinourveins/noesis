@@ -6,7 +6,7 @@ Single-command recovery and fresh-session grounding guide for the standalone `Z:
 - **Shared Data & Manifests:** `Z:\sota-data\manifests` (`$env:TIER0_DATA_ROOT`)
 - **Orca Workspaces Root:** `Z:\workspaces` (`$env:ORCA_WORKSPACES_DIR`)
 - **Default WSL2 Distro:** `Noesis-SOTA` (WSL2, systemd enabled)
-- **Immutable Safety Invariants:** `src/tier0_sota/risk.py` SHA-256 `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`, `live_execution_enabled = False`, `paper_only = True`, zero live broker ports (`:4001`, `:7496`, `:8798`, `:8796`)
+- **Safety Invariants:** pinned `src/tier0_sota/risk.py` SHA-256 `ad8071dcd4196c4c529c02107114ebfdda6692bc9d7c220031f1b19ea3e4d847`; `risk.py` invariants and lossless trailing coverage hold in every lane; live operations follow the three tiers of [ADR-0029](adr/ADR-0029.md) (`live_execution_enabled = False` means tier 3 is off); IBKR live ports (`:4001`, `:7496`, `:8798`, `:8796`) are not wired
 
 ---
 

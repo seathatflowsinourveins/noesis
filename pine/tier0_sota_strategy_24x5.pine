@@ -31,7 +31,7 @@ import TradingView/TechnicalRating/3 as tvtr
 // Parity: NautilusTrader v2 SignalExecutionStrategy (src/tier0_sota/engine.py)
 //         1000rpm/3000rpm Venue Order Handles (IBKR_PAPER_4002 / ALPACA_PAPER_1000 / ALPACA_PAPER_200)
 //         Immutable Risk Kernel (src/tier0_sota/risk.py: Rule-612 <= 2.00%, -1.50% DD Fuse)
-// Compliance: Display-only / Paper-only half-auto presets (qty=1, semi_auto_confirmed=false)
+// Compliance: Display-only half-auto presets (staged qty=1, semi_auto_confirmed=false until operator confirms; live tiers per ADR-0029)
 //             Alert Message: {{strategy.order.alert_message}} -> tier0.tv-alert.v1 JSON
 // Non-Repainting: barstate.isconfirmed + gaps=barmerge.gaps_off + lookahead=barmerge.lookahead_off
 // ============================================================================

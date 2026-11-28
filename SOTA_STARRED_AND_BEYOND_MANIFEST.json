@@ -772,7 +772,7 @@
       ],
       "s3_llm_and_agent_evals": ["UKGovernmentBEIS/inspect_ai==0.3.292 (:7575)", "mlflow/mlflow==3.18.0 (:5000)", "stanfordnlp/dspy==3.5.0 + gepa==0.1.4", "NVIDIA/SkillEvaluator"],
       "s4_test_dashboard": {"tool": "allure-framework/allure3==3.33.0 + allure-pytest==2.16.2", "spdx": "Apache-2.0", "recipe": "just test-report", "url": "http://127.0.0.1:8793/test-reports/allure/", "junit_url": "http://127.0.0.1:8793/test-reports/junit.xml", "custom_html_js_mjs": false},
-      "s5_static_supply_chain": ["ruff", "ty", "deptry", "ast-grep (22 rules)", "prek (10/10)", "gitleaks", "zizmor", "trivy (misconfig/secret + just license-audit fs/rootfs SPDX wired into just security over installed venv wheels)", "syft", "shellcheck", "CodeQL (Default Setup)", "Dependabot"]
+      "s5_static_supply_chain": ["ruff", "ty", "deptry", "ast-grep (24 rules)", "prek (10/10)", "gitleaks", "zizmor", "trivy (misconfig/secret + just license-audit fs/rootfs SPDX wired into just security over installed venv wheels)", "syft", "shellcheck", "CodeQL (Default Setup)", "Dependabot"]
     },
     "mechanized_dagster_upstream_watches": {
       "anchor": "src/tier0_sota/definitions.py::frontier_trigger_telemetry (_evaluate_upstream_watch_triggers + _parse_pep440_prerelease)",

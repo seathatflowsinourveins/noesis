@@ -173,3 +173,127 @@ groups:
         annotations:
           summary: "Tier-0 WSL2 workstation used memory exceeded 85% for 10m"
           description: "Sustained WSL2 RAM usage exceeded 85% of host capacity via OTel host_metrics."
+
+  # Live lane (ALPACA_LIVE_PRO_LINE_1000). Metric contract for the telemetry exporter, which must
+  # compute every *_age_seconds value itself from the timestamp in the file it reads (an age
+  # reported by a stopped supervisor would never grow):
+  #   tier0_live_unprotected_shares_count             lossless_coverage_manifest.json unprotected_shares_count
+  #   tier0_live_coverage_complete                    1 when that record is complete, else 0
+  #   tier0_live_auditor_heartbeat_age_seconds        now - lossless_coverage_manifest.json generated_at_utc (rewritten every 5 s)
+  #   tier0_live_supervisor_heartbeat_age_seconds     now - live paper_farm_execution_status.json generated_at_utc (rewritten at least every 30 s)
+  #   tier0_live_guard_price_age_seconds{symbol}      seconds since the guard's last price; exported only while the session is not CLOSED
+  #   tier0_live_protection_fault_consecutive_count{symbol}   protection_faults[symbol].consecutive
+  #   tier0_live_entry_hold_active                    1 while entry_hold.held, else 0
+  #   tier0_live_clock_skew_seconds                   absolute host-versus-broker clock skew
+  #   tier0_live_data_stale_symbols_count             length of data_plane.data_stale_symbols
+  - name: tier0_sota_live_lane_alerts
+    interval: 5s
+    rules:
+      - alert: Tier0LiveUnprotectedShares
+        expr: max(tier0_live_unprotected_shares_count) > 0
+        for: 10s
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: live
+        annotations:
+          summary: "Tier-0 live lane holds {{ $value }} share(s) with no working protective order and no fresh supervision"
+          description: "The independent coverage auditor counts live shares that have neither a resting broker-side stop nor a guard with a fresh price and heartbeat. Read `just live-telemetry` (share_protection_table)."
+
+      - alert: Tier0LiveCoverageRecordIncomplete
+        expr: min(tier0_live_coverage_complete) == 0
+        for: 30s
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: live
+        annotations:
+          summary: "Tier-0 live lossless coverage record is incomplete"
+          description: "The coverage auditor could not read every position and open order of the live account, so an unprotected share count of zero is not proof of cover."
+
+      - alert: Tier0LiveGuardPriceStale
+        expr: max by (symbol) (tier0_live_guard_price_age_seconds) > 10
+        for: 20s
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: live
+        annotations:
+          summary: "Tier-0 live guard on {{ $labels.symbol }} has had no price for {{ $value }}s"
+          description: "The guard's last price is older than 10s in an open session: neither the trade stream nor the REST latest-trade fallback is driving its trailing exit."
+
+      - alert: Tier0LiveDataStale
+        expr: max(tier0_live_data_stale_symbols_count) > 0
+        for: 30s
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: live
+        annotations:
+          summary: "Tier-0 live supervisor reports DATA_STALE on {{ $value }} guarded symbol(s)"
+          description: "At least one live guard has had no price for more than 30s in an open session (data_plane.data_stale_symbols)."
+
+      - alert: Tier0LiveCoverageAuditorHeartbeatStale
+        expr: max(tier0_live_auditor_heartbeat_age_seconds) > 30
+        for: 10s
+        labels:
+          severity: critical
+          category: risk_ops
+          lane: live
+        annotations:
+          summary: "Tier-0 live coverage auditor heartbeat is {{ $value }}s old"
+          description: "lossless_coverage_manifest.json is rewritten every 5s while the live supervisor runs; it has not been rewritten for more than 30s."
+
+      - alert: Tier0LiveSupervisorHeartbeatStale
+        expr: max(tier0_live_supervisor_heartbeat_age_seconds) > 90
+        for: 10s
+        labels:
+          severity: critical
+          category: risk_ops
+          lane: live
+        annotations:
+          summary: "Tier-0 live supervisor heartbeat is {{ $value }}s old"
+          description: "The live supervisor status file is rewritten at least every 30s; it has not been rewritten for more than 90s. Off-hours the supervisor is the only protection: check `systemctl status tier0-live-supervisor.service`."
+
+      - alert: Tier0LiveTelemetryAbsent
+        expr: absent(tier0_live_supervisor_heartbeat_age_seconds) or absent(tier0_live_auditor_heartbeat_age_seconds) or absent(tier0_live_unprotected_shares_count)
+        for: 2m
+        labels:
+          severity: critical
+          category: risk_ops
+          lane: live
+        annotations:
+          summary: "Tier-0 live lane heartbeat or coverage telemetry is absent"
+          description: "No live supervisor heartbeat, auditor heartbeat or unprotected-share metric has been exported for more than 2m, so the live alerts above cannot fire."
+
+      - alert: Tier0LiveProtectionFaultRepeated
+        expr: max by (symbol) (tier0_live_protection_fault_consecutive_count) >= 3
+        labels:
+          severity: critical
+          category: lossless_trailing
+          lane: live
+        annotations:
+          summary: "Tier-0 live guard on {{ $labels.symbol }} has {{ $value }} consecutive protection faults"
+          description: "A protective action on {{ $labels.symbol }} (stop attach, replace or exit) failed three or more times in a row; read protection_faults in `just live-telemetry` for the code."
+
+      - alert: Tier0LiveEntryHoldActive
+        expr: max(tier0_live_entry_hold_active) > 0
+        for: 30s
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: live
+        annotations:
+          summary: "Tier-0 live entries have been held for more than 30s"
+          description: "The protection check holds entries while a live position lacks a guard or a working protective order; the hold normally clears on the next reconcile (about 2s)."
+
+      - alert: Tier0LiveClockSkewed
+        expr: max(tier0_live_clock_skew_seconds) > 1
+        for: 30s
+        labels:
+          severity: warning
+          category: risk_ops
+          lane: live
+        annotations:
+          summary: "Tier-0 live host clock differs from the broker clock by {{ $value }}s"
+          description: "Clock skew above 1.0s blocks live entries and moves session classification to broker time; exit re-pegs still use the host clock."
