@@ -847,10 +847,30 @@ def test_workstation_lazy_imports_and_thread_bounds_fitness(
 
 
 def test_sota_manifest_frontier_spdx_zero_crypto_and_options_sidecar() -> None:
-    """Enforce 75/75 frontier SPDX tags, zero-crypto QC trigger, and structured options sidecar."""
+    """Enforce 75/75 canonical frontier SPDX tags, zero-crypto QC trigger, and truthful sidecar."""
     sota = json.loads(
         (REPO_ROOT / "SOTA_STARRED_AND_BEYOND_MANIFEST.json").read_text(encoding="utf-8")
     )
+
+    allowed_spdx_tokens = {
+        "MIT",
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "MPL-2.0",
+        "NCSA",
+        "LGPL-2.1",
+        "LGPL-2.1-only",
+        "LGPL-3.0",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "GPL-3.0",
+        "GPL-3.0-only",
+        "AGPL-3.0-only",
+        # Single documented non-package hosted OAuth connector carve-out (tradingview/mcp-official)
+        "Platform-OAuth-2.1",
+    }
 
     frontier_cands = [
         cand
@@ -858,10 +878,16 @@ def test_sota_manifest_frontier_spdx_zero_crypto_and_options_sidecar() -> None:
         for cand in layer_doc.get("candidates", [])
     ]
     assert len(frontier_cands) >= 75
-    missing_frontier_spdx = [
-        c.get("slug") for c in frontier_cands if not str(c.get("spdx", "")).strip()
-    ]
-    assert missing_frontier_spdx == [], f"Frontier candidates missing spdx: {missing_frontier_spdx}"
+    invalid_frontier_spdx: list[tuple[str, str]] = []
+    for cand in frontier_cands:
+        slug = str(cand.get("slug", ""))
+        spdx = str(cand.get("spdx", "")).strip()
+        tokens = [t.strip() for t in re.split(r"\s+(?:OR|AND)\s+", spdx)] if spdx else []
+        if not tokens or any(tok not in allowed_spdx_tokens for tok in tokens):
+            invalid_frontier_spdx.append((slug, spdx))
+    assert invalid_frontier_spdx == [], (
+        f"Frontier candidates with non-canonical/prose spdx: {invalid_frontier_spdx}"
+    )
 
     excluded_wrappers = sota["backtest_platform_and_dashboard_form_audit"][
         "excluded_backtest_dashboard_wrappers"
@@ -888,13 +914,26 @@ def test_sota_manifest_frontier_spdx_zero_crypto_and_options_sidecar() -> None:
     sidecar = sota["us_equities_options_sota_convergence_audit"]["paid_additive_us_options_sidecar"]
     assert isinstance(sidecar, dict)
     assert sidecar["local_refalsification_required_before_execution"] is True
-    stratum1_providers = [r["provider"] for r in sidecar["paid_additive_stratum1_data_rails"]]
+    assert not any("QuantLib" in item for item in sidecar["local_sovereign_core"]), (
+        "QuantLib is earned-trigger (not in uv.lock) and must not be listed as active core"
+    )
+    complements = sidecar["earned_trigger_local_options_pricing_complements"]
+    assert any(
+        c["repo"] == "lballabio/QuantLib" and c["installed_in_uv_lock"] is False
+        for c in complements
+    )
+    stratum1_rails = sidecar["paid_additive_stratum1_data_rails"]
+    stratum1_providers = [r["provider"] for r in stratum1_rails]
+    assert any("Databento" in p for p in stratum1_providers)
+    assert any("ORATS" in p for p in stratum1_providers)
+    assert all(r["installed_in_uv_lock"] is False for r in stratum1_rails)
     stratum2_providers = [
         r["provider"] for r in sidecar["paid_additive_stratum2_off_repo_sidecars"]
     ]
-    assert any("Databento" in p for p in stratum1_providers)
     assert any("QuantConnect" in p for p in stratum2_providers)
-    assert any("ORATS" in p for p in stratum2_providers)
+    assert not any("ORATS" in p for p in stratum2_providers), (
+        "ORATS belongs in paid_additive_stratum1_data_rails (L4 Phase-1 data rail), not Stratum 2"
+    )
     guardrails = sidecar["execution_guardrails"]
     assert guardrails["paper_only"] is True
     assert guardrails["live_execution_enabled"] is False

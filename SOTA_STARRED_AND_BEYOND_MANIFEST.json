@@ -716,7 +716,8 @@
         },
         {
           "slug": "langfuse/langfuse",
-          "spdx": "MIT (OSS core; ee/ commercial folders — GitHub API NOASSERTION; require MIT-only build verification before admission)",
+          "spdx": "MIT",
+          "spdx_note": "OSS core is MIT; ee/ commercial folders cause GitHub API NOASSERTION — require MIT-only build verification before admission",
           "status": "earned_trigger_watch",
           "trigger": "LLM trace scaling beyond MLflow"
         }
@@ -1854,14 +1855,14 @@
       "jesse-ai/jesse (MIT)"
     ],
     "two_horse_l3_verdict": {
-      "sovereign_active_core": "nautechsystems/nautilus_trader v2 (31,871★, LGPL-3.0-only, 2.0.0rc9) + nkaz001/hftbacktest (5,148★, MIT, 2.4.4, native databento.py L2/L3 converter) + alpacahq/alpaca-py (1,614★, Apache-2.0, 0.45.0, 24/5 BOATS + Options L1-L3 atomic MLEG) + immutable Decimal risk.py (Z3/CrossHair) + earned-trigger lballabio/QuantLib (7,812★, BSD-3-Clause, v1.44 American options PDE/trees & Heston/SABR)",
+      "sovereign_active_core": "nautechsystems/nautilus_trader v2 (31,871★, LGPL-3.0-only, 2.0.0rc9) + nkaz001/hftbacktest (5,148★, MIT, 2.4.4, native databento.py L2/L3 converter) + alpacahq/alpaca-py (1,614★, Apache-2.0, 0.45.0, 24/5 BOATS + Options L1-L3 atomic MLEG) + immutable Decimal risk.py (Z3/CrossHair); earned-trigger OSI pricing complement (not installed in uv.lock today): lballabio/QuantLib (7,812★, BSD-3-Clause, v1.44 American options PDE/trees & Heston/SABR)",
       "nautilus_v2_rc9_us_options_gaps_verified": [
         "OptionExerciseModule = 0 (only CfdSwapModule & FXRolloverInterestModule)",
         "corporate actions / splits / dividends engine = 0",
         "OCC / Reg-T combo spread margin = 0",
         "native Alpaca / Polygon adapters = 0 (2/21 adapters serve US Equities/Options: interactive_brokers, databento)"
       ],
-      "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, optionally attach paid off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) and/or ORATS ($199-$899/mo smoothed IV surfaces) strictly as an additive off-repo cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
+      "hybrid_dual_stratum_options_decision": "REJECT replacing Nautilus v2 with QuantConnect/Lean (22,760★, Apache-2.0, C#/.NET/pythonnet); when US Equity Options research activates, pair Phase-1 paid additive L4 data rails (Databento OPRA and/or ORATS $199-$899/mo smoothed IV/Greeks feed) and earned-trigger local lballabio/QuantLib with optional Stratum-2 off-repo QuantConnect Cloud Remote MCP (QuantConnect/mcp-server 81★ 2-file stub -> https://www.quantconnect.com/api/v2/mcp, ~$34/mo Researcher + A1-1 Agent Node floor) as an additive cloud research lab, independently falsifying locally before sovereign alpaca-py MLEG / IBKR execution."
     },
     "paid_additive_us_options_sidecar": {
       "asset_scope": "US Equities, Stocks, and US Equity Options ONLY",
@@ -1870,19 +1871,42 @@
         "nautechsystems/nautilus_trader==2.0.0rc9",
         "nkaz001/hftbacktest==2.4.4",
         "alpacahq/alpaca-py==0.45.0",
-        "src/tier0_sota/risk.py",
-        "lballabio/QuantLib (earned_trigger BSD-3-Clause)"
+        "src/tier0_sota/risk.py"
+      ],
+      "earned_trigger_local_options_pricing_complements": [
+        {
+          "repo": "lballabio/QuantLib",
+          "spdx": "BSD-3-Clause",
+          "version_reference": "1.44",
+          "installed_in_uv_lock": false,
+          "role": "Earned-trigger OSI American equity options PDE/trees & Heston/SABR pricing complement (not installed in pyproject.toml/uv.lock today; admit upon US Equity Options research activation)",
+          "disposition": "earned_trigger_not_installed"
+        }
       ],
       "local_refalsification_required_before_execution": true,
       "paid_additive_stratum1_data_rails": [
         {
           "provider": "Databento OPRA / US Equities MBO-MBP10",
+          "layer": "L4",
+          "phase": "Phase 1 (Paid Options & Microstructure Data Rail, ADR-0013)",
           "client_repo": "databento/databento-python",
           "spdx": "Apache-2.0",
           "version": "0.91.0",
+          "installed_in_uv_lock": false,
           "official_mcp_repos": 0,
           "role": "Stratum-1 paid additive market-data rail (NY4 colo MBO/MBP-10 & historical OPRA ticks, ~$0.04/GB); native NautilusTrader & hftbacktest adapters",
-          "disposition": "optional_paid_additive_stratum1_data_rail"
+          "disposition": "optional_paid_additive_l4_data_rail"
+        },
+        {
+          "provider": "ORATS",
+          "layer": "L4",
+          "phase": "Phase 1 (First Paid Upgrade, ADR-0013)",
+          "spdx": "Commercial-Data-Feed",
+          "spdx_note": "Proprietary commercial REST/FTP US Equity Options vol-surface data API (no repo code admitted into uv.lock)",
+          "pricing_floor": "$199-$899/mo",
+          "installed_in_uv_lock": false,
+          "role": "Stratum-1 Phase-1 paid additive L4 smoothed IV surface, historical Greeks, and US Equity Options data rail (excluded as a core L3 execution engine; distinct from Stratum-2 QuantConnect Cloud lab)",
+          "disposition": "optional_paid_additive_l4_data_rail"
         }
       ],
       "paid_additive_stratum2_off_repo_sidecars": [
@@ -1890,17 +1914,12 @@
           "provider": "QuantConnect Cloud Remote MCP",
           "endpoint": "https://www.quantconnect.com/api/v2/mcp",
           "companion_stub_repo": "QuantConnect/mcp-server",
-          "spdx": "Apache-2.0 (2-file stub; hosted commercial cloud)",
+          "spdx": "Apache-2.0",
+          "spdx_note": "2-file Apache-2.0 stub repository pointing to hosted commercial cloud MCP",
           "pricing_floor": "~$34/mo (Researcher $10/mo + Agent Node A1-1 $24/mo)",
-          "role": "Optional off-repo US Equity Options corporate-actions/exercise/assignment research lab (never replaces local NautilusTrader v2 L3 core)",
+          "installed_in_uv_lock": false,
+          "role": "Optional Stratum-2 off-repo US Equity Options corporate-actions/exercise/assignment cloud research lab (never replaces local NautilusTrader v2 L3 core)",
           "disposition": "optional_paid_additive_off_repo_sidecar"
-        },
-        {
-          "provider": "ORATS",
-          "spdx": "Proprietary commercial REST/FTP options vol-surface feed",
-          "pricing_floor": "$199-$899/mo",
-          "role": "Optional off-repo paid smoothed IV surface, historical Greeks, and US Equity Options data sidecar (excluded as a core L3 execution engine; permitted strictly as a paid L4 data sidecar)",
-          "disposition": "optional_paid_additive_data_sidecar"
         }
       ],
       "execution_guardrails": {
@@ -2007,7 +2026,7 @@
         "Option Omega (official backtest-only MCP + 1s IMSL SPX/SPY 0DTE; closed web-form backtester)",
         "NexusTrade (official OAuth MCP 100+ tools 60 rpm; retail rule engine lacking Rust queue/CPCV/Z3)",
         "Composer (REST API only; daily ETF/stock rebalancing)",
-        "Option Alpha, OptionStrat/ONE, TradeStation/Wealth-Lab/Portfolio123/QuantRocket, TrendSpider/Trade Ideas/Surmount/QuantMage, FinChat/Koyfin/Perplexity Finance/Kavout/Danelfin/Magnifi (ORATS is classified under paid_additive_us_options_sidecar as an optional paid L4 smoothed-IV/Greeks REST data sidecar, excluded only as a core L3 execution engine)"
+        "Option Alpha, OptionStrat/ONE, TradeStation/Wealth-Lab/Portfolio123/QuantRocket, TrendSpider/Trade Ideas/Surmount/QuantMage, FinChat/Koyfin/Perplexity Finance/Kavout/Danelfin/Magnifi (ORATS is classified under paid_additive_us_options_sidecar.paid_additive_stratum1_data_rails as an L4 Phase-1 paid smoothed-IV/Greeks data rail alongside Databento OPRA, distinct from Stratum-2 QuantConnect Cloud Remote MCP)"
       ],
       "tier_3_official_broker_data_mcps": [
         "IBKR Official Public MCP (https://api.ibkr.com/v1/api/mcp-public)",
