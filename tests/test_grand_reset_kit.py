@@ -228,7 +228,7 @@ def test_docker_compose_sota_yaml_mounts_and_no_live_ports() -> None:
     xerj_froms = re.findall(r"(?m)^FROM\s+(\S+)", xerj_df)
     assert len(xerj_froms) >= 2, f"Expected multi-stage alpine FROM lines, got: {xerj_froms}"
     for img in xerj_froms:
-        assert re.fullmatch(r"alpine:\d+\.\d+(?:\.\d+)?(?:@sha256:[0-9a-f]{64})?", img), (
+        assert re.fullmatch(r"alpine:\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?", img), (
             f"docker/Dockerfile.xerj must pin exact alpine tag (never latest): {img}"
         )
     xerj_ver_match = re.search(r"(?m)^ARG\s+XERJ_VERSION=(\S+)\s*$", xerj_df)
